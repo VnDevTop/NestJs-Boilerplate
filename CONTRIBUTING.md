@@ -113,7 +113,7 @@ it works.
 
 ## Pull requests
 
-1. Branch from `main`.
+1. Branch from `master`.
 2. Make the change, with a test if it is behaviour.
 3. Run `npm run check`.
 4. Open the PR describing what changed and why. Screenshots for anything visual.
