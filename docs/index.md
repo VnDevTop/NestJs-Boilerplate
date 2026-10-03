@@ -16,14 +16,14 @@ README covers what the template contains.
 These stay in the repository root rather than here, because they are about this
 project rather than about running it. GitHub renders them on their own pages:
 
-| File                                                                                     | About                                          |
-| ---------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| [README](https://github.com/VnDevTop/NestJs-Boilerplate/blob/main/README.md)             | what the template contains and how to start it |
-| [PLAN](https://github.com/VnDevTop/NestJs-Boilerplate/blob/main/PLAN.md)                 | the phase-by-phase build plan and its status   |
-| [ROADMAP](https://github.com/VnDevTop/NestJs-Boilerplate/blob/main/ROADMAP.md)           | what comes after the current phases            |
-| [CONTRIBUTING](https://github.com/VnDevTop/NestJs-Boilerplate/blob/main/CONTRIBUTING.md) | how to propose a change                        |
-| [SECURITY](https://github.com/VnDevTop/NestJs-Boilerplate/blob/main/SECURITY.md)         | how to report a vulnerability                  |
-| [CHANGELOG](https://github.com/VnDevTop/NestJs-Boilerplate/blob/main/CHANGELOG.md)       | released changes                               |
+| File                                                                                       | About                                          |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| [README](https://github.com/VnDevTop/NestJs-Boilerplate/blob/master/README.md)             | what the template contains and how to start it |
+| [PLAN](https://github.com/VnDevTop/NestJs-Boilerplate/blob/master/PLAN.md)                 | the phase-by-phase build plan and its status   |
+| [ROADMAP](https://github.com/VnDevTop/NestJs-Boilerplate/blob/master/ROADMAP.md)           | what comes after the current phases            |
+| [CONTRIBUTING](https://github.com/VnDevTop/NestJs-Boilerplate/blob/master/CONTRIBUTING.md) | how to propose a change                        |
+| [SECURITY](https://github.com/VnDevTop/NestJs-Boilerplate/blob/master/SECURITY.md)         | how to report a vulnerability                  |
+| [CHANGELOG](https://github.com/VnDevTop/NestJs-Boilerplate/blob/master/CHANGELOG.md)       | released changes                               |
 
 ## Configuration reference
 
