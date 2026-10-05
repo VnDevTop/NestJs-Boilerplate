@@ -61,11 +61,16 @@ export class MaintenanceLog {
   trigger!: RetentionTrigger;
 
   /** Targets that never ran because the run stopped early. */
-  @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
+  // Declared as a plain literal, not a callback returning the cast. TypeORM
+  // appends the column type to a string default when it normalises one, so a
+  // callback returning an already-cast string compares unequal to what the
+  // driver reads back and every `migration:generate` reports phantom drift on
+  // this column. This spelling is the one that matches.
+  @Column({ type: 'jsonb', default: '[]' })
   pending!: string[];
 
   /** Targets that raised an error. Empty on a clean run. */
-  @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
+  @Column({ type: 'jsonb', default: '[]' })
   failedTargets!: string[];
 
   /**

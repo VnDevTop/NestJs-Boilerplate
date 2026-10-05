@@ -60,7 +60,12 @@ describe('the maintenance_logs table', () => {
     for (const name of ['pending', 'failedTargets']) {
       const column = columns().find((entry) => entry.propertyName === name);
 
-      expect(column?.options.default).toBeTypeOf('function');
+      // A plain literal, not a callback returning an already-cast string.
+      // TypeORM casts a string default to the column type when it normalises one,
+      // so a callback returning `'[]'::jsonb` compares unequal to what the driver
+      // reads back and every `migration:generate` reports phantom drift against
+      // this table. That drift was found the hard way, in an unrelated migration.
+      expect(column?.options.default).toBe('[]');
       expect(column?.options.nullable).not.toBe(true);
     }
   });
