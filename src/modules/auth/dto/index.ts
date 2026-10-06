@@ -1,3 +1,4 @@
+export * from './auth-session.dto.js';
 export * from './reset-password.dto.js';
 export * from './generic-message.dto.js';
 export * from './forgot-password.dto.js';

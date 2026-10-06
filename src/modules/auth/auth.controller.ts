@@ -42,6 +42,7 @@ import {
 import type { RequestUser } from '../../common/interfaces/index.js';
 import { UserResponseDto } from '../users/dto/index.js';
 import {
+  AuthSessionDto,
   AuthTokenResponseDto,
   ForgotPasswordDto,
   GenericMessageDto,
@@ -356,6 +357,41 @@ export class AuthController {
   @ApiOkResponse({ type: UserDeviceDto, isArray: true })
   devices(@CurrentUser() currentUser: RequestUser): Promise<UserDeviceDto[]> {
     return this.authService.listDevices(currentUser);
+  }
+
+  /**
+   * Live sessions, one per refresh chain.
+   *
+   * Separate from `devices`, which lists machines. One device can hold more than
+   * one session, and revoking them is not the same act: `devices/:id` ends every
+   * session on the machine, `sessions/:id` ends one of them.
+   */
+  @Get('sessions')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'List the current user live sessions' })
+  @ApiOkResponse({ type: AuthSessionDto, isArray: true })
+  sessions(@CurrentUser() currentUser: RequestUser): Promise<AuthSessionDto[]> {
+    return this.authService.listSessions(currentUser);
+  }
+
+  /**
+   * Revokes one session.
+   *
+   * Scoped to the caller's own sessions: an id that is not one of theirs is a 404,
+   * which is deliberately indistinguishable from one that does not exist. Answering
+   * "not yours" would confirm that somebody else's session id is real.
+   */
+  @Delete('sessions/:id')
+  @ApiBearerAuth('access-token')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke one session, leaving the others alone' })
+  @ApiNoContentResponse({ description: 'Session revoked' })
+  @ApiNotFoundResponse({ description: 'Session not found' })
+  revokeSession(
+    @CurrentUser() currentUser: RequestUser,
+    @Param('id') sessionId: string,
+  ): Promise<void> {
+    return this.authService.revokeSession(currentUser, sessionId);
   }
 
   @Delete('devices/:id')

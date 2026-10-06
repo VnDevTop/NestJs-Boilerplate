@@ -22,13 +22,14 @@ import {
 import { UserResponseDto } from '../users/dto/index.js';
 import { UsersService } from '../users/index.js';
 import {
+  AuthSessionDto,
   ForgotPasswordDto,
   GenericMessageDto,
   LoginDto,
   LogoutDto,
   RefreshTokenDto,
-  ResendVerificationDto,
   RegisterDto,
+  ResendVerificationDto,
   ResetPasswordDto,
   TwoFactorCodeDto,
   TwoFactorEnabledResponseDto,
@@ -480,6 +481,63 @@ export class AuthService {
 
   listDevices(currentUser: RequestUser): Promise<UserDeviceDto[]> {
     return this.deviceService.listByUserId(currentUser.id);
+  }
+
+  /**
+   * The caller's live sessions.
+   *
+   * A session is one live refresh token, so this is the row a refresh chain
+   * currently rests on. Expired and already-revoked rows are excluded by the
+   * query, which means the list only ever contains something the caller could
+   * usefully revoke.
+   *
+   * Device names are filled in from the caller's devices rather than joined, and
+   * a session whose device has since been removed is still listed with no name.
+   * Dropping it would hide a session that is still able to refresh.
+   */
+  async listSessions(currentUser: RequestUser): Promise<AuthSessionDto[]> {
+    if (!currentUser?.id) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const [tokens, devices] = await Promise.all([
+      this.refreshTokenService.listLiveByUserId(currentUser.id),
+      this.deviceService.listByUserId(currentUser.id),
+    ]);
+
+    const deviceNames = new Map(
+      devices.map((device) => [device.id, device.deviceName]),
+    );
+
+    return tokens.map((token) =>
+      AuthSessionDto.fromEntity(
+        token,
+        token.deviceId === null
+          ? null
+          : (deviceNames.get(token.deviceId) ?? null),
+      ),
+    );
+  }
+
+  /**
+   * Revokes one session, leaving the caller's others alone.
+   *
+   * The lookup is scoped to the caller's own sessions, so an id belonging to
+   * someone else is a 404 rather than a successful revocation of their access.
+   */
+  async revokeSession(
+    currentUser: RequestUser,
+    sessionId: string,
+  ): Promise<void> {
+    if (!currentUser?.id) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    await this.refreshTokenService.revokeByIdForUser(
+      currentUser.id,
+      sessionId,
+      RefreshTokenRevokedReason.SessionRevoked,
+    );
   }
 
   async revokeDevice(
