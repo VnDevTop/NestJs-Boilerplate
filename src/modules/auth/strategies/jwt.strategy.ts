@@ -34,6 +34,28 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Invalid access token');
     }
 
+    // The one check that makes logout-everywhere immediate.
+    //
+    // A token with no `sv` predates the claim, and is accepted only while the
+    // user is still at version zero, meaning nothing has ever asked for all their
+    // sessions to die. The moment they do, the version moves and every token
+    // without a claim is refused alongside the ones that carry a stale one.
+    //
+    // That is why the comparison is not simply "versions must be equal": a strict
+    // equality would reject the un-claimed token of a user who never revoked
+    // anything, which on deploy would sign out every signed-in user for a
+    // fifteen minute token to have expired on its own anyway.
+    const tokenVersion = payload.sv;
+    const currentVersion = user.sessionsVersion ?? 0;
+
+    if (
+      tokenVersion === undefined
+        ? currentVersion !== 0
+        : tokenVersion !== currentVersion
+    ) {
+      throw new UnauthorizedException('Invalid access token');
+    }
+
     return {
       id: user.id,
       email: user.email,

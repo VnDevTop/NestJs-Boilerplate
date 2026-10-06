@@ -42,6 +42,7 @@ import { RefreshTokenService } from './refresh-token.service.js';
 import { DeviceService } from './device.service.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { PasswordResetService } from './password-reset.service.js';
+import { User } from '../users/entities/index.js';
 import { TwoFactorService } from './two-factor.service.js';
 import {
   AuthToken,
@@ -471,6 +472,17 @@ export class AuthService {
         manager,
       );
 
+      // Inside the transaction, and as an increment rather than a read and a
+      // write. If this committed without the version moving, every access token
+      // would keep working for its full lifetime while the refresh tokens behind
+      // them were gone, so the account looked revoked and was not.
+      await manager.increment(
+        User,
+        { id: currentUser.id },
+        'sessionsVersion',
+        1,
+      );
+
       await this.deviceService.revokeAllByUserId(currentUser.id);
     });
   }
@@ -660,6 +672,10 @@ export class AuthService {
       email: user.email,
       role: user.role,
       isManager: user.isManager,
+      // Carried so "log out everywhere" is visible on the next request instead
+      // of after this token expires. Read from the DTO rather than re-fetched, so
+      // the value in the token always matches the row it was minted from.
+      sv: user.sessionsVersion,
     };
 
     return this.jwtService.signAsync(payload);
