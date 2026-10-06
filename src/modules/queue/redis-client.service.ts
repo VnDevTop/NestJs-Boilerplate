@@ -1,10 +1,29 @@
 import { Logger, type OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'node:crypto';
+
 import { createClient, type RedisClientType } from 'redis';
 
 import type { RedisConfig } from '../../configs/redis.config.js';
 
 const logger = new Logger('RedisClientService');
+
+/** Redis' digest for `EVALSHA` is the script's SHA1, lowercase hex. */
+const sha1 = (script: string): string =>
+  createHash('sha1').update(script).digest('hex');
+
+/**
+ * True for redis' `NOSCRIPT`, which means it does not know the digest yet.
+ *
+ * Only that error falls back to sending the body. Every other error, a timeout or
+ * a refused connection included, propagates so `run` can log it and return null,
+ * which is what makes the throttle fail open rather than fail closed.
+ */
+const isNoScriptError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return message.includes('NOSCRIPT');
+};
 
 /**
  * The client factory, injectable so a test can supply a fake without a server.
@@ -188,6 +207,42 @@ export class RedisClientService implements OnModuleDestroy {
    * `null` rather than a throw on purpose: redis being down is an operational
    * condition, and a caller that has to catch it will eventually forget to.
    */
+  /**
+   * Runs a Lua script atomically, returning null when redis is unreachable.
+   *
+   * Added for the throttler storage, which has to count and decide in one step:
+   * reading the counter and then writing it back is a race, and in a rate limiter
+   * the race is exactly the burst an attacker sends. `EVALSHA` first because this
+   * runs on every throttled request, and a script body of a few hundred bytes per
+   * request is real traffic; the body is only sent when redis has forgotten the
+   * digest, which is a restart.
+   */
+  async eval<TArgs extends readonly (string | number)[], TResult>(
+    script: string,
+    keys: readonly string[],
+    args: TArgs,
+  ): Promise<TResult | null> {
+    return this.run(async (client) => {
+      const digest = sha1(script);
+
+      try {
+        return (await client.evalSha(digest, {
+          keys: [...keys],
+          arguments: args.map(String),
+        })) as TResult;
+      } catch (error) {
+        if (!isNoScriptError(error)) {
+          throw error;
+        }
+
+        return (await client.eval(script, {
+          keys: [...keys],
+          arguments: args.map(String),
+        })) as TResult;
+      }
+    });
+  }
+
   private async run<T>(
     command: (client: RedisClientType) => Promise<T>,
   ): Promise<T | null> {
