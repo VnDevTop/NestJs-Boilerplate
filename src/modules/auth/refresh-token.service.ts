@@ -1,10 +1,20 @@
 import { randomUUID } from 'node:crypto';
 
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModuleOptions, JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  IsNull,
+  MoreThan,
+  Repository,
+} from 'typeorm';
 
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { RefreshToken } from './entities/index.js';
@@ -105,6 +115,54 @@ export class RefreshTokenService {
       where: { jti },
       lock: lock ? { mode: 'pessimistic_write' } : undefined,
     });
+  }
+
+  /**
+   * The live refresh tokens of one user, newest first.
+   *
+   * A session is one live refresh token, not one device. Rotation issues a new
+   * row per refresh and marks the previous one revoked, so a device has a chain
+   * of rows behind it and exactly one of them is live. That live row is the
+   * session: the thing whose id the caller passes to revoke it.
+   *
+   * Expired rows are filtered in the query rather than left for the caller to
+   * notice. A session whose token expired an hour ago is not something anybody
+   * can act on, and listing it invites a revoke call that would look like it
+   * worked.
+   */
+  async listLiveByUserId(userId: string): Promise<RefreshToken[]> {
+    return this.refreshTokensRepository.find({
+      where: { userId, revokedAt: IsNull(), expiresAt: MoreThan(new Date()) },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+   * Revokes one live session belonging to `userId`.
+   *
+   * Scoped by owner on purpose. Looking the row up by id alone would let a caller
+   * who guessed another user's session id terminate that session: the id is a
+   * uuid in a response only its owner ever saw, which is exactly the kind of
+   * secret that leaks through a log line or a referrer.
+   *
+   * Revoked atomically against `revokedAt IS NULL`, so two devices racing to drop
+   * the same session do not both report success and overwrite each other's reason.
+   * A session that is already gone is a 404 rather than a silent no-op, because
+   * "I revoked it" when it was already revoked is an answer nobody asked for.
+   */
+  async revokeByIdForUser(
+    userId: string,
+    id: string,
+    reason: RefreshTokenRevokedReason,
+  ): Promise<void> {
+    const result = await this.refreshTokensRepository.update(
+      { id, userId, revokedAt: IsNull() },
+      { revokedAt: new Date(), revokedReason: reason },
+    );
+
+    if (result.affected === 0) {
+      throw new NotFoundException('Session not found');
+    }
   }
 
   async revokeByJti(

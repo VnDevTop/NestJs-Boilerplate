@@ -361,7 +361,8 @@ ce9f119  fix: cascade user devices and two-factor secrets on user delete
 c525251  feat: add the maintenance run log
 25951e7  feat: add the maintenance job processor
 21b9f1c  feat: schedule the retention job
-2a621a0  feat: expose retention runs to an admin
+689a76a  feat: expose retention runs to an admin
+66d4cf4  docs: mark phase 16 data retention as done
 ```
 
 What was built:
@@ -419,7 +420,129 @@ Expected outcome:
 
 ---
 
-## Phase 17: Authentication and Authorization through Cache
+## Phase 17a: Permission-based Authorization
+
+Status: Done
+
+Goal:
+
+Give the authorization layer an actual permission model. The `@Permissions()`
+decorator and `PermissionsGuard` exist, but nothing uses them: there is no
+`permissions` table, no `role_permissions` table, and the guard returns true for
+any route without permission metadata. This phase builds the data model and makes
+the guard enforce it.
+
+This is split out of the original Phase 17 because it is a feature, not a
+performance change, and it is releasable on its own. Everything in Phase 17b
+caches what this phase defines.
+
+Tasks:
+
+- [x] Add a `Permission` entity: `name` unique, `description`, timestamps
+- [x] Add a `RolePermission` entity joining role to permission, unique per pair
+- [x] Generate the migration and seed the permission set each role starts with
+- [x] Add `permissions` to `RequestUser`, populated by the strategy
+- [x] Rewrite `PermissionsGuard` so it checks the user's set, denying by default
+      when a route declares permissions and the user has none
+- [x] Apply `@Permissions()` to the admin routes that should require one, so the
+      decorator has at least one real caller
+- [x] Add `GET /auth/sessions`, listing the caller's refresh sessions and devices
+- [x] Add `DELETE /auth/sessions/:id`, revoking one session without touching the
+      others
+- [x] Add a `sessionsVersion` column on `users`, bumped by `logoutAll()` and by
+      a password change
+- [x] Put `sessionsVersion` in the access token payload and reject a token whose
+      claim does not match, so logout-everywhere kills access tokens
+- [x] Add a throttler storage adapter over the existing `RedisClientService`, so
+      limits hold across replicas instead of resetting per process
+- [x] Add throttler buckets for login, two-factor and refresh, keyed per IP and
+      per email
+- [x] Block login temporarily after repeated failures, the way a desktop OS
+      does: five failures block for one minute, each further failure adds a
+      minute, capped at fifteen, and the block expires on its own
+
+Implementation note: the token carries `sessionsVersion` rather than the strategy
+comparing it against a fresh database read on every request. Reading the column
+would cost the query this phase exists to remove, and the claim makes revocation
+a comparison rather than a lookup. A token issued before the column existed has
+no claim and stays valid, which is correct: it predates the feature.
+
+Implementation note, on the email lookup: `forgot-password`, `resend-verification`
+and `verify-email` must keep doing real database work. Caching the email lookup
+would make a registered address measurably faster than an unknown one on the
+second attempt, which is exactly the account-enumeration oracle the timing floor
+in `src/modules/auth/enumeration.spec.ts` exists to close. Only `login` reads
+through the cache, and its answer is already identical either way.
+
+Commits:
+
+```text
+a781a26  feat: add the permission model
+b622927  feat: enforce permissions in the guard
+42d75cf  feat: list and revoke sessions
+0166711  feat: kill every access token on logout everywhere
+80fc63d  feat: share the rate limit across replicas
+df3085a  fix: apply the per-address rate limits that were never enforced
+b84cc0e  feat: block login temporarily after repeated failures
+c3e70c4  docs: mark phase 17a permission authorization as done
+```
+
+What was built, and what it turned out to need:
+
+- **`Permission` and `RolePermission` entities**, with `ROLE_PERMISSIONS` as the
+  single statement of which role holds what. A plain user holds none, so an
+  unseeded permission locks a route rather than unlocking it.
+- **`PermissionsGuard`** rewritten to check the caller's set, and `@Permissions()`
+  applied to seven routes so the decorator has real callers. It throws a 403
+  naming the missing permission instead of returning false.
+- **`GET/DELETE /auth/sessions`**, where a session is one live refresh token
+  rather than one device, because one device can hold several.
+- **`sessionsVersion`** on the user, carried in the access token, so
+  logout-everywhere is immediate instead of waiting out the fifteen minute token.
+- **A redis rate limit store**, built as a Lua script because a read followed by a
+  write lets a concurrent pair both through, which is the burst being defended
+  against. It fails open, so a redis outage costs rate limiting rather than login.
+- **A temporary login lockout**: five failures block for a minute, each further
+  failure adds a minute, and the length stops growing at fifteen.
+
+Three things this phase found rather than built:
+
+- **The per-address rate limits had never run.** `ThrottlerGuard` builds its list
+  from the module options and nothing else, so a bucket named only in
+  `@Throttle()` metadata is never reached. The three-per-hour mail limit from
+  Phase 14 was configured, documented and tested, and enforced nothing. Every
+  bucket is now declared globally and gated behind a `@RateLimit` marker, with the
+  polarity reversed so an undeclared route is limited by `default` alone.
+- **The lockout counts failures for addresses that do not exist.** Counting only
+  real accounts would make the 429 answer which addresses exist without a single
+  successful guess, which is the question the enumeration floor exists to keep
+  closed. The cost is that anybody can lock an address out; the block is short,
+  grows with the failures and then stops, which slows that attack further than it
+  inconveniences a real person.
+- **Jewellery belongs in redis keys as a hash.** The lockout keys carry a digest
+  of the address, for the same reason `user:email` does.
+
+Known limits:
+
+- The lockout is per address, not per account row, so it counts attempts against
+  addresses nobody registered. That is the price of not leaking existence.
+- Nothing prunes the lockout keys. They carry their own expiry, so redis reclaims
+  them, but an operator watching key count sees them come and go.
+- A single replica serving several processes behind one load balancer still shares
+  nothing; the redis store only matters across replicas, which is where the limits
+  were previously being reset.
+
+Expected outcome:
+
+- A route can require a named permission, and a user without it is refused.
+- A caller can see their own sessions and revoke one.
+- Logout everywhere takes effect on the next request rather than at token expiry.
+- Rate limits and login blocks hold across every replica.
+- Five wrong passwords block that account for a minute, not forever.
+
+---
+
+## Phase 17b: Authentication and Authorization through Cache
 
 Status: Pending
 
@@ -430,52 +553,54 @@ a changed role still takes effect immediately rather than at TTL expiry.
 
 Tasks:
 
-- [ ] Add `wrapOrLoad()` to `CacheService`: read-through with a lock on the
-      miss, so N concurrent requests do not trigger N queries
-- [ ] Cache the sanitised user under `user:<id>`, TTL 60s
-- [ ] Cache the email lookup under `user:email:<hash>`, TTL 300s
+- [ ] Cache the sanitised user under `user:<id>`, TTL 60s, and read it from
+      `JwtStrategy.validate()`
+- [ ] Cache the email lookup under `user:email:<hash>`, TTL 300s, for `login`
+      only
 - [ ] Cache the permission set under `perm:user:<id>`, TTL 60s
-- [ ] Cache the role permission map under `role:<role>`, TTL 600s
-- [ ] Cache revoked token ids under `token:revoked:<jti>`, TTL equal to the
-      remaining token lifetime
-- [ ] Change `JwtStrategy.validate()` to read through the cache instead of
-      querying the user table
-- [ ] Change `PermissionsGuard` to read the cached permission set instead of
-      querying per request
-- [ ] Invalidate on every write to `User`, `Role` and device state
+- [ ] Cache the role permission map under `role:<role>`, TTL 600s, so a permission
+      set is one small read rather than a join per request
+- [ ] Make `PermissionsGuard` read the cached set
+- [ ] Invalidate on every write to `User`, `Role`, `RolePermission` and device
+      state
 - [ ] Do the invalidation from a TypeORM subscriber in
       `src/database/subscribers/`, not from each service, so it cannot be
       forgotten in one of them
-- [ ] Add negative caching for lookups that miss, using the existing
-      `CACHE_EMPTY_TTL`
-- [ ] Wrap the cache so a Redis timeout falls back to the database and only
-      logs
-- [ ] Add a throttler key for login, two-factor and refresh, per IP and per
-      email, backed by Redis so limits hold across replicas
-- [ ] Replace the hard block on login with a progressive delay, so credential
-      stuffing is slowed without locking out a real user
-- [ ] Add `sessionsVersion` on the user, bumped on logout-everywhere, and
-      checked in the strategy so all access tokens die immediately
-- [ ] Add `GET /auth/sessions` and `DELETE /auth/sessions/:id`
-- [ ] Extend the Terminus health indicator to report cache loss as degraded
-      rather than down
+- [ ] Fall back to the database and log only when redis is unreachable, so an
+      outage costs latency rather than availability
+- [ ] Report cache loss as degraded rather than down in the Terminus indicator
+
+Dropped from the original task list, and why:
+
+- **`wrapOrLoad()`.** `CacheService.wrap()` already does this: it coalesces
+  concurrent callers on the same key and stores a nullish result for `emptyTtl`
+  rather than the full TTL. Negative caching therefore arrives with it, and a
+  second helper doing the same job is two implementations of one behaviour.
+- **`token:revoked:<jti>`.** There is no per-access-token revocation to cache.
+  Refresh tokens already carry `revokedAt` in the database, and access tokens die
+  through the `sessionsVersion` claim that Phase 17a adds. A cache of revoked ids
+  would have nothing to read from.
 
 Implementation note: a stale cache entry is an authorization bug, not a
 performance bug. That is why invalidation lives in a subscriber, why TTLs stay
-short, and why the integration test mutates a user and re-reads immediately.
+short, and why the integration test mutates a user and re-reads immediately rather
+than waiting one out.
+
+Commits:
+
+```text
+perf: serve authentication from cache
+perf: serve authorization from cache
+perf: invalidate the auth cache from a subscriber
+perf: report cache loss as degraded
+```
 
 Expected outcome:
 
-- An authenticated request costs one Redis read instead of one or more
-  Postgres queries.
+- An authenticated request costs one redis read instead of one or more postgres
+  queries.
 - A role change or a remote logout takes effect on the next request.
-- A Redis outage costs latency, not availability.
-
-Expected commit:
-
-```text
-perf: serve authentication and authorization from cache
-```
+- A redis outage costs latency, not availability.
 
 ---
 
@@ -544,8 +669,9 @@ Tasks:
 - [ ] Check new passwords against a breach list using the k-anonymity API, or
       an offline list
 - [ ] Keep the last N password hashes and reject reuse
-- [ ] Add an account lockout after N failed attempts, with an unlock flow and
-      a notification
+- [ ] Add a permanent account lockout with an unlock flow and a notification.
+      Phase 17a already blocks login temporarily; this is the version that needs
+      an administrator or a verified email to clear
 - [ ] Add an audit log entity: actor, action, before/after diff, ip, user
       agent, request id, append-only
 - [ ] Record an audit entry on every privileged action, through an interceptor
@@ -726,7 +852,6 @@ Not scheduled. Each needs a decision before it becomes a phase.
   SaaS product, so it is deliberately last.
 - Pagination on the admin and user listing routes, which still return everything
   they match.
-- A shared throttler store, so rate limits are global across replicas.
 - Restricting `GET /users/:id` to the record's owner or an admin. It is still
   readable by any authenticated user, which is recorded as an open decision in
   `src/modules/users/README.md`.
@@ -754,28 +879,29 @@ lands after the harness in Phase 12 is solid.
 
 ## Progress Tracking
 
-| Phase    | Name                                           | Status  |
-| -------- | ---------------------------------------------- | ------- |
-| Phase 0  | Project Architecture Skeleton                  | Done    |
-| Phase 1  | Base Application Foundation                    | Done    |
-| Phase 2  | Users Module                                   | Done    |
-| Phase 3  | Auth Module - Basic JWT                        | Done    |
-| Phase 4  | Authorization - RBAC and Manager Scope         | Done    |
-| Phase 5  | Admin Module Foundation                        | Done    |
-| Phase 6  | API Documentation                              | Done    |
-| Phase 7  | Refresh Tokens                                 | Done    |
-| Phase 8  | Device Authentication                          | Done    |
-| Phase 9  | Two-Factor Authentication                      | Done    |
-| Phase 10 | Cache and Performance                          | Done    |
-| Phase 11 | Production Hardening                           | Done    |
-| Phase 12 | Optional Integration Foundation                | Done    |
-| Phase 13 | Configuration Expansion                        | Done    |
-| Phase 14 | Outbound Email                                 | Done    |
-| Phase 15 | Background Job Queue                           | Done    |
-| Phase 16 | Data Retention and Cleanup                     | Pending |
-| Phase 17 | Authentication and Authorization through Cache | Pending |
-| Phase 18 | Notifications                                  | Pending |
-| Phase 19 | Account Security Features                      | Pending |
-| Phase 20 | Operational Hardening                          | Pending |
-| Phase 21 | Testing Depth and Documentation                | Pending |
-| Phase 22 | Configurable Email Templates                   | Pending |
+| Phase     | Name                                           | Status  |
+| --------- | ---------------------------------------------- | ------- |
+| Phase 0   | Project Architecture Skeleton                  | Done    |
+| Phase 1   | Base Application Foundation                    | Done    |
+| Phase 2   | Users Module                                   | Done    |
+| Phase 3   | Auth Module - Basic JWT                        | Done    |
+| Phase 4   | Authorization - RBAC and Manager Scope         | Done    |
+| Phase 5   | Admin Module Foundation                        | Done    |
+| Phase 6   | API Documentation                              | Done    |
+| Phase 7   | Refresh Tokens                                 | Done    |
+| Phase 8   | Device Authentication                          | Done    |
+| Phase 9   | Two-Factor Authentication                      | Done    |
+| Phase 10  | Cache and Performance                          | Done    |
+| Phase 11  | Production Hardening                           | Done    |
+| Phase 12  | Optional Integration Foundation                | Done    |
+| Phase 13  | Configuration Expansion                        | Done    |
+| Phase 14  | Outbound Email                                 | Done    |
+| Phase 15  | Background Job Queue                           | Done    |
+| Phase 16  | Data Retention and Cleanup                     | Done    |
+| Phase 17a | Permission-based Authorization                 | Done    |
+| Phase 17b | Authentication and Authorization through Cache | Pending |
+| Phase 18  | Notifications                                  | Pending |
+| Phase 19  | Account Security Features                      | Pending |
+| Phase 20  | Operational Hardening                          | Pending |
+| Phase 21  | Testing Depth and Documentation                | Pending |
+| Phase 22  | Configurable Email Templates                   | Pending |

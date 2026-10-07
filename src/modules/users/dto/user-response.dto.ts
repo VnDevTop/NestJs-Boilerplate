@@ -43,6 +43,14 @@ export class UserResponseDto {
   isManager!: boolean;
 
   @ApiProperty({
+    example: 0,
+    description:
+      'Bumped to kill every access token at once. Not shown to clients; ' +
+      'present so a token can be minted with the value the strategy checks.',
+  })
+  sessionsVersion!: number;
+
+  @ApiProperty({
     example: false,
     description:
       'Whether the address is confirmed. The account works either way; Phase ' +
@@ -80,6 +88,7 @@ export class UserResponseDto {
     this.role = user.role;
     this.isActive = user.isActive;
     this.isManager = user.isManager;
+    this.sessionsVersion = user.sessionsVersion;
     this.isEmailVerified = user.isEmailVerified;
     this.lastLoginAt = user.lastLoginAt;
     this.createdAt = user.createdAt;

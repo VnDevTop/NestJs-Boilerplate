@@ -14,17 +14,21 @@ and what it costs, not just what it is.
 The boilerplate is complete through production hardening. This is a working
 starting point rather than a scaffold to fill in.
 
-| Area          | What works                                                                                       |
-| ------------- | ------------------------------------------------------------------------------------------------ |
-| Sessions      | Rotating refresh tokens, locked so concurrent refreshes have one winner; replay treated as theft |
-| Devices       | Fingerprinted by user agent, revocation cascades to tokens                                       |
-| Two-factor    | Optional TOTP, secret encrypted at rest, single use steps, one time recovery codes               |
-| Authorisation | `@Roles()`, `@ManagerOnly()`, a `@Permissions()` placeholder                                     |
-| Configuration | Namespaced and typed, whole environment validated before anything connects                       |
-| Cache         | Redis or Valkey with request coalescing and stale while revalidate                               |
-| Rate limiting | Global, tightened on every route that accepts a secret                                           |
-| Observability | Request id, JSON production logs, liveness and readiness kept apart                              |
-| Operations    | Reviewed migrations, idempotent seed, two stage image, compose stack, CI                         |
+| Area            | What works                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------ |
+| Sessions        | Rotating refresh tokens, locked so concurrent refreshes have one winner; replay treated as theft |
+| Devices         | Fingerprinted by user agent, revocation cascades to tokens                                       |
+| Two-factor      | Optional TOTP, secret encrypted at rest, single use steps, one time recovery codes               |
+| Authorisation   | `@Roles()`, `@ManagerOnly()`, and `@Permissions()` against a real permission table               |
+| Sessions        | Listable and individually revocable; logout everywhere is immediate, not a token-expiry wait     |
+| Configuration   | Namespaced and typed, whole environment validated before anything connects                       |
+| Cache           | Redis or Valkey with request coalescing and stale while revalidate                               |
+| Rate limiting   | Counted in Redis, so it holds across replicas; two buckets per credential route, plus a lockout  |
+| Mail            | Swappable transport, queued so a slow provider cannot fail a signup; verification and reset      |
+| Background jobs | Provider-level queue with an in-process fallback, retries, deduplication and a dead-letter list  |
+| Data retention  | Nightly batched cleanup with a dry run, run history and an admin route                           |
+| Observability   | Request id, JSON production logs, liveness and readiness kept apart                              |
+| Operations      | Reviewed migrations, idempotent seed, two stage image, compose stack, CI                         |
 
 ## Open decisions
 
@@ -34,8 +38,8 @@ it unmade is the point.
 | Decision                                           | Why it matters                                                         |
 | -------------------------------------------------- | ---------------------------------------------------------------------- |
 | Restrict `GET /users/:id` to the owner or an admin | Any authenticated user can read another user's profile, email included |
-| Share the rate limit counters                      | The effective limit is the configured one times the replica count      |
 | Paginate the listing routes                        | `GET /users` and the admin dashboard return every matching row         |
+| Cache the positive auth claims, or only negatives  | A stale positive entry is an authorisation bug, not a slow query       |
 
 ---
 
@@ -43,10 +47,10 @@ it unmade is the point.
 
 Ordered by what most real projects need first. Each is a plan, not a promise.
 
-### 1. Email
+### 1. Email — built, Phase 14
 
-Nothing else in this list is blocked on it, and several things on it are worse
-without it.
+Delivered, along with the queue it needed (Phase 15). Kept here because the
+shape is worth reading before replacing any of it.
 
 - A mailer behind an interface, so the transport is swappable and tests use a
   fake. Welcome on registration, email verification, password reset, a notice
@@ -63,7 +67,10 @@ without it.
 **Watch out:** an account enumeration leak in the "forgot password" response.
 Answer the same way whether or not the address exists.
 
-### 2. Data cleanup
+### 2. Data cleanup — built, Phase 16
+
+Delivered as a nightly batched job with a dry run and run history. Kept for the
+reasoning about why deletes are batched rather than issued as one statement.
 
 The database only gets bigger, and soft deleted rows and revoked tokens are pure
 cost once nobody can use them.
@@ -83,10 +90,16 @@ cost once nobody can use them.
 **Watch out:** foreign keys. Deleting a user cascades to devices and tokens by
 design, so the order matters and a partial run must be restartable.
 
-### 3. Auth and authorisation through the cache
+### 3. Auth and authorisation through the cache — half built
 
-The obvious win, and the one with the sharpest edge, because this is the one
-place the template deliberately does not cache.
+Phase 17a added the permission model, the guard that enforces it, listable and
+revocable sessions, an immediate logout everywhere, redis rate limiting and a
+login lockout. Phase 17b does the caching, and is the one with the sharp edge.
+
+One note from 17a that changes this recommendation: the permission model it
+caches is per role, so a role change invalidates every user holding it. That is a
+much smaller blast radius than caching per-user claims, and it is why the stale
+entry question is narrower than it was when this was first written.
 
 - `JwtStrategy` reads `isActive`, `role` and `isManager` on every request, so a
   deactivation or a role change takes effect immediately. A cache makes that
@@ -104,7 +117,7 @@ place the template deliberately does not cache.
 This is why the template does not cache it by default, and why the negative-only
 shape is the recommendation.
 
-### 4. Notifications
+### 4. Notifications — not started
 
 - Delivery to Telegram, Slack, Discord, email and a webhook, behind one interface
   so a feature emits an event and does not know which channels are configured.
@@ -121,9 +134,9 @@ shape is the recommendation.
 - Webhook deliveries signed with HMAC, with a timestamp in the header so the
   receiver can reject a replay.
 
-### 5. Background jobs
+### 5. Background jobs — built, Phase 15
 
-Both of the plans above need one, and it is worth having on its own.
+Both plans above needed one, and it is worth having on its own.
 
 - A queue for anything a user should not wait for: email, cleanup, exports,
   webhooks.

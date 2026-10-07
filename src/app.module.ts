@@ -17,6 +17,7 @@ import {
   securityConfig,
   swaggerConfig,
   throttlerConfig,
+  throttlerModuleConfig,
   twoFactorConfig,
   validateEnvironment,
 } from './configs/index.js';
@@ -24,6 +25,7 @@ import {
   AdminModule,
   AuthModule,
   MaintenanceSchedulerModule,
+  QueueModule,
   UsersModule,
 } from './modules/index.js';
 import {
@@ -37,6 +39,7 @@ import {
   catchAllRoute,
   RequestIdMiddleware,
 } from './common/middlewares/index.js';
+import { THROTTLER_STORAGE } from './modules/queue/throttler/redis-throttler.storage.js';
 import { AppService } from './app.service.js';
 import { AppController } from './app.controller.js';
 
@@ -73,7 +76,17 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
         !!env['OBSERVE_SERVICE_ID'],
     ),
     TypeOrmModule.forRootAsync(databaseConfig.asProvider()),
-    ThrottlerModule.forRootAsync(throttlerConfig.asProvider()),
+
+    /**
+     * Imported for `THROTTLER_STORAGE` and its redis client, not for the queue
+     * jobs: nothing here enqueues, but the rate limiter has to count in the same
+     * place across replicas or the limit is one per process.
+     */
+    QueueModule,
+    ThrottlerModule.forRootAsync({
+      inject: [THROTTLER_STORAGE],
+      useFactory: throttlerModuleConfig,
+    }),
 
     /**
      * Scheduled work, registered once for the whole application.

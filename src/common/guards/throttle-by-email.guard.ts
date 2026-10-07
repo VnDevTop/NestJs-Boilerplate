@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { ExecutionContext } from '@nestjs/common';
 
-import { MAIL_EMAIL_BUCKET } from '../constants/index.js';
+import { LOGIN_EMAIL_BUCKET, MAIL_EMAIL_BUCKET } from '../constants/index.js';
 
 /**
  * Two rate limits on the routes that send mail, keyed differently on purpose.
@@ -13,7 +13,9 @@ import { MAIL_EMAIL_BUCKET } from '../constants/index.js';
  * reset mail at all. So there are two buckets and both must pass:
  *
  * - **Per requested address.** Stops an attacker who has one mailbox from
- *   draining it, and from using it to find out whether the account exists.
+ *   draining it, and from using it to find out whether the account exists. The
+ *   same shape limits password guessing, where the target is the account rather
+ *   than the mailbox.
  * - **Per client address.** Stops an attacker spraying many addresses from one
  *   host, which a per-address limit cannot see.
  *
@@ -22,6 +24,18 @@ import { MAIL_EMAIL_BUCKET } from '../constants/index.js';
  * per-address bucket and deferring to the parent for the per-ip one keeps both
  * limits instead of replacing the ip one with it.
  */
+/**
+ * Buckets whose key comes from the submitted address rather than the client.
+ *
+ * A set rather than a chain of comparisons so adding a bucket is one entry, and
+ * so a bucket that forgets to be listed falls back to the per-client key instead
+ * of silently keying on nothing.
+ */
+const EMAIL_KEYED_BUCKETS: ReadonlySet<string> = new Set([
+  MAIL_EMAIL_BUCKET,
+  LOGIN_EMAIL_BUCKET,
+]);
+
 @Injectable()
 export class ThrottleByEmailGuard extends ThrottlerGuard {
   protected override generateKey(
@@ -29,7 +43,7 @@ export class ThrottleByEmailGuard extends ThrottlerGuard {
     suffix: string,
     name: string,
   ): string {
-    if (name !== MAIL_EMAIL_BUCKET) {
+    if (!EMAIL_KEYED_BUCKETS.has(name)) {
       return super.generateKey(context, suffix, name);
     }
 

@@ -29,6 +29,7 @@ import {
 } from '@nestjs/swagger';
 
 import { ThrottleByEmailGuard } from '../../common/guards/index.js';
+import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
 import {
   DEVICE_NAME_HEADER,
   DEVICE_NAME_MAX_LENGTH,
@@ -42,6 +43,7 @@ import {
 import type { RequestUser } from '../../common/interfaces/index.js';
 import { UserResponseDto } from '../users/dto/index.js';
 import {
+  AuthSessionDto,
   AuthTokenResponseDto,
   ForgotPasswordDto,
   GenericMessageDto,
@@ -98,7 +100,8 @@ export class AuthController {
 
   // Password guessing is the reason this route exists, so it is the
   // tightest limit in the app.
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @UseGuards(ThrottleByEmailGuard)
+  @RateLimit('login')
   @Public()
   @Post('login')
   @ApiOperation({ summary: 'Login with email and password' })
@@ -129,7 +132,8 @@ export class AuthController {
 
   // A six digit code has a million combinations, so it must not be
   // brute forceable.
-  @Throttle({ default: { limit: 5, ttl: 300000 } })
+  @UseGuards(ThrottleByEmailGuard)
+  @RateLimit('login')
   @Public()
   @Post('2fa/login')
   @ApiOperation({
@@ -209,6 +213,7 @@ export class AuthController {
    * timing analysis to read.
    */
   @UseGuards(ThrottleByEmailGuard)
+  @RateLimit('mail')
   @Throttle(mailThrottleOptions())
   @Public()
   @Post('forgot-password')
@@ -277,6 +282,7 @@ export class AuthController {
   }
 
   @UseGuards(ThrottleByEmailGuard)
+  @RateLimit('mail')
   @Throttle(mailThrottleOptions())
   @Public()
   @Post('resend-verification')
@@ -301,6 +307,7 @@ export class AuthController {
     );
   }
 
+  @RateLimit('refresh')
   @Post('refresh-token')
   @ApiOperation({
     summary: 'Exchange a refresh token for a new token pair',
@@ -356,6 +363,41 @@ export class AuthController {
   @ApiOkResponse({ type: UserDeviceDto, isArray: true })
   devices(@CurrentUser() currentUser: RequestUser): Promise<UserDeviceDto[]> {
     return this.authService.listDevices(currentUser);
+  }
+
+  /**
+   * Live sessions, one per refresh chain.
+   *
+   * Separate from `devices`, which lists machines. One device can hold more than
+   * one session, and revoking them is not the same act: `devices/:id` ends every
+   * session on the machine, `sessions/:id` ends one of them.
+   */
+  @Get('sessions')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'List the current user live sessions' })
+  @ApiOkResponse({ type: AuthSessionDto, isArray: true })
+  sessions(@CurrentUser() currentUser: RequestUser): Promise<AuthSessionDto[]> {
+    return this.authService.listSessions(currentUser);
+  }
+
+  /**
+   * Revokes one session.
+   *
+   * Scoped to the caller's own sessions: an id that is not one of theirs is a 404,
+   * which is deliberately indistinguishable from one that does not exist. Answering
+   * "not yours" would confirm that somebody else's session id is real.
+   */
+  @Delete('sessions/:id')
+  @ApiBearerAuth('access-token')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke one session, leaving the others alone' })
+  @ApiNoContentResponse({ description: 'Session revoked' })
+  @ApiNotFoundResponse({ description: 'Session not found' })
+  revokeSession(
+    @CurrentUser() currentUser: RequestUser,
+    @Param('id') sessionId: string,
+  ): Promise<void> {
+    return this.authService.revokeSession(currentUser, sessionId);
   }
 
   @Delete('devices/:id')

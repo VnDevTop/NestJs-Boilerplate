@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashToken } from '../../common/utils/index.js';
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { PasswordResetToken } from './entities/index.js';
+import { User } from '../users/entities/index.js';
 import { PasswordResetService } from './password-reset.service.js';
 
 const USER = { id: 'user-1', email: 'a@x.com' } as never;
@@ -45,6 +46,7 @@ function fakeManager(
       ),
     create: vi.fn().mockImplementation((_entity, value) => value),
     find: vi.fn().mockResolvedValue([]),
+    increment: vi.fn().mockResolvedValue({ affected: 1 }),
   };
 
   return { manager, row, user: user as { id: string; password: string } };
@@ -157,6 +159,33 @@ describe('PasswordResetService.consume', () => {
       RefreshTokenRevokedReason.PasswordChanged,
       expect.anything(),
     );
+  });
+
+  it('bumps the sessions version, so the access tokens die too', async () => {
+    // Killing the refresh tokens alone leaves every access token working for its
+    // remaining fifteen minutes. Somebody resetting because they think another
+    // person has access must not leave that person's token alive.
+    const { service, manager } = build();
+
+    await service.consume('the-token', 'a-new-password');
+
+    expect(manager.increment).toHaveBeenCalledWith(
+      User,
+      { id: 'user-1' },
+      'sessionsVersion',
+      1,
+    );
+  });
+
+  it('bumps inside the same transaction as the password change', async () => {
+    const { service, transaction, manager } = build();
+
+    await service.consume('the-token', 'a-new-password');
+
+    // A version committed apart from the revocation would leave every token valid
+    // against a row claiming the sessions were killed.
+    expect(transaction).toHaveBeenCalled();
+    expect(manager.increment).toHaveBeenCalled();
   });
 
   it('rejects an unknown token without changing anything', async () => {

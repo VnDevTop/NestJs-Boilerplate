@@ -6,7 +6,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { ManagerOnly } from '../../common/decorators/index.js';
+import { ManagerOnly, Permissions } from '../../common/decorators/index.js';
+import { Permission } from '../../common/enums/index.js';
 import { AdminService } from './admin.service.js';
 import {
   AdminDashboardResponseDto,
@@ -21,6 +22,7 @@ export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
   @Get('health')
+  @Permissions(Permission.AdminHealthRead)
   @ApiOperation({ summary: 'Get admin module health status' })
   @ApiOkResponse({ type: AdminHealthResponseDto })
   getHealth(): AdminHealthResponseDto {
@@ -28,6 +30,7 @@ export class AdminController {
   }
 
   @Get('dashboard')
+  @Permissions(Permission.AdminHealthRead)
   @ApiOperation({ summary: 'Get admin dashboard placeholder data' })
   @ApiOkResponse({ type: AdminDashboardResponseDto })
   getDashboard(): AdminDashboardResponseDto {

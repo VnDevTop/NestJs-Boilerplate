@@ -6,8 +6,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { ManagerOnly, Roles } from '../../common/decorators/index.js';
-import { Role } from '../../common/enums/index.js';
+import {
+  ManagerOnly,
+  Permissions,
+  Roles,
+} from '../../common/decorators/index.js';
+import { Permission, Role } from '../../common/enums/index.js';
 import { RetentionTrigger } from '../maintenance/entities/retention-trigger.enum.js';
 import {
   RetentionQueuedDto,
@@ -61,6 +65,7 @@ export class AdminRetentionController {
    * than a slow one.
    */
   @Roles(Role.Admin, Role.SuperAdmin)
+  @Permissions(Permission.MaintenanceRun)
   @Post('dry-run')
   @HttpCode(200)
   @ApiOperation({
@@ -90,6 +95,7 @@ export class AdminRetentionController {
    * second one that only the HTTP route uses.
    */
   @Roles(Role.Admin, Role.SuperAdmin)
+  @Permissions(Permission.MaintenanceRun)
   @Post('run')
   @HttpCode(202)
   @ApiOperation({ summary: 'Queue a retention run' })

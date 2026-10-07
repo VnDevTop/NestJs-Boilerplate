@@ -9,7 +9,11 @@ import {
   UserDevice,
 } from '../modules/auth/entities/index.js';
 import { MaintenanceLog } from '../modules/maintenance/entities/index.js';
-import { User } from '../modules/users/entities/index.js';
+import {
+  Permission,
+  RolePermission,
+  User,
+} from '../modules/users/entities/index.js';
 
 /**
  * A standalone DataSource for the TypeORM CLI, which runs outside Nest.
@@ -29,6 +33,8 @@ export const ENTITIES = [
   EmailVerificationToken,
   PasswordResetToken,
   MaintenanceLog,
+  Permission,
+  RolePermission,
 ];
 
 export const migrations = ['dist/database/migrations/*.js'];

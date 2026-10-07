@@ -4,9 +4,12 @@ Business features. Each folder is one domain module.
 
 ```text
 modules
-├── auth/     sign in, sessions, devices, two-factor
-├── users/    the user domain
-└── admin/    operator-only routes
+├── auth/       sign in, sessions, devices, two-factor, permissions, lockout
+├── users/      the user domain and its permissions
+├── admin/      operator-only routes
+├── mail/       transactional email, queued, swappable transport
+├── queue/      background jobs, with an in-process fallback
+└── maintenance/ nightly retention, batching, dry run
 ```
 
 ## Rules

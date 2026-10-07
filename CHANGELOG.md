@@ -15,6 +15,288 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: block login temporarily after repeated failures
+
+Phase 17a. Intended commit: `feat: block login temporarily after repeated failures`
+
+**Tasks**
+
+- [x] Count failures per address in redis, so the count holds across replicas
+- [x] Block for a minute at five failures, a minute more per further failure,
+      capped at fifteen
+- [x] Answer 429 with `Retry-After` and nothing else about the wait
+- [x] Notify the owner once per lockout, never for an unregistered address
+- [x] Fail open when redis is unreachable
+
+- The numbers are constants rather than environment variables, matching how the
+  mail buckets were done. That is a departure from the rest of the
+  configuration, and it is a decision worth revisiting if a deployment needs to
+  tune the lockout without a release.
+- The body of the 429 deliberately omits the remaining time and the header carries
+  it, because a body naming the time left is a progress bar for somebody guessing
+  a password.
+- Failures are counted for addresses that do not exist. Counting only real
+  accounts would make the status code answer which addresses exist, which is the
+  question the enumeration floor exists to keep closed. The cost is that anybody
+  can lock an address out by guessing it wrong.
+- Redis keys carry a digest of the address rather than the address, so an
+  operator with read access does not acquire a mailing list.
+
+## docs: mark phase 17a permission authorization as done
+
+Phase 17a. Intended commit: `docs: mark phase 17a permission authorization as done`
+
+**Tasks**
+
+- [x] Mark the phase done and tick its tasks in the plan
+- [x] Record what the phase found rather than built
+
+- The two findings are the reason this entry is longer than a status flip. The
+  per-address rate limits had never been enforced, and `account-locked` had been
+  sitting in the template registry without a caller since Phase 14.
+
+## fix: apply the per-address rate limits that were never enforced
+
+Phase 17a. Intended commit: `fix: apply the per-address rate limits that were never enforced`
+
+**Tasks**
+
+- [x] Declare every named bucket in the throttler module options
+- [x] Gate each one behind a `@RateLimit` marker so it applies to opted-in routes
+- [x] Key both email buckets on the submitted address
+
+- `ThrottlerGuard` builds its list from the module options and nothing else, then
+  loops over that whole list on every request. A bucket named only in
+  `@Throttle()` metadata is never reached, so the three-per-hour per-address mail
+  limit configured in Phase 14 had been enforced by nothing. It was written, tested
+  and documented.
+- The polarity is opt-in because declaring the buckets globally otherwise puts the
+  mail limit on every endpoint in the application.
+- The route-level limit and the module-level limit were initially declared in two
+  places, and a test caught it: `@Throttle` overrides the module value, so two
+  sources of the same number drift. The numbers now live in one place.
+
+## feat: share the rate limit across replicas
+
+Phase 17a. Intended commit: `feat: share the rate limit across replicas`
+
+**Tasks**
+
+- [x] Add a throttler storage over the existing redis client
+- [x] Count and decide in one atomic step
+- [x] Block for the rest of the window once exceeded
+- [x] Fail open when redis is unreachable
+
+- The decision is a Lua script rather than a read and a write, because the race
+  is the bug: two requests read the same count, both write the next value, both
+  are allowed. That is the burst an attacker sends.
+- The counter resets when a block is set. Without that the counter is still above
+  the limit when the block lifts, the next request re-blocks, and a temporary
+  lockout becomes permanent. Verified against a real redis rather than reasoned
+  about.
+- A request that arrives while blocked does not extend the block, or a client
+  polling in a loop is never released.
+
+## feat: kill every access token on logout everywhere
+
+Phase 17a. Intended commit: `feat: kill every access token on logout everywhere`
+
+**Tasks**
+
+- [x] Add a `sessionsVersion` column, incremented on logout everywhere and on a
+      password reset
+- [x] Carry it in the access token and compare it in the strategy
+- [x] Accept a token with no claim only while the user is still at zero
+
+- A permanent lockout would have been simpler and wrong: anyone can sign out a
+  victim's account, and the owner is the person least able to fix it.
+- A token issued before the column existed is accepted only while the user's
+  version is zero, meaning nothing has asked for their sessions to die. Strict
+  equality would sign out everyone on deploy, to protect a fifteen minute token
+  that expires on its own.
+
+## feat: list and revoke sessions
+
+Phase 17a. Intended commit: `feat: list and revoke sessions`
+
+**Tasks**
+
+- [x] `GET /auth/sessions`, listing live refresh sessions with their device
+- [x] `DELETE /auth/sessions/:id`, revoking one session and not the others
+
+- A session is one live refresh token, not one device. Rotation leaves a chain of
+  revoked rows behind exactly one live row, and one device can hold several.
+- Revocation is scoped to the caller, and an id that is not theirs answers exactly
+  as one that does not exist, because "not yours" confirms the id is real.
+- There is no "is this my current session" flag. The access token carries neither
+  a device nor a token id and the refresh token travels in the body, so the server
+  cannot tell. The client already holds the token and can match the id itself.
+
+## feat: enforce permissions in the guard
+
+Phase 17a. Intended commit: `feat: enforce permissions in the guard`
+
+**Tasks**
+
+- [x] Rewrite the guard to check the caller's set, denying by default
+- [x] Apply `@Permissions()` to seven routes so the decorator has real callers
+
+- Deny by default means an ordinary user holds nothing, so a route that names a
+  permission refuses rather than admits anybody who has not been granted it. An
+  unseeded permission locks a route instead of unlocking it.
+- The guard throws a 403 naming the missing permission instead of returning
+  false, which would be a bare 403 that tells an operator nothing about what to
+  grant.
+- The three permissions that cannot be undone from the admin screen sit behind the
+  super administrator role.
+
+## feat: add the permission model
+
+Phase 17a. Intended commit: `feat: add the permission model`
+
+**Tasks**
+
+- [x] Add `Permission` and `RolePermission` with a unique pair
+- [x] Seed the permission set each role starts with
+- [x] Declare the catalogue and the grants together
+
+- The plan assumed a permission system existed. It did not: there was no table,
+  no entity, the decorator had no caller, and the guard returned true for every
+  route.
+- The unique index on the pair is what makes the seed idempotent. The first
+  version reported every grant as new on every run, because a driver reports the
+  rows it attempted rather than the ones the database kept.
+
+## docs: split phase 17 into a permission phase and a cache phase
+
+Intended commit: `docs: split phase 17 into a permission phase and a cache phase`
+
+**Tasks**
+
+- [x] Split the phase in two, releasable separately
+- [x] Record the tasks that describe work already done or never needed
+
+- The permission work is a feature and the cache work is a performance change.
+  Bundled into one phase they could not be released independently.
+- `wrapOrLoad()` was dropped: `CacheService.wrap()` already coalesces concurrent
+  callers and already stores a nullish result for the short TTL.
+- `token:revoked:<jti>` was dropped: there is no per-access-token revocation to
+  cache. Refresh tokens carry `revokedAt` and access tokens die through the
+  version claim.
+- The health task was not an addition but a change: the indicator already existed
+  and reported `down`.
+
+## fix: cascade user devices and two-factor secrets on user delete
+
+Phase 16. Intended commit: `fix: cascade user devices and two-factor secrets on user delete`
+
+**Tasks**
+
+- [x] Cascade `user_devices` and add the missing constraint on `two_factor_secrets`
+
+- `two_factor_secrets` declared the column without a relation, so TypeORM generated
+  no constraint at all and a hard-deleted user left the secret behind forever.
+- `user_devices` was `NO ACTION`, so deleting a user who still had a device raised
+  a foreign key violation, at three in the morning, from a job nobody was watching.
+
+## feat: define the retention policy table
+
+Phase 16. Intended commit: `feat: define the retention policy table`
+
+**Tasks**
+
+- [x] One entry per table, each with its own predicate
+- [x] Keep a deferred list so the gap is reviewable
+
+- The policy is data rather than a switch statement, so adding a table is adding
+  an entry and each predicate is testable without a database.
+- Four tables named in the plan have no table yet. They are listed as deferred
+  rather than left out, because a rule naming a missing table would fail on every
+  run.
+
+## feat: add batched retention deletes
+
+Phase 16. Intended commit: `feat: add batched retention deletes`
+
+**Tasks**
+
+- [x] Delete in batches, one transaction each, with a pause between
+- [x] Add a dry run that counts and deletes nothing
+- [x] Stop on the run timeout rather than finishing the batch in progress
+
+- A query runner returns the tuple `[entities, affected]` for a statement with
+  `RETURNING`, not the deleted rows. Reading the array length counts two for every
+  delete, which either loops until the timeout or stops after the first batch,
+  silently, depending on the batch size.
+- A failed target is recorded and skipped rather than ending the run. One renamed
+  column should cost a skipped table, not a week of uncollected data.
+
+## feat: add the maintenance run log
+
+Phase 16. Intended commit: `feat: add the maintenance run log`
+
+**Tasks**
+
+- [x] Add an append-only run log with no index
+- [x] Record the per-target detail so the history can be read without a chart
+
+- A run is about 728 bytes stored, so a year of nightly runs is roughly 260 KB.
+  An index would be the only index on the table and would cost more than it saves.
+- The migration also tried to alter a column from the previous phase, because a
+  default declared as a callback does not compare equal to what the driver reads
+  back. Every later migration would have carried the same two lines.
+
+## feat: add the maintenance job processor
+
+Phase 16. Intended commit: `feat: add the maintenance job processor`
+
+**Tasks**
+
+- [x] Run the policy as a queue job and record the run
+- [x] Share one execution path between the schedule and the admin route
+
+- The processor sits below the queue in the module graph and the scheduler above
+  it, which is why the scheduled entry is a separate module rather than a member
+  of the same one. The alternative was `forwardRef`, which hides a loop rather than
+  removing it.
+- A run that finished is a success even when individual targets failed: a renamed
+  column answers a retry identically five seconds later. A timeout is the opposite
+  and stays retryable, because tables were left unclean.
+
+## feat: schedule the retention job
+
+Phase 16. Intended commit: `feat: schedule the retention job`
+
+**Tasks**
+
+- [x] Schedule the nightly run through the job queue
+- [x] Default `RETENTION_ENABLED` to true
+
+- Registered with `SchedulerRegistry` and a script built at bootstrap, because the
+  decorator needs its expression as a literal at the moment the class is defined.
+- A malformed schedule is logged and the job is not scheduled, rather than
+  throwing out of bootstrap over a typo in an environment variable.
+- The schedule does not catch up a missed run. Restarting is fine because the
+  schedule is re-registered on every boot, but a process that is not running at
+  that minute loses the night, and nothing logs it.
+
+## feat: expose retention runs to an admin
+
+Phase 16. Intended commit: `feat: expose retention runs to an admin`
+
+**Tasks**
+
+- [x] A dry run that answers synchronously, and a real run that is queued
+- [x] Read the history
+- [x] Require a permission for the two routes that change data
+
+- The dry run is synchronous because counting is fast enough to answer inside a
+  request and an operator rehearsing against production data wants the numbers
+  now. A real run is queued because batching can take minutes.
+- The two write routes need `maintenance:run` while the read routes stay at the
+  manager level, so reading the history does not carry the ability to delete
+  every user in the database.
+
 ## docs: licence, contributor and security documentation
 
 Intended commit: `docs: add licence, contributing guide, security policy and roadmap`

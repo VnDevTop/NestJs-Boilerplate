@@ -22,13 +22,14 @@ import {
 import { UserResponseDto } from '../users/dto/index.js';
 import { UsersService } from '../users/index.js';
 import {
+  AuthSessionDto,
   ForgotPasswordDto,
   GenericMessageDto,
   LoginDto,
   LogoutDto,
   RefreshTokenDto,
-  ResendVerificationDto,
   RegisterDto,
+  ResendVerificationDto,
   ResetPasswordDto,
   TwoFactorCodeDto,
   TwoFactorEnabledResponseDto,
@@ -39,8 +40,11 @@ import {
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { RefreshTokenService } from './refresh-token.service.js';
 import { DeviceService } from './device.service.js';
+import { LoginLockedException } from './exceptions/login-locked.exception.js';
+import { LoginLockoutService } from './login-lockout.service.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { PasswordResetService } from './password-reset.service.js';
+import { User } from '../users/entities/index.js';
 import { TwoFactorService } from './two-factor.service.js';
 import {
   AuthToken,
@@ -73,6 +77,7 @@ export class AuthService {
     // resolve the type from and would fail with an unresolvable dependency.
     @Inject(JOB_QUEUE) private readonly jobQueue: JobQueue,
     private readonly configService: ConfigService,
+    private readonly loginLockout: LoginLockoutService,
   ) {}
 
   private get appConfig(): AppConfig {
@@ -107,13 +112,82 @@ export class AuthService {
    * here, the caller receives a short lived challenge instead and has to prove
    * the second factor on the two-factor login route.
    */
+  /**
+   * Counts a rejected attempt and notifies the owner when it starts a lockout.
+   *
+   * The mail goes only when the account exists, and only on the attempt that
+   * begins the block. Sending per rejected request would turn the login route into
+   * a way to make the application mail an address repeatedly.
+   */
+  private async recordLoginFailure(email: string): Promise<void> {
+    const state = await this.loginLockout.recordFailure(email);
+
+    if (!state.firstBlock) {
+      return;
+    }
+
+    const user = await this.usersService.findByEmail(email);
+
+    if (!user || !user.isActive) {
+      return;
+    }
+
+    // Enqueued rather than sent, so a slow provider cannot hold the response
+    // that is already on its way back to the caller.
+    await this.enqueueMail(
+      {
+        to: user.email,
+        template: 'account-locked',
+        data: {
+          reason: `Too many failed sign-in attempts. Try again in about ${Math.max(
+            1,
+            Math.ceil(state.retryAfterSeconds / 60),
+          )} minute(s).`,
+          supportUrl: this.mailService.buildUrl('/support'),
+          appName: this.appConfig.name,
+        },
+      },
+      // Keyed on the block length, so a second lockout after a lapse notifies
+      // again while the attempts inside one block do not.
+      dedupeKey({
+        template: 'account-locked',
+        to: user.email,
+        subjectId: String(state.retryAfterSeconds),
+      }),
+    );
+  }
+
+  /**
+   * Signs a user in, counting failures and blocking the account for a while when
+   * there are too many.
+   *
+   * The order is load-bearing. The block is checked *before* the user is looked
+   * up, and a failure is recorded for *every* rejected attempt whether or not the
+   * address exists. That is what keeps the answer identical for a real account and
+   * a made-up one: if only real accounts could produce a 429, the status code
+   * would answer the question the enumeration floor in
+   * `enumeration.spec.ts` exists to keep quiet.
+   *
+   * The trade is that anybody can lock an address out by failing to guess it, and
+   * the owner may never see an attempt. The block is short, grows with the failures
+   * and then stops growing, which slows that attack far more than it inconveniences
+   * a real person.
+   */
   async login(
     loginDto: LoginDto,
     metadata: DeviceMetadata,
   ): Promise<LoginResult> {
+    const lockout = await this.loginLockout.inspect(loginDto.email);
+
+    if (lockout.blocked) {
+      throw new LoginLockedException(lockout.retryAfterSeconds);
+    }
+
     const user = await this.usersService.findByEmail(loginDto.email);
 
     if (!user || !user.isActive) {
+      await this.recordLoginFailure(loginDto.email);
+
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -123,8 +197,14 @@ export class AuthService {
     );
 
     if (!isPasswordValid) {
+      await this.recordLoginFailure(loginDto.email);
+
       throw new UnauthorizedException('Invalid email or password');
     }
+
+    // Cleared before anything else can fail, so a transient error later in the
+    // sign-in does not leave a count that will block the next honest attempt.
+    await this.loginLockout.reset(loginDto.email);
 
     const userResponse = UserResponseDto.fromEntity(user);
 
@@ -470,6 +550,17 @@ export class AuthService {
         manager,
       );
 
+      // Inside the transaction, and as an increment rather than a read and a
+      // write. If this committed without the version moving, every access token
+      // would keep working for its full lifetime while the refresh tokens behind
+      // them were gone, so the account looked revoked and was not.
+      await manager.increment(
+        User,
+        { id: currentUser.id },
+        'sessionsVersion',
+        1,
+      );
+
       await this.deviceService.revokeAllByUserId(currentUser.id);
     });
   }
@@ -480,6 +571,63 @@ export class AuthService {
 
   listDevices(currentUser: RequestUser): Promise<UserDeviceDto[]> {
     return this.deviceService.listByUserId(currentUser.id);
+  }
+
+  /**
+   * The caller's live sessions.
+   *
+   * A session is one live refresh token, so this is the row a refresh chain
+   * currently rests on. Expired and already-revoked rows are excluded by the
+   * query, which means the list only ever contains something the caller could
+   * usefully revoke.
+   *
+   * Device names are filled in from the caller's devices rather than joined, and
+   * a session whose device has since been removed is still listed with no name.
+   * Dropping it would hide a session that is still able to refresh.
+   */
+  async listSessions(currentUser: RequestUser): Promise<AuthSessionDto[]> {
+    if (!currentUser?.id) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const [tokens, devices] = await Promise.all([
+      this.refreshTokenService.listLiveByUserId(currentUser.id),
+      this.deviceService.listByUserId(currentUser.id),
+    ]);
+
+    const deviceNames = new Map(
+      devices.map((device) => [device.id, device.deviceName]),
+    );
+
+    return tokens.map((token) =>
+      AuthSessionDto.fromEntity(
+        token,
+        token.deviceId === null
+          ? null
+          : (deviceNames.get(token.deviceId) ?? null),
+      ),
+    );
+  }
+
+  /**
+   * Revokes one session, leaving the caller's others alone.
+   *
+   * The lookup is scoped to the caller's own sessions, so an id belonging to
+   * someone else is a 404 rather than a successful revocation of their access.
+   */
+  async revokeSession(
+    currentUser: RequestUser,
+    sessionId: string,
+  ): Promise<void> {
+    if (!currentUser?.id) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    await this.refreshTokenService.revokeByIdForUser(
+      currentUser.id,
+      sessionId,
+      RefreshTokenRevokedReason.SessionRevoked,
+    );
   }
 
   async revokeDevice(
@@ -602,6 +750,10 @@ export class AuthService {
       email: user.email,
       role: user.role,
       isManager: user.isManager,
+      // Carried so "log out everywhere" is visible on the next request instead
+      // of after this token expires. Read from the DTO rather than re-fetched, so
+      // the value in the token always matches the row it was minted from.
+      sv: user.sessionsVersion,
     };
 
     return this.jwtService.signAsync(payload);

@@ -42,6 +42,25 @@ export class User {
   isManager!: boolean;
 
   /**
+   * Bumped whenever every session should die at once.
+   *
+   * Access tokens are stateless, so revoking them normally means waiting for
+   * `exp`. This number goes into every access token as a claim, and the strategy
+   * compares it against this column, which turns "log out everywhere" into an
+   * immediate event instead of a fifteen minute wait.
+   *
+   * Incremented, never set to a fixed value, so a user who logs out twice gets two
+   * different versions and a token minted between the two cannot be confused with
+   * one minted before the first.
+   *
+   * Zero means "has never been revoked", which is what lets a token issued before
+   * this column existed stay valid: it carries no claim, and a user at zero has
+   * nothing to have been revoked from.
+   */
+  @Column({ type: 'integer', default: 0 })
+  sessionsVersion!: number;
+
+  /**
    * Whether the address in `email` has been confirmed.
    *
    * A row of its own rather than "is there a live verification token", because

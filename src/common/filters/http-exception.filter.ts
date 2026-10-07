@@ -36,6 +36,18 @@ export class HttpExceptionFilter implements ExceptionFilter<HttpException> {
       timestamp: new Date().toISOString(),
     };
 
+    // A 429 that says how long to wait is a client that waits. Without the header
+    // the number has nowhere to go, because the body deliberately leaves it out:
+    // telling an attacker how long its guess has left is a progress bar.
+    if (statusCode === HttpStatus.TOO_MANY_REQUESTS) {
+      const retryAfter = (exception as { retryAfterSeconds?: unknown })
+        .retryAfterSeconds;
+
+      if (typeof retryAfter === 'number' && retryAfter > 0) {
+        response.setHeader('Retry-After', String(Math.ceil(retryAfter)));
+      }
+    }
+
     response.status(statusCode).json(errorResponse);
   }
 

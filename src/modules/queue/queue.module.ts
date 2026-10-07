@@ -10,6 +10,10 @@ import { DedupeGuard } from './dedupe.guard.js';
 import { InProcessDispatcher } from './in-process.dispatcher.js';
 import type { ProcessorRegistry } from './in-process.dispatcher.js';
 import { RetentionProcessor } from '../maintenance/processors/retention.processor.js';
+import {
+  RedisThrottlerStorage,
+  THROTTLER_STORAGE,
+} from './throttler/redis-throttler.storage.js';
 import { MailProcessor } from './processors/mail.processor.js';
 import { ProcessorRouter } from './processor-router.service.js';
 import type { JobQueue } from './queue.interface.js';
@@ -50,6 +54,18 @@ const configOf = (configService: ConfigService): QueueConfig =>
     MailProcessor,
     RetentionProcessor,
     ProcessorRouter,
+
+    /**
+     * The rate limiter's storage, built here because `RedisClientService` is a
+     * provider of this module and the connection should be shared rather than a
+     * second one opened for counting requests.
+     */
+    {
+      provide: THROTTLER_STORAGE,
+      inject: [RedisClientService],
+      useFactory: (redis: RedisClientService): RedisThrottlerStorage =>
+        new RedisThrottlerStorage(redis),
+    },
     RedisClientService,
 
     /**
@@ -129,6 +145,7 @@ const configOf = (configService: ConfigService): QueueConfig =>
     PROCESSOR_REGISTRY,
     RedisClientService,
     DeadLetterService,
+    THROTTLER_STORAGE,
   ],
 })
 export class QueueModule {}

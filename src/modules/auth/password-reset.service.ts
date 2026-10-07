@@ -162,6 +162,11 @@ export class PasswordResetService {
         manager,
       );
 
+      // The access tokens too, in the same transaction. Somebody resetting because
+      // they think another person has access must not leave that person's
+      // fifteen-minute access token working.
+      await manager.increment(User, { id: user.id }, 'sessionsVersion', 1);
+
       logger.log(`Password reset completed for user ${user.id}`);
 
       return saved;

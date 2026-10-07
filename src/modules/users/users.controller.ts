@@ -17,8 +17,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { Roles } from '../../common/decorators/index.js';
-import { Role } from '../../common/enums/index.js';
+import { Permissions, Roles } from '../../common/decorators/index.js';
+import { Permission, Role } from '../../common/enums/index.js';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto/index.js';
 import { UsersService } from './users.service.js';
 
@@ -29,6 +29,7 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Roles(Role.Admin, Role.SuperAdmin)
+  @Permissions(Permission.UserWrite)
   @Post()
   @ApiOperation({ summary: 'Create a user' })
   @ApiOkResponse({ type: UserResponseDto })
@@ -52,6 +53,7 @@ export class UsersController {
   }
 
   @Roles(Role.Admin, Role.SuperAdmin)
+  @Permissions(Permission.UserWrite)
   @Patch(':id')
   @ApiOperation({ summary: 'Update a user' })
   @ApiOkResponse({ type: UserResponseDto })
@@ -63,6 +65,7 @@ export class UsersController {
   }
 
   @Roles(Role.Admin, Role.SuperAdmin)
+  @Permissions(Permission.UserDelete)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Soft delete a user' })
