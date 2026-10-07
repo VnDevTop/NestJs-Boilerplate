@@ -45,3 +45,41 @@ export const mailThrottleOptions = () => ({
     ttl: MAIL_THROTTLE.windowMs,
   },
 });
+
+/**
+ * Limits for the routes that accept a credential.
+ *
+ * Two buckets per route, keyed differently for the same reason as the mail
+ * buckets: a per-client limit cannot see an attacker with many addresses, and a
+ * per-address limit cannot see an attacker spraying accounts from one host.
+ * Both have to pass, so neither attack works.
+ *
+ * The per-address limit is the tighter of the two on login. That is deliberate
+ * and it is not the same as the mail bucket's reasoning: here the target is the
+ * password rather than the mailbox, and an attacker guessing one account wants
+ * few attempts against that account, not many attempts against many.
+ *
+ * Five minutes rather than an hour because a block that lasts an hour on a login
+ * nobody can get through is indistinguishable from a broken application.
+ */
+export const AUTH_THROTTLE = {
+  /** Per client address: attempts per window from one host. */
+  perIp: 20,
+  /** Per submitted address: attempts per window against one account. */
+  perEmail: 10,
+  /** Per client address on refresh: a rotation storm is a bug or an attack. */
+  refreshPerIp: 60,
+  /** Five minutes, in milliseconds. */
+  windowMs: 5 * 60 * 1000,
+  /** One minute, in milliseconds, for refresh. */
+  refreshWindowMs: 60 * 1000,
+} as const;
+
+/** The throttler name the per-address login bucket is declared under. */
+export const LOGIN_EMAIL_BUCKET = 'login-email';
+
+/** The throttler name the per-client login bucket is declared under. */
+export const LOGIN_IP_BUCKET = 'login-ip';
+
+/** The throttler name the refresh bucket is declared under. */
+export const REFRESH_BUCKET = 'refresh';

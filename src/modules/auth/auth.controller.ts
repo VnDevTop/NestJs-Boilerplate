@@ -29,6 +29,7 @@ import {
 } from '@nestjs/swagger';
 
 import { ThrottleByEmailGuard } from '../../common/guards/index.js';
+import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
 import {
   DEVICE_NAME_HEADER,
   DEVICE_NAME_MAX_LENGTH,
@@ -99,7 +100,8 @@ export class AuthController {
 
   // Password guessing is the reason this route exists, so it is the
   // tightest limit in the app.
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @UseGuards(ThrottleByEmailGuard)
+  @RateLimit('login')
   @Public()
   @Post('login')
   @ApiOperation({ summary: 'Login with email and password' })
@@ -130,7 +132,8 @@ export class AuthController {
 
   // A six digit code has a million combinations, so it must not be
   // brute forceable.
-  @Throttle({ default: { limit: 5, ttl: 300000 } })
+  @UseGuards(ThrottleByEmailGuard)
+  @RateLimit('login')
   @Public()
   @Post('2fa/login')
   @ApiOperation({
@@ -210,6 +213,7 @@ export class AuthController {
    * timing analysis to read.
    */
   @UseGuards(ThrottleByEmailGuard)
+  @RateLimit('mail')
   @Throttle(mailThrottleOptions())
   @Public()
   @Post('forgot-password')
@@ -278,6 +282,7 @@ export class AuthController {
   }
 
   @UseGuards(ThrottleByEmailGuard)
+  @RateLimit('mail')
   @Throttle(mailThrottleOptions())
   @Public()
   @Post('resend-verification')
@@ -302,6 +307,7 @@ export class AuthController {
     );
   }
 
+  @RateLimit('refresh')
   @Post('refresh-token')
   @ApiOperation({
     summary: 'Exchange a refresh token for a new token pair',
