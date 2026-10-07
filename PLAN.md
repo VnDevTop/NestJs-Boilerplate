@@ -361,7 +361,8 @@ ce9f119  fix: cascade user devices and two-factor secrets on user delete
 c525251  feat: add the maintenance run log
 25951e7  feat: add the maintenance job processor
 21b9f1c  feat: schedule the retention job
-2a621a0  feat: expose retention runs to an admin
+689a76a  feat: expose retention runs to an admin
+66d4cf4  docs: mark phase 16 data retention as done
 ```
 
 What was built:
@@ -480,9 +481,10 @@ a781a26  feat: add the permission model
 b622927  feat: enforce permissions in the guard
 42d75cf  feat: list and revoke sessions
 0166711  feat: kill every access token on logout everywhere
-369bfc9  feat: share the rate limit across replicas
-b9aaacf  fix: apply the per-address rate limits that were never enforced
-feat: block login temporarily after repeated failures
+80fc63d  feat: share the rate limit across replicas
+df3085a  fix: apply the per-address rate limits that were never enforced
+b84cc0e  feat: block login temporarily after repeated failures
+c3e70c4  docs: mark phase 17a permission authorization as done
 ```
 
 What was built, and what it turned out to need:

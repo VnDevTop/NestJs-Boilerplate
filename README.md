@@ -32,10 +32,17 @@ else.
   not create two device rows, and revoking a device revokes its tokens.
 - Optional TOTP two-factor, secret encrypted at rest, single use steps, and
   recovery codes shown once.
+- `GET /auth/sessions` and `DELETE /auth/sessions/:id`, where a session is one
+  live refresh token rather than one device, because one device can hold several.
+- Logout everywhere is immediate rather than a fifteen minute wait: every access
+  token carries the user's `sessionsVersion` and is compared on each request.
 
 **Authorisation you can reason about**
 
-- `@Roles()`, `@ManagerOnly()` and a `@Permissions()` placeholder.
+- `@Roles()`, `@ManagerOnly()` and a real `@Permissions()`, backed by a
+  `permissions` table and a `role_permissions` join.
+- Deny by default: an ordinary user holds no permissions, so a route that names
+  one refuses rather than admits anybody who has not been granted it.
 - Guards read the request context instead of loading services, so an
   authorisation failure reads the same as any other failure.
 - The admin scope is guarded at the controller, which makes a new route there
@@ -48,8 +55,16 @@ else.
   failure twenty minutes later.
 - Redis or Valkey cache with request coalescing and stale while revalidate, so a
   hot key expiring under load does not stampede the database.
-- Rate limiting globally, tightened on the routes that accept a password or a
-  six digit code.
+- Rate limiting counted in Redis rather than per process, so the configured limit
+  is the real limit behind any number of replicas.
+- Two limits on the credential routes, one per client address and one per
+  submitted address, because neither alone stops both an attacker rotating hosts
+  and an attacker guessing one account.
+- A temporary lockout after five failed sign-ins: one minute, then a minute more
+  per further failure, capped at fifteen. Temporary rather than permanent, because a
+  permanent lockout is a denial of service anyone can inflict on a victim.
+- Nightly data retention, batching deletes so cleanup costs latency rather than a
+  long lock, with a dry run to rehearse against production data first.
 - Request id on every response, and JSON logs in production that carry it.
 - Liveness and readiness probes kept separate, so a database problem does not make
   an orchestrator restart every healthy instance.
@@ -124,7 +139,7 @@ src
 ├── database     migrations, seeds, the standalone data source
 ├── common       guards, decorators, middleware, utilities
 ├── core         cache, health, logger, swagger
-└── modules      auth, users, admin
+└── modules      auth, users, admin, mail, queue, maintenance
 ```
 
 Business features live in `modules`, each documenting itself. Technical
@@ -156,6 +171,7 @@ looking. The `docs/` folder is also published as a site at
 | [src/modules/auth](src/modules/auth/README.md)                 | sessions, rotation, devices, two-factor                   |
 | [src/modules/users](src/modules/users/README.md)               | the user domain and its authorisation                     |
 | [src/modules/admin](src/modules/admin/README.md)               | operator-only routes                                      |
+| [src/modules/maintenance](src/modules/maintenance/README.md)   | nightly retention, batching, dry run, run history         |
 
 ## Known limitations
 
@@ -163,13 +179,22 @@ Recorded rather than left to be discovered. See
 [ROADMAP.md](ROADMAP.md#open-decisions) for the reasoning, and
 [SECURITY.md](SECURITY.md) for what to check before a real deployment.
 
-- Rate limits are counted per process, so the effective limit is the configured
-  one multiplied by the number of replicas.
 - `GET /users/:id` has no role guard: any authenticated user can read another
   user's profile, email included. The password hash is withheld.
 - Listing routes return every matching row, with no pagination yet.
 - A dead cache costs latency rather than correctness. Each request waits out
   `CACHE_CONNECT_TIMEOUT` for the failed read and again for the failed write.
+- A dead Redis costs rate limiting and the login lockout, because both fail open.
+  An outage that overlaps an attack removes that protection. Put a limit in front
+  of the application as well; these are the inner layer, not the only one.
+- The login lockout is keyed by address rather than by account row, so it counts
+  attempts against addresses nobody registered. That is what keeps a 429 from
+  revealing which addresses exist. The cost is that anybody can lock an address
+  out by guessing it wrong five times.
+- Auth state is read from the database on every request, not from the cache, so a
+  deactivated account or a changed role takes effect immediately. That costs one
+  query per request and is the right trade for this field; Phase 17b moves it to
+  Redis with an invalidation subscriber in front of it.
 
 ## Contributing
 

@@ -17,18 +17,70 @@ THROTTLE_BLOCK_DURATION=0    # 0 blocks for the rest of the window
 Credential routes override it with `@Throttle`, because the global number is far
 too generous for a route that accepts a password or a six digit code:
 
-| Route | Limit | Why |
-| --- | --- | --- |
-| `POST /auth/login` | 5 / min | Password guessing is the threat |
-| `POST /auth/2fa/login` | 5 / 5 min | A TOTP code is 1 in a million |
-| `POST /auth/2fa/verify` | 5 / 5 min | Same, and it is a second factor |
-| `POST /auth/register` | 10 / 5 min | Cheap to call, creates rows |
-| `POST /auth/refresh-token` | 20 / min | Rotation is a write per call |
+| Route                      | Limit                                         | Why                             |
+| -------------------------- | --------------------------------------------- | ------------------------------- |
+| `POST /auth/login`         | 20 / 5 min per client, 10 / 5 min per address | Password guessing is the threat |
+| `POST /auth/2fa/login`     | Same as login                                 | A TOTP code is 1 in a million   |
+| `POST /auth/2fa/verify`    | 5 / 5 min                                     | Same, and it is a second factor |
+| `POST /auth/register`      | 10 / 5 min                                    | Cheap to call, creates rows     |
+| `POST /auth/refresh-token` | 60 / min per client                           | Rotation is a write per call    |
 
-Counters live in process memory, so with several replicas the effective limit is
-the configured limit **per replica**. That is often fine, and occasionally useful,
-but it is not a global limit. Sharing counters means pointing the throttler at a
-shared store, which is a deliberate change rather than a default.
+**Two buckets per credential route.** A per-client limit cannot see an attacker
+guessing one account from many hosts, and a per-address limit cannot see an
+attacker spraying accounts from one host. Both must pass.
+
+**Counters live in Redis, so the limit holds across replicas.** The storage is a
+Lua script, because a read followed by a write lets two concurrent requests both
+through, which is the burst being defended against.
+
+**It fails open.** A dead Redis means the request is allowed, because failing
+closed would make a cache outage an outage of the whole login route. The cost is
+that an outage removes the protection exactly when somebody is most likely to be
+hammering the endpoint, so put a limit in front of the application too. These are
+the inner layer, not the only one.
+
+Which buckets a route gets is opt-in with `@RateLimit('group')`. Every bucket is
+declared globally, because the guard builds its list from the module options and
+nothing else, and then loops over that whole list on every request. A bucket named
+only in `@Throttle()` is never reached, so a per-bucket `skipIf` decides which
+routes it applies to.
+
+## Login lockout
+
+Five failed sign-ins block an address for a minute, each further failure adds a
+minute, capped at fifteen. Temporary rather than permanent, because a permanent
+lockout is a denial of service anyone can inflict on a victim.
+
+- Counts failures for addresses that do not exist too, so a 429 cannot reveal
+  which addresses exist.
+- Returns 429 with `Retry-After`, and the body does not say how long is left.
+- Notifies the owner once per lockout, and never for an unregistered address.
+- Fails open, with the rest of the Redis state.
+
+## Data retention
+
+A nightly job deletes rows that can no longer be useful. See
+[the maintenance module](../src/modules/maintenance/README.md) for the policy and
+the reasoning.
+
+```dotenv
+RETENTION_ENABLED=true         # on by default; it only removes rows past their age
+RETENTION_DRY_RUN=false        # rehearse before the first production run
+RETENTION_SCHEDULE='17 3 * * *' # off-peak minute
+RETENTION_BATCH_SIZE=5000      # rows per delete statement
+RETENTION_BATCH_DELAY=100      # milliseconds between batches
+RETENTION_RUN_TIMEOUT=3600000  # give up rather than run forever
+```
+
+| Route                           | What it does                                    |
+| ------------------------------- | ----------------------------------------------- |
+| `POST /admin/retention/dry-run` | Counts what a run would delete, deletes nothing |
+| `POST /admin/retention/run`     | Queues a real run                               |
+| `GET /admin/retention/runs`     | The run history                                 |
+
+**The schedule does not catch up a missed run.** If the process is not running at
+`RETENTION_SCHEDULE`, that night is skipped and nothing logs an error. Do not
+schedule deploys around that minute.
 
 ## Security headers
 
@@ -73,7 +125,13 @@ service includes it without the call site knowing anything about requests.
 One JSON object per line in production:
 
 ```json
-{"timestamp":"2026-01-01T00:00:00.000Z","level":"error","context":"CacheModule","requestId":"...","message":"Cache unavailable: connect ECONNREFUSED ..."}
+{
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "level": "error",
+  "context": "CacheModule",
+  "requestId": "...",
+  "message": "Cache unavailable: connect ECONNREFUSED ..."
+}
 ```
 
 Human readable elsewhere. A message containing newlines is collapsed to a single

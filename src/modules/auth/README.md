@@ -77,19 +77,60 @@ Optional, and off entirely with `TWO_FACTOR_ENABLED=false`.
 `@Throttle` tightens the global limit on the routes that accept a secret, because
 100 per minute is no defence at all against password guessing.
 
-| Route                            | Limit                                      |
-| -------------------------------- | ------------------------------------------ |
-| `POST /auth/login`               | 5 / min                                    |
-| `POST /auth/2fa/login`           | 5 / 5 min                                  |
-| `POST /auth/2fa/verify`          | 5 / 5 min                                  |
-| `POST /auth/register`            | 10 / 5 min                                 |
-| `POST /auth/refresh-token`       | 20 / min                                   |
-| `POST /auth/forgot-password`     | 3 / hour per address, 10 / hour per client |
-| `POST /auth/resend-verification` | 3 / hour per address, 10 / hour per client |
-| `POST /auth/verify-email`        | 10 / hour                                  |
+| Route                            | Limit                                         |
+| -------------------------------- | --------------------------------------------- |
+| `POST /auth/login`               | 20 / 5 min per client, 10 / 5 min per address |
+| `POST /auth/2fa/login`           | same as login                                 |
+| `POST /auth/2fa/verify`          | 5 / 5 min                                     |
+| `POST /auth/register`            | 10 / 5 min                                    |
+| `POST /auth/refresh-token`       | 60 / min per client                           |
+| `POST /auth/forgot-password`     | 3 / hour per address, 10 / hour per client    |
+| `POST /auth/resend-verification` | 3 / hour per address, 10 / hour per client    |
+| `POST /auth/verify-email`        | 10 / hour                                     |
 
-Counters are per process, so with several replicas the effective limit is the
-number above **times the replica count**.
+Every limit also sits inside the global one, which is 100 / min.
+
+**Counted in Redis, so it holds across replicas.** The in-memory storage that
+ships with the throttler counts inside one process, which makes the number above
+the per-replica number. The store is a Lua script because a read followed by a
+write lets two concurrent requests both pass, which is the burst being defended
+against. It **fails open**: a dead Redis means the request is allowed, because
+failing closed would make a cache outage an outage of the whole login route. The
+cost is that an outage removes the protection exactly when somebody is most
+likely to be hammering the endpoint, which is why the limits here are the inner
+layer and not the only one.
+
+**Two buckets, not one.** A per-client limit cannot see an attacker guessing one
+account from many hosts, and a per-address limit cannot see an attacker spraying
+accounts from one host. Both have to pass, so neither attack works.
+
+**Which bucket a route gets is opt-in.** Every bucket is declared globally,
+because the guard builds its list from the module options and nothing else, and
+then loops over the whole list on every request. A bucket declared only in
+`@Throttle()` is never reached, which is how the per-address mail limit sat
+configured and unenforced for several phases. So each bucket carries a `skipIf`
+and a route opts in with `@RateLimit('group')`. The polarity is inverted on
+purpose: opt-out would put the three-per-hour mail limit on every endpoint.
+
+## Login lockout
+
+Five failed sign-ins block an address for a minute, each further failure adds a
+minute, and the length stops growing at fifteen.
+
+- **Temporary, not permanent.** A permanent lockout is a denial of service
+  anyone can inflict on a victim, and the owner is the person least able to sign
+  in while it lasts. The ceiling is the part that matters: an unbounded
+  multiplier would park an account for hours.
+- **Counted for addresses that do not exist too.** Counting only real accounts
+  would make the 429 answer which addresses exist without a single successful
+  guess. That is the same question `enumeration.spec.ts` works to keep closed.
+- **The 429 body does not say how long is left.** The header `Retry-After` does,
+  which is enough for a client, and a body naming the time left is a progress bar
+  for somebody guessing.
+- **The owner is notified once per lockout**, not once per rejected request, and
+  never for an address that is not registered. Sending per attempt would turn this
+  route into a way to make the application mail somebody repeatedly.
+- **It fails open** with the rest of the Redis state.
 
 ## Account enumeration
 
@@ -112,6 +153,33 @@ the padding removed, because the gap it measures is small.
 
 ## Auth state is not cached
 
-`JwtStrategy` reads `isActive`, `role` and `isManager` on every request, on
-purpose. Caching it would mean a deactivated account or a role change stayed in
-effect for the length of the TTL, which is the wrong trade for this field.
+`JwtStrategy` reads the user on every request, on purpose. Caching it would mean
+a deactivated account or a role change stayed in effect for the length of the
+TTL, which is the wrong trade for this field.
+
+What closes that gap without caching the claims:
+
+- **Permissions are stored per role, not per user.** `PermissionsGuard` reads the
+  user's role, so a role change is one row to invalidate rather than one cache
+  entry per holder.
+- **`sessionsVersion` rides in the token.** Logout everywhere and a password reset
+  move a number, and the strategy compares it, so revocation is a comparison
+  rather than a lookup. A token issued before the column existed is accepted only
+  while the user is still at zero, meaning nothing has asked for their sessions to
+  die. That is what keeps a deploy from signing out everyone.
+- **Phase 17b** moves the read to Redis with an invalidation subscriber in front
+  of it, which is why the rule is "invalidate on write" rather than "pick a short
+  TTL and hope".
+
+## Sessions and devices are different things
+
+A device is a machine. A session is one live refresh token on it, and rotation
+leaves a chain of revoked rows behind exactly one live row per chain.
+
+- `GET /auth/sessions` lists the live ones. Expired and revoked rows are excluded
+  by the query, so the list only ever contains something the caller could act on.
+- `DELETE /auth/sessions/:id` ends one of them. `DELETE /auth/devices/:id` ends
+  every session on the machine.
+- Revoking is scoped to the caller, and an id that is not theirs answers exactly
+  as one that does not exist. Answering "not yours" would confirm the id is real,
+  which is the only thing somebody guessing ids wants to learn.

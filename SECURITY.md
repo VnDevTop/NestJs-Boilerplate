@@ -31,9 +31,15 @@ here:
 These are recorded rather than presented as fixed. Each is in
 [ROADMAP.md](ROADMAP.md#open-decisions) with the decision that has not been made.
 
-- **Rate limits are per process.** With several replicas the effective limit is
-  the configured one multiplied by the replica count, so a deployment with three
-  instances allows three times the intended traffic.
+- **A dead Redis removes rate limiting and the login lockout.** Both fail open, so
+  an outage that overlaps an attack removes that protection rather than locking
+  users out. Put a limit in front of the application as well; these are the inner
+  layer.
+- **The login lockout can be inflicted on a victim.** Five wrong passwords for an
+  address block it for a minute, more for longer, up to fifteen minutes. Anyone
+  can trigger that, and the owner of the address is the person least able to sign
+  in while it lasts. It is keyed by address rather than by account so a 429 cannot
+  reveal which addresses exist.
 - **`GET /users/:id` has no role guard.** Any authenticated user can read another
   user's profile, email address included. The password hash is withheld, so this
   is an information leak rather than a credential leak.
@@ -41,8 +47,9 @@ These are recorded rather than presented as fixed. Each is in
   published value when the variable is unset. Startup validation rejects that in
   production, but only when 2FA is enabled, so an unset key with 2FA off is not
   an error by design.
-- **Rate limit state is lost on restart**, so a burst of traffic across a deploy
-  is not remembered.
+- **Auth state is read from the database on every request**, not from the cache,
+  so a deactivated account or a changed role takes effect at once. That costs one
+  query per request.
 - **The compose stack uses development secrets.** `docker-compose.yml` is for
   local work and is not a production deployment.
 
