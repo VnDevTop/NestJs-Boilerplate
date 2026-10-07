@@ -421,7 +421,7 @@ Expected outcome:
 
 ## Phase 17a: Permission-based Authorization
 
-Status: Pending
+Status: Done
 
 Goal:
 
@@ -437,26 +437,26 @@ caches what this phase defines.
 
 Tasks:
 
-- [ ] Add a `Permission` entity: `name` unique, `description`, timestamps
-- [ ] Add a `RolePermission` entity joining role to permission, unique per pair
-- [ ] Generate the migration and seed the permission set each role starts with
-- [ ] Add `permissions` to `RequestUser`, populated by the strategy
-- [ ] Rewrite `PermissionsGuard` so it checks the user's set, denying by default
+- [x] Add a `Permission` entity: `name` unique, `description`, timestamps
+- [x] Add a `RolePermission` entity joining role to permission, unique per pair
+- [x] Generate the migration and seed the permission set each role starts with
+- [x] Add `permissions` to `RequestUser`, populated by the strategy
+- [x] Rewrite `PermissionsGuard` so it checks the user's set, denying by default
       when a route declares permissions and the user has none
-- [ ] Apply `@Permissions()` to the admin routes that should require one, so the
+- [x] Apply `@Permissions()` to the admin routes that should require one, so the
       decorator has at least one real caller
-- [ ] Add `GET /auth/sessions`, listing the caller's refresh sessions and devices
-- [ ] Add `DELETE /auth/sessions/:id`, revoking one session without touching the
+- [x] Add `GET /auth/sessions`, listing the caller's refresh sessions and devices
+- [x] Add `DELETE /auth/sessions/:id`, revoking one session without touching the
       others
-- [ ] Add a `sessionsVersion` column on `users`, bumped by `logoutAll()` and by
+- [x] Add a `sessionsVersion` column on `users`, bumped by `logoutAll()` and by
       a password change
-- [ ] Put `sessionsVersion` in the access token payload and reject a token whose
+- [x] Put `sessionsVersion` in the access token payload and reject a token whose
       claim does not match, so logout-everywhere kills access tokens
-- [ ] Add a throttler storage adapter over the existing `RedisClientService`, so
+- [x] Add a throttler storage adapter over the existing `RedisClientService`, so
       limits hold across replicas instead of resetting per process
-- [ ] Add throttler buckets for login, two-factor and refresh, keyed per IP and
+- [x] Add throttler buckets for login, two-factor and refresh, keyed per IP and
       per email
-- [ ] Block login temporarily after repeated failures, the way a desktop OS
+- [x] Block login temporarily after repeated failures, the way a desktop OS
       does: five failures block for one minute, each further failure adds a
       minute, capped at fifteen, and the block expires on its own
 
@@ -476,13 +476,59 @@ through the cache, and its answer is already identical either way.
 Commits:
 
 ```text
-feat: add the permission model
-feat: enforce permissions in the guard
-feat: list and revoke sessions
-feat: kill every access token on logout everywhere
-feat: rate limit auth across replicas
+a781a26  feat: add the permission model
+b622927  feat: enforce permissions in the guard
+42d75cf  feat: list and revoke sessions
+0166711  feat: kill every access token on logout everywhere
+369bfc9  feat: share the rate limit across replicas
+b9aaacf  fix: apply the per-address rate limits that were never enforced
 feat: block login temporarily after repeated failures
 ```
+
+What was built, and what it turned out to need:
+
+- **`Permission` and `RolePermission` entities**, with `ROLE_PERMISSIONS` as the
+  single statement of which role holds what. A plain user holds none, so an
+  unseeded permission locks a route rather than unlocking it.
+- **`PermissionsGuard`** rewritten to check the caller's set, and `@Permissions()`
+  applied to seven routes so the decorator has real callers. It throws a 403
+  naming the missing permission instead of returning false.
+- **`GET/DELETE /auth/sessions`**, where a session is one live refresh token
+  rather than one device, because one device can hold several.
+- **`sessionsVersion`** on the user, carried in the access token, so
+  logout-everywhere is immediate instead of waiting out the fifteen minute token.
+- **A redis rate limit store**, built as a Lua script because a read followed by a
+  write lets a concurrent pair both through, which is the burst being defended
+  against. It fails open, so a redis outage costs rate limiting rather than login.
+- **A temporary login lockout**: five failures block for a minute, each further
+  failure adds a minute, and the length stops growing at fifteen.
+
+Three things this phase found rather than built:
+
+- **The per-address rate limits had never run.** `ThrottlerGuard` builds its list
+  from the module options and nothing else, so a bucket named only in
+  `@Throttle()` metadata is never reached. The three-per-hour mail limit from
+  Phase 14 was configured, documented and tested, and enforced nothing. Every
+  bucket is now declared globally and gated behind a `@RateLimit` marker, with the
+  polarity reversed so an undeclared route is limited by `default` alone.
+- **The lockout counts failures for addresses that do not exist.** Counting only
+  real accounts would make the 429 answer which addresses exist without a single
+  successful guess, which is the question the enumeration floor exists to keep
+  closed. The cost is that anybody can lock an address out; the block is short,
+  grows with the failures and then stops, which slows that attack further than it
+  inconveniences a real person.
+- **Jewellery belongs in redis keys as a hash.** The lockout keys carry a digest
+  of the address, for the same reason `user:email` does.
+
+Known limits:
+
+- The lockout is per address, not per account row, so it counts attempts against
+  addresses nobody registered. That is the price of not leaking existence.
+- Nothing prunes the lockout keys. They carry their own expiry, so redis reclaims
+  them, but an operator watching key count sees them come and go.
+- A single replica serving several processes behind one load balancer still shares
+  nothing; the redis store only matters across replicas, which is where the limits
+  were previously being reset.
 
 Expected outcome:
 
@@ -850,7 +896,7 @@ lands after the harness in Phase 12 is solid.
 | Phase 14  | Outbound Email                                 | Done    |
 | Phase 15  | Background Job Queue                           | Done    |
 | Phase 16  | Data Retention and Cleanup                     | Done    |
-| Phase 17a | Permission-based Authorization                 | Pending |
+| Phase 17a | Permission-based Authorization                 | Done    |
 | Phase 17b | Authentication and Authorization through Cache | Pending |
 | Phase 18  | Notifications                                  | Pending |
 | Phase 19  | Account Security Features                      | Pending |
