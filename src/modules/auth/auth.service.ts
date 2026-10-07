@@ -40,6 +40,8 @@ import {
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { RefreshTokenService } from './refresh-token.service.js';
 import { DeviceService } from './device.service.js';
+import { LoginLockedException } from './exceptions/login-locked.exception.js';
+import { LoginLockoutService } from './login-lockout.service.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { PasswordResetService } from './password-reset.service.js';
 import { User } from '../users/entities/index.js';
@@ -75,6 +77,7 @@ export class AuthService {
     // resolve the type from and would fail with an unresolvable dependency.
     @Inject(JOB_QUEUE) private readonly jobQueue: JobQueue,
     private readonly configService: ConfigService,
+    private readonly loginLockout: LoginLockoutService,
   ) {}
 
   private get appConfig(): AppConfig {
@@ -109,13 +112,82 @@ export class AuthService {
    * here, the caller receives a short lived challenge instead and has to prove
    * the second factor on the two-factor login route.
    */
+  /**
+   * Counts a rejected attempt and notifies the owner when it starts a lockout.
+   *
+   * The mail goes only when the account exists, and only on the attempt that
+   * begins the block. Sending per rejected request would turn the login route into
+   * a way to make the application mail an address repeatedly.
+   */
+  private async recordLoginFailure(email: string): Promise<void> {
+    const state = await this.loginLockout.recordFailure(email);
+
+    if (!state.firstBlock) {
+      return;
+    }
+
+    const user = await this.usersService.findByEmail(email);
+
+    if (!user || !user.isActive) {
+      return;
+    }
+
+    // Enqueued rather than sent, so a slow provider cannot hold the response
+    // that is already on its way back to the caller.
+    await this.enqueueMail(
+      {
+        to: user.email,
+        template: 'account-locked',
+        data: {
+          reason: `Too many failed sign-in attempts. Try again in about ${Math.max(
+            1,
+            Math.ceil(state.retryAfterSeconds / 60),
+          )} minute(s).`,
+          supportUrl: this.mailService.buildUrl('/support'),
+          appName: this.appConfig.name,
+        },
+      },
+      // Keyed on the block length, so a second lockout after a lapse notifies
+      // again while the attempts inside one block do not.
+      dedupeKey({
+        template: 'account-locked',
+        to: user.email,
+        subjectId: String(state.retryAfterSeconds),
+      }),
+    );
+  }
+
+  /**
+   * Signs a user in, counting failures and blocking the account for a while when
+   * there are too many.
+   *
+   * The order is load-bearing. The block is checked *before* the user is looked
+   * up, and a failure is recorded for *every* rejected attempt whether or not the
+   * address exists. That is what keeps the answer identical for a real account and
+   * a made-up one: if only real accounts could produce a 429, the status code
+   * would answer the question the enumeration floor in
+   * `enumeration.spec.ts` exists to keep quiet.
+   *
+   * The trade is that anybody can lock an address out by failing to guess it, and
+   * the owner may never see an attempt. The block is short, grows with the failures
+   * and then stops growing, which slows that attack far more than it inconveniences
+   * a real person.
+   */
   async login(
     loginDto: LoginDto,
     metadata: DeviceMetadata,
   ): Promise<LoginResult> {
+    const lockout = await this.loginLockout.inspect(loginDto.email);
+
+    if (lockout.blocked) {
+      throw new LoginLockedException(lockout.retryAfterSeconds);
+    }
+
     const user = await this.usersService.findByEmail(loginDto.email);
 
     if (!user || !user.isActive) {
+      await this.recordLoginFailure(loginDto.email);
+
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -125,8 +197,14 @@ export class AuthService {
     );
 
     if (!isPasswordValid) {
+      await this.recordLoginFailure(loginDto.email);
+
       throw new UnauthorizedException('Invalid email or password');
     }
+
+    // Cleared before anything else can fail, so a transient error later in the
+    // sign-in does not leave a count that will block the next honest attempt.
+    await this.loginLockout.reset(loginDto.email);
 
     const userResponse = UserResponseDto.fromEntity(user);
 

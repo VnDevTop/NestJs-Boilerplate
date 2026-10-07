@@ -21,6 +21,7 @@ import { TwoFactorService } from './two-factor.service.js';
 import { JwtStrategy } from './strategies/index.js';
 import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
 import { MailModule } from '../mail/index.js';
+import { LoginLockoutService } from './login-lockout.service.js';
 import { QueueModule } from '../queue/index.js';
 
 @Module({
@@ -49,6 +50,7 @@ import { QueueModule } from '../queue/index.js';
   ],
   controllers: [AuthController],
   providers: [
+    LoginLockoutService,
     AuthService,
     RefreshTokenService,
     PasswordResetService,

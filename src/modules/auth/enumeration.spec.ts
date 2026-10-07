@@ -93,6 +93,24 @@ function harness(options: {
     mailService as never,
     jobQueue as never,
     { getOrThrow: () => appConfig } as never,
+    {
+      // The lockout counts failures in redis, which these tests do not stand up.
+      // Reporting no block keeps each test testing what it was written for; the
+      // lockout itself is tested in login-lockout.service.spec.ts.
+      inspect: () =>
+        Promise.resolve({
+          blocked: false,
+          retryAfterSeconds: 0,
+          firstBlock: false,
+        }),
+      recordFailure: () =>
+        Promise.resolve({
+          blocked: false,
+          retryAfterSeconds: 0,
+          firstBlock: false,
+        }),
+      reset: () => Promise.resolve(undefined),
+    } as never,
   );
 
   return { service, queries };

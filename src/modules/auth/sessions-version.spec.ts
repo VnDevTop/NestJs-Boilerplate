@@ -58,6 +58,21 @@ function harness() {
     {} as never,
     { enqueue: vi.fn() } as never,
     { getOrThrow: vi.fn().mockReturnValue({}) } as never,
+    {
+      // The lockout counts failures in redis, which these tests do not stand up.
+      // Reporting no block keeps each test testing what it was written for.
+      inspect: vi.fn().mockResolvedValue({
+        blocked: false,
+        retryAfterSeconds: 0,
+        firstBlock: false,
+      }),
+      recordFailure: vi.fn().mockResolvedValue({
+        blocked: false,
+        retryAfterSeconds: 0,
+        firstBlock: false,
+      }),
+      reset: vi.fn().mockResolvedValue(undefined),
+    } as never,
   );
 
   return { service, increment, manager, revokeAllByUserId };

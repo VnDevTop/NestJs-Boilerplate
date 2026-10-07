@@ -107,6 +107,23 @@ function harness(
     {
       getOrThrow: () => appConfig,
     } as unknown as import('@nestjs/config').ConfigService,
+    {
+      // The lockout counts failures in redis, which these tests do not stand up.
+      // Reporting no block keeps each test testing what it was written for.
+      inspect: () =>
+        Promise.resolve({
+          blocked: false,
+          retryAfterSeconds: 0,
+          firstBlock: false,
+        }),
+      recordFailure: () =>
+        Promise.resolve({
+          blocked: false,
+          retryAfterSeconds: 0,
+          firstBlock: false,
+        }),
+      reset: () => Promise.resolve(undefined),
+    } as never,
   );
 
   return {
