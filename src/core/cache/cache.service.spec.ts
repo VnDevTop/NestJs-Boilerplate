@@ -11,6 +11,8 @@ const config: CacheConfig = {
   url: 'redis://localhost:6379/0',
   keyPrefix: 'app',
   defaultTtl: 60,
+  authUserTtl: 60,
+  authRoleTtl: 600,
   emptyTtl: 10,
   connectTimeout: 1000,
 };

@@ -47,9 +47,26 @@ function harness() {
     ),
   };
 
+  const invalidateAuthCache = vi.fn().mockResolvedValue(undefined);
+
+  // Mirrors the real helper: run the work, then drop the cached claims. The work
+  // has to actually run here, or these tests would pass on an empty transaction.
+  const usersService = {
+    invalidateAuthCache,
+    runThenInvalidateAuthCache: vi.fn(
+      async (userId: string, work: () => Promise<unknown>) => {
+        try {
+          return await work();
+        } finally {
+          await invalidateAuthCache(userId);
+        }
+      },
+    ),
+  };
+
   const service = new AuthService(
     new JwtService({ secret: SECRET, signOptions: { expiresIn: '15m' } }),
-    {} as never,
+    usersService as never,
     refreshTokenService as never,
     { revokeAllByUserId: vi.fn() } as never,
     {} as never,
@@ -75,7 +92,13 @@ function harness() {
     } as never,
   );
 
-  return { service, increment, manager, revokeAllByUserId };
+  return {
+    service,
+    increment,
+    manager,
+    revokeAllByUserId,
+    invalidateAuthCache,
+  };
 }
 
 describe('the access token claim', () => {

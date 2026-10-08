@@ -24,7 +24,7 @@ const user = (overrides: Partial<User> = {}): User =>
 
 function harness(options: { user?: User | null } = {}) {
   const found = options.user === undefined ? user() : options.user;
-  const findById = vi.fn().mockResolvedValue(found);
+  const findAuthClaims = vi.fn().mockResolvedValue(found);
   const forRole = vi.fn().mockResolvedValue([]);
   const config = {
     get: vi.fn().mockReturnValue(SECRET),
@@ -33,10 +33,10 @@ function harness(options: { user?: User | null } = {}) {
   return {
     strategy: new JwtStrategy(
       config,
-      { findById } as never,
+      { findAuthClaims } as never,
       { forRole } as never,
     ),
-    findById,
+    findAuthClaims,
     forRole,
   };
 }

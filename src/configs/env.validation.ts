@@ -118,6 +118,8 @@ function createEnvSchema(strict: boolean) {
         CACHE_DEFAULT_TTL: z.coerce.number().positive().optional(),
         CACHE_EMPTY_TTL: z.coerce.number().positive().optional(),
         CACHE_CONNECT_TIMEOUT: z.coerce.number().positive().optional(),
+        CACHE_AUTH_USER_TTL: z.coerce.number().positive().optional(),
+        CACHE_AUTH_ROLE_TTL: z.coerce.number().positive().optional(),
 
         // Redis for the queue and the shared throttler. The cache has its own
         // url, so a deployment can put the two on different servers.

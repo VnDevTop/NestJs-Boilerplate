@@ -13,6 +13,7 @@ import {
 import { PASSWORD_RESET_TOKEN_TTL_MINUTES } from '../../common/constants/index.js';
 import { hashPassword, hashToken } from '../../common/utils/index.js';
 import { User } from '../users/entities/index.js';
+import { UsersService } from '../users/users.service.js';
 import { PasswordResetToken } from './entities/index.js';
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { RefreshTokenService } from './refresh-token.service.js';
@@ -40,6 +41,7 @@ export class PasswordResetService {
     private readonly resetTokensRepository: Repository<PasswordResetToken>,
     private readonly dataSource: DataSource,
     private readonly refreshTokenService: RefreshTokenService,
+    private readonly usersService: UsersService,
   ) {}
 
   private get store(): EntityManager {
@@ -121,56 +123,73 @@ export class PasswordResetService {
    * credential until it is used.
    */
   async consume(token: string, newPassword: string): Promise<User> {
-    return this.dataSource.transaction(async (manager) => {
-      const record = await this.findUsable(token, manager);
+    // The id is only known once the transaction has found the token and its
+    // user, but the cache entry has to be dropped after that transaction commits.
+    // A read before it would be a second query and a race with the one that
+    // matters, so the id is captured here and used in `finally`.
+    let authenticatedId: string | undefined;
 
-      if (record === null) {
-        throw new BadRequestException(
-          'This reset link is invalid or has expired',
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const record = await this.findUsable(token, manager);
+
+        if (record === null) {
+          throw new BadRequestException(
+            'This reset link is invalid or has expired',
+          );
+        }
+
+        const user = await manager.findOne(User, {
+          where: { id: record.userId },
+        });
+
+        if (user === null) {
+          // Reachable only if the user was deleted between the lookup and this
+          // transaction, which the cascade should have made impossible.
+          throw new BadRequestException(
+            'This reset link is invalid or has expired',
+          );
+        }
+
+        user.password = await hashPassword(newPassword);
+
+        const saved = await manager.save(user);
+
+        // Marked spent in the same transaction as the password change, so a crash
+        // cannot leave a live token beside a password the sender did not choose.
+        await manager.update(
+          PasswordResetToken,
+          { id: record.id },
+          { usedAt: new Date() },
         );
-      }
 
-      const user = await manager.findOne(User, {
-        where: { id: record.userId },
+        // Every other session dies with the password. A user resetting because
+        // they think someone else has access should not leave that session open.
+        await this.refreshTokenService.revokeAllByUserId(
+          user.id,
+          RefreshTokenRevokedReason.PasswordChanged,
+          manager,
+        );
+
+        // The access tokens too, in the same transaction. Somebody resetting because
+        // they think another person has access must not leave that person's
+        // fifteen-minute access token working.
+        await manager.increment(User, { id: user.id }, 'sessionsVersion', 1);
+
+        authenticatedId = user.id;
+
+        logger.log(`Password reset completed for user ${user.id}`);
+
+        return saved;
       });
-
-      if (user === null) {
-        // Reachable only if the user was deleted between the lookup and this
-        // transaction, which the cascade should have made impossible.
-        throw new BadRequestException(
-          'This reset link is invalid or has expired',
-        );
+    } finally {
+      if (authenticatedId !== undefined) {
+        // After the commit, never inside it. A request arriving in between reads
+        // the old row and would cache the version just revoked, and that entry
+        // outlives the token it wrongly admitted.
+        await this.usersService.invalidateAuthCache(authenticatedId);
       }
-
-      user.password = await hashPassword(newPassword);
-
-      const saved = await manager.save(user);
-
-      // Marked spent in the same transaction as the password change, so a crash
-      // cannot leave a live token beside a password the sender did not choose.
-      await manager.update(
-        PasswordResetToken,
-        { id: record.id },
-        { usedAt: new Date() },
-      );
-
-      // Every other session dies with the password. A user resetting because
-      // they think someone else has access should not leave that session open.
-      await this.refreshTokenService.revokeAllByUserId(
-        user.id,
-        RefreshTokenRevokedReason.PasswordChanged,
-        manager,
-      );
-
-      // The access tokens too, in the same transaction. Somebody resetting because
-      // they think another person has access must not leave that person's
-      // fifteen-minute access token working.
-      await manager.increment(User, { id: user.id }, 'sessionsVersion', 1);
-
-      logger.log(`Password reset completed for user ${user.id}`);
-
-      return saved;
-    });
+    }
   }
 
   /**

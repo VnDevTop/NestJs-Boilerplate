@@ -543,26 +543,32 @@ export class AuthService {
       throw new UnauthorizedException('Authentication required');
     }
 
-    await this.refreshTokenService.runInTransaction(async (manager) => {
-      await this.refreshTokenService.revokeAllByUserId(
-        currentUser.id,
-        RefreshTokenRevokedReason.LogoutAll,
-        manager,
-      );
+    // The cache delete is wrapped around the transaction rather than placed inside
+    // it: a request arriving before the commit would repopulate the entry from
+    // the old snapshot and cache the version we are revoking. See
+    // `runThenInvalidateAuthCache`.
+    await this.usersService.runThenInvalidateAuthCache(currentUser.id, () =>
+      this.refreshTokenService.runInTransaction(async (manager) => {
+        await this.refreshTokenService.revokeAllByUserId(
+          currentUser.id,
+          RefreshTokenRevokedReason.LogoutAll,
+          manager,
+        );
 
-      // Inside the transaction, and as an increment rather than a read and a
-      // write. If this committed without the version moving, every access token
-      // would keep working for its full lifetime while the refresh tokens behind
-      // them were gone, so the account looked revoked and was not.
-      await manager.increment(
-        User,
-        { id: currentUser.id },
-        'sessionsVersion',
-        1,
-      );
+        // Inside the transaction, and as an increment rather than a read and a
+        // write. If this committed without the version moving, every access token
+        // would keep working for its full lifetime while the refresh tokens behind
+        // them were gone, so the account looked revoked and was not.
+        await manager.increment(
+          User,
+          { id: currentUser.id },
+          'sessionsVersion',
+          1,
+        );
 
-      await this.deviceService.revokeAllByUserId(currentUser.id);
-    });
+        await this.deviceService.revokeAllByUserId(currentUser.id);
+      }),
+    );
   }
 
   async getMe(currentUser: RequestUser): Promise<UserResponseDto> {

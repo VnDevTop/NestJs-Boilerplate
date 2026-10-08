@@ -28,7 +28,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<RequestUser> {
-    const user = await this.usersService.findById(payload.sub);
+    // Through the cache rather than `findById`, which is the one query per
+    // request this phase removes. The claims it returns are a projection without
+    // the password hash, because nothing here needs it.
+    const user = await this.usersService.findAuthClaims(payload.sub);
 
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Invalid access token');
@@ -46,6 +49,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // anything, which on deploy would sign out every signed-in user for a
     // fifteen minute token to have expired on its own anyway.
     const tokenVersion = payload.sv;
+    // Also defaulted here, not only in `findAuthClaims`, because redis outlives a
+    // deploy: an entry written by the build before that method existed carries no
+    // version at all, and reading it as anything other than zero would refuse
+    // every request that lands on it during the next minute.
     const currentVersion = user.sessionsVersion ?? 0;
 
     if (
@@ -63,9 +70,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       isManager: user.isManager,
       isActive: user.isActive,
       // Resolved here rather than in the guard so the lookup happens once per
-      // request instead of once per guarded route. Phase 17b replaces this with a
-      // cache read; the guard is written against the request user either way, so
-      // that change does not touch it.
+      // request instead of once per guarded route. Cached per role from Phase
+      // 17b; the guard is written against the request user, so it does not care
+      // where the names came from.
       permissions: await this.permissionsService.forRole(user.role),
     };
   }

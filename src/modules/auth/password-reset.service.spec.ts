@@ -60,13 +60,25 @@ function build(options: Parameters<typeof fakeManager>[0] = {}) {
     revokeAllByUserId: vi.fn().mockResolvedValue(2),
   };
 
+  const usersService = {
+    invalidateAuthCache: vi.fn().mockResolvedValue(undefined),
+  };
+
   const service = new PasswordResetService(
     { manager } as never,
     { transaction } as never,
     refreshTokenService as never,
+    usersService as never,
   );
 
-  return { service, manager, transaction, refreshTokenService, user };
+  return {
+    service,
+    manager,
+    transaction,
+    refreshTokenService,
+    usersService,
+    user,
+  };
 }
 
 describe('PasswordResetService.issue', () => {
