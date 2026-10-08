@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
+import { authRoleKey, CacheService } from '../../core/cache/index.js';
 import { Role } from '../../common/enums/index.js';
+import type { CacheConfig } from '../../configs/index.js';
 import { Permission, RolePermission } from './entities/index.js';
 
 /**
@@ -26,26 +29,63 @@ export class PermissionsService {
   constructor(
     @InjectRepository(RolePermission)
     private readonly grants: Repository<RolePermission>,
+    private readonly cache: CacheService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private get roleTtl(): number {
+    return this.configService.getOrThrow<CacheConfig>('cache').authRoleTtl;
+  }
 
   /**
    * Every permission one role holds.
    *
-   * Cached under `role:<role>` from Phase 17b, because it is the same answer for
-   * every user holding that role.
+   * Cached under `role:<role>`, one entry per role rather than one per user, which
+   * is the whole reason it is keyed this way: every user holding the role has the
+   * same answer, and invalidating it costs one delete instead of a delete per
+   * holder. `CacheService` has no pattern delete on purpose, so a per-user key
+   * would mean scanning for the holders on every role change.
+   *
+   * A role with nothing granted is cached like any other answer rather than
+   * short-circuited, so a repeated read of a plain user does not query per
+   * request. It caches an empty array, not null, so the longer lifetime applies:
+   * a plain user is the common case, and an empty set that expires into another
+   * query is a per-request cost paid by everybody.
+   *
+   * An absent role answers empty without touching either. `cacheKey` drops an
+   * empty part, so caching one would file it under a bare `role` key where a
+   * differently shaped entry could land later.
    */
   async forRole(role: string | undefined): Promise<string[]> {
     if (role === undefined || role === '') {
       return [];
     }
 
-    const grants = await this.grants.find({
-      where: { role },
-      select: { permission: { name: true } },
-      relations: { permission: true },
-    });
+    return this.cache.wrap<string[]>(
+      authRoleKey(role),
+      async () => {
+        const grants = await this.grants.find({
+          where: { role },
+          select: { permission: { name: true } },
+          relations: { permission: true },
+        });
 
-    return grants.map((grant) => grant.permission.name);
+        return grants.map((grant) => grant.permission.name);
+      },
+      { ttl: this.roleTtl },
+    );
+  }
+
+  /**
+   * Drops one role's cached grants.
+   *
+   * Called after the transaction that changed them, never inside it: a read landing
+   * before the commit would refill the entry from the old rows and keep the old
+   * grant set in force for the rest of the TTL, in the direction that matters,
+   * which is a permission that was just taken away still working.
+   */
+  async invalidateRole(role: string): Promise<void> {
+    await this.cache.delete(authRoleKey(role));
   }
 
   /**
@@ -95,16 +135,20 @@ export class PermissionsService {
 
     const permissionIds = [...new Set(names)].map((name) => byName.get(name)!);
 
-    await this.grants.manager.transaction(async (manager) => {
-      await manager.delete(RolePermission, { role });
+    try {
+      await this.grants.manager.transaction(async (manager) => {
+        await manager.delete(RolePermission, { role });
 
-      if (permissionIds.length > 0) {
-        await manager.insert(
-          RolePermission,
-          permissionIds.map((permissionId) => ({ role, permissionId })),
-        );
-      }
-    });
+        if (permissionIds.length > 0) {
+          await manager.insert(
+            RolePermission,
+            permissionIds.map((permissionId) => ({ role, permissionId })),
+          );
+        }
+      });
+    } finally {
+      await this.invalidateRole(role);
+    }
 
     return permissionIds.length;
   }
