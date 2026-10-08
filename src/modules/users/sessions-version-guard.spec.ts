@@ -58,8 +58,11 @@ function walk(dir: string): string[] {
  * fail rather than leaving a stale claim set in force until it expires.
  */
 const ALLOWED: Record<string, RegExp> = {
+  // The account-wide counter: logout-everywhere and a password change.
   'src/modules/auth/auth.service.ts': /runThenInvalidateAuthCache/,
   'src/modules/auth/password-reset.service.ts': /invalidateAuthCache/,
+  // The per-device counter: signing out of one browser, and revoking a device.
+  'src/modules/auth/device.service.ts': /invalidateAuthCache/,
 };
 
 function offenders(literal: string): string[] {
@@ -77,26 +80,42 @@ function offenders(literal: string): string[] {
     .filter((file) => file in ALLOWED === false);
 }
 
-describe('the sessions version', () => {
-  it('is written in the two places that invalidate the cache, and nowhere else', () => {
-    // Every other way of writing it is a way of making logout-everywhere
-    // ineffective for the length of the entry, which is why the list is closed.
-    expect(offenders("'sessionsVersion'")).toEqual([]);
-    expect(offenders('"sessionsVersion"')).toEqual([]);
+/**
+ * Every file naming the column, ignoring the migrations that created it.
+ *
+ * The literal is what identifies a write, because it is the only form both an
+ * `increment` and a partial-object write take. A read names the column as a
+ * property, not as a string.
+ */
+function writers(): string[] {
+  return walk(SRC)
+    .filter((file) => {
+      const source = readFileSync(file, 'utf8');
+
+      return (
+        (source.includes("'sessionsVersion'") ||
+          source.includes('"sessionsVersion"')) &&
+        !source.includes('ALTER TABLE') &&
+        !source.includes('DROP COLUMN')
+      );
+    })
+    .map((file) => relative(SRC, file))
+    .sort();
+}
+
+describe('a sessions version counter', () => {
+  it('is written only in files that also invalidate the cache', () => {
+    // Every other place to write it is a way of making a logout ineffective for
+    // the length of the entry, which is why the list is closed rather than
+    // documented.
+    expect(writers()).toEqual(Object.keys(ALLOWED).sort());
   });
 
-  it('is still written at all', () => {
-    // The guard above would also pass if the column stopped being bumped, which
-    // would break logout-everywhere just as quietly.
-    const writers = walk(SRC).filter((file) =>
-      /increment\(\s*User,[\s\S]*?'sessionsVersion'/.test(
-        readFileSync(file, 'utf8'),
-      ),
-    );
-
-    expect(writers.map((file) => relative(SRC, file)).sort()).toEqual(
-      Object.keys(ALLOWED).sort(),
-    );
+  it('covers both counters, so a new one cannot be added quietly', () => {
+    // The account counter kills every device; the device counter kills one. Both
+    // are revocation, both have to invalidate, so the guard watches for the column
+    // wherever it appears rather than for one entity in particular.
+    expect(writers()).toContain('src/modules/auth/device.service.ts');
   });
 
   it('is only ever incremented by one, never set to a fixed value', () => {

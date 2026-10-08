@@ -31,6 +31,12 @@ function userDto(overrides: Partial<UserResponseDto> = {}): UserResponseDto {
   } as UserResponseDto;
 }
 
+/**
+ * The machine the token was minted on. Present because the payload now names it,
+ * which is what lets one device sign out without taking the others.
+ */
+const DEVICE = { id: 'd1', sessionsVersion: 0 };
+
 function harness() {
   const increment = vi.fn().mockResolvedValue({ affected: 1 });
   const manager = {
@@ -119,9 +125,12 @@ describe('the access token claim', () => {
       // password hash and a token row, and what is under test is the payload.
       await (
         h.service as unknown as {
-          signAccessToken(u: UserResponseDto): Promise<string>;
+          signAccessToken(
+            u: UserResponseDto,
+            d: { id: string; sessionsVersion: number },
+          ): Promise<string>;
         }
-      ).signAccessToken(dto),
+      ).signAccessToken(dto, DEVICE),
     ) as Record<string, unknown>;
   }
 

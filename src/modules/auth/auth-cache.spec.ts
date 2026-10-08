@@ -70,6 +70,11 @@ function harness(seed: Partial<Row> = {}) {
     delete: async (key: string) => {
       store.delete(key);
     },
+    deleteKeys: async (...keys: string[]) => {
+      for (const key of keys) {
+        store.delete(key);
+      }
+    },
   };
 
   const repository = {
@@ -113,15 +118,36 @@ function harness(seed: Partial<Row> = {}) {
     { getOrThrow: () => ({ authUserTtl: 60, authRoleTtl: 600 }) } as never,
   );
 
+  /** Device id to its session version, standing in for the cached map. */
+  const deviceVersions: Record<string, number> = {};
+  let deviceQueries = 0;
+
+  const deviceService = {
+    findSessionVersions: vi.fn(async () => {
+      deviceQueries += 1;
+      return { ...deviceVersions };
+    }),
+    revokeDeviceSessions: vi.fn(async (_userId: string, deviceId: string) => {
+      deviceVersions[deviceId] = (deviceVersions[deviceId] ?? 0) + 1;
+      await cache.deleteKeys(authUserKey('u1'), 'user:u1:devices');
+    }),
+  };
+
   const strategy = new JwtStrategy(
     { get: () => SECRET } as unknown as ConfigService,
     usersService,
     { forRole: vi.fn().mockResolvedValue(['user:read']) } as never,
+    deviceService as never,
   );
 
   return {
     strategy,
     usersService,
+    deviceService,
+    deviceVersions,
+    get deviceQueries() {
+      return deviceQueries;
+    },
     row,
     store,
     queries,
@@ -260,5 +286,110 @@ describe('logout everywhere', () => {
     await expect(h.strategy.validate(token({ sv: 0 }))).rejects.toThrow(
       'Invalid access token',
     );
+  });
+});
+
+describe('a device that signs out', () => {
+  let h: ReturnType<typeof harness>;
+
+  /** A second machine on the same account, which must survive. */
+  const phone = { did: 'phone', dv: 0 };
+
+  beforeEach(() => {
+    h = harness();
+    Object.assign(h.deviceVersions, { laptop: 0, phone: 0 });
+  });
+
+  it('kills the access token it was holding', async () => {
+    // The whole reason the counter is per device. Before this, signing out
+    // revoked only the refresh token and the access token in the caller's hand
+    // worked for the rest of its fifteen minutes.
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'laptop', dv: 0 })),
+    ).resolves.toMatchObject({ id: 'u1' });
+
+    await h.deviceService.revokeDeviceSessions('u1', 'laptop');
+
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'laptop', dv: 0 })),
+    ).rejects.toThrow('Invalid access token');
+  });
+
+  it('leaves the other devices signed in', async () => {
+    // The failure this avoids is the opposite mistake: bumping the account
+    // version would revoke the phone as well.
+    await h.deviceService.revokeDeviceSessions('u1', 'laptop');
+
+    await expect(
+      h.strategy.validate(token({ sv: 0, ...phone })),
+    ).resolves.toMatchObject({ id: 'u1' });
+  });
+
+  it('accepts a token minted after the sign-out, because it carries the new version', async () => {
+    // Signing in again on the same browser reuses the device row, so the new token
+    // is minted against the version the bump left behind. Refusing that would
+    // make a device unable to sign back in.
+    await h.deviceService.revokeDeviceSessions('u1', 'laptop');
+
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'laptop', dv: 1 })),
+    ).resolves.toMatchObject({ id: 'u1' });
+  });
+
+  it('refuses a token whose device has been deleted', async () => {
+    // Absence is not "nothing to check". Retention removes devices with no live
+    // refresh token, and treating that as a pass would let a token minted before
+    // the deletion keep working for the rest of its lifetime.
+    delete h.deviceVersions.laptop;
+
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'laptop', dv: 0 })),
+    ).rejects.toThrow('Invalid access token');
+  });
+
+  it('refuses a revoked device even at a matching version', async () => {
+    h.deviceVersions.laptop = 5;
+
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'laptop', dv: 5 })),
+    ).resolves.toMatchObject({ id: 'u1' });
+
+    await h.deviceService.revokeDeviceSessions('u1', 'laptop');
+
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'laptop', dv: 5 })),
+    ).rejects.toThrow('Invalid access token');
+  });
+
+  it('ignores a token that names no device', async () => {
+    // Every token minted before this claim existed, and therefore every signed-in
+    // user at the moment of a deploy. Refusing them would sign everybody out over
+    // a feature release.
+    delete h.deviceVersions.laptop;
+
+    await expect(h.strategy.validate(token({ sv: 0 }))).resolves.toMatchObject({
+      id: 'u1',
+    });
+  });
+
+  it('compares a device-less version against zero', async () => {
+    // A token carrying `did` but no `dv` came from a database without the column.
+    // The rule matches the account claim: accepted while nothing has been revoked
+    // from the device.
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'laptop' })),
+    ).resolves.toMatchObject({ id: 'u1' });
+
+    h.deviceVersions.laptop = 1;
+
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'laptop' })),
+    ).rejects.toThrow('Invalid access token');
+  });
+
+  it('does not spend a query on a token that names no device', async () => {
+    await h.strategy.validate(token({ sv: 0 }));
+
+    expect(h.deviceQueries).toBe(0);
   });
 });

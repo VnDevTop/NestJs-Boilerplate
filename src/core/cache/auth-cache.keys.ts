@@ -38,3 +38,19 @@ export function authUserKey(userId: string): string {
 export function authRoleKey(role: string): string {
   return cacheKey(CACHE_NAMESPACE.Role, role);
 }
+
+/**
+ * `user:<id>:devices` — each of a user's device session versions.
+ *
+ * A second key rather than a field on the claims entry, because the claims entry
+ * is read on every request by everybody and this is read only by a token that
+ * names a device. Keeping them apart means a user with eight devices does not
+ * carry eight counters in the hot entry, and the two can expire independently.
+ *
+ * They are invalidated together anyway: `UsersService.invalidateAuthCache` drops
+ * both, because there is no version bump that changes one without changing the
+ * claims that say which device is being presented.
+ */
+export function authDeviceSessionsKey(userId: string): string {
+  return cacheKey(CACHE_NAMESPACE.User, userId, 'devices');
+}

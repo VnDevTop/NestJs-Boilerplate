@@ -6,6 +6,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload, RequestUser } from '../../../common/interfaces/index.js';
 import { PermissionsService } from '../../users/permissions.service.js';
 import { UsersService } from '../../users/index.js';
+import { DeviceService } from '../device.service.js';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -13,6 +14,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     readonly configService: ConfigService,
     private readonly usersService: UsersService,
     private readonly permissionsService: PermissionsService,
+    private readonly deviceService: DeviceService,
   ) {
     const secretOrKey = configService.get<string>('jwtAccessToken.secret');
 
@@ -63,6 +65,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Invalid access token');
     }
 
+    // The per-device half of the revocation check, and the reason logout can
+    // leave the other machines alone.
+    //
+    // Only reached when the token names a device. A token minted before this
+    // claim existed carries neither and skips straight past, which is what keeps
+    // a deploy from signing everybody out.
+    if (payload.did !== undefined) {
+      await this.assertDeviceSession(user.id, payload.did, payload.dv);
+    }
+
     return {
       id: user.id,
       email: user.email,
@@ -75,5 +87,37 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // where the names came from.
       permissions: await this.permissionsService.forRole(user.role),
     };
+  }
+
+  /**
+   * Refuses a token whose device has been signed out.
+   *
+   * Two ways to fail, and the second is the one that matters. A version behind
+   * the device is the ordinary case: this device was signed out. A device that is
+   * **absent** from the map is refused too, because that is what a deleted device
+   * looks like from here. Treating absence as "nothing to check" would let a
+   * device that retention removed last night keep its token this morning.
+   */
+  private async assertDeviceSession(
+    userId: string,
+    deviceId: string,
+    tokenVersion: number | undefined,
+  ): Promise<void> {
+    const versions = await this.deviceService.findSessionVersions(userId);
+    const currentVersion = versions[deviceId];
+
+    if (currentVersion === undefined) {
+      throw new UnauthorizedException('Invalid access token');
+    }
+
+    // A token with no version predates the column, and is accepted only while the
+    // device is still at zero. Strict equality would refuse it, signing out
+    // every device that has never been revoked from, on deploy.
+    const current = currentVersion ?? 0;
+    const presented = tokenVersion === undefined ? 0 : tokenVersion;
+
+    if (presented !== current) {
+      throw new UnauthorizedException('Invalid access token');
+    }
   }
 }

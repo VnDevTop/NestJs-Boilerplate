@@ -45,6 +45,7 @@ import { LoginLockoutService } from './login-lockout.service.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { PasswordResetService } from './password-reset.service.js';
 import { User } from '../users/entities/index.js';
+import { UserDevice } from './entities/index.js';
 import { TwoFactorService } from './two-factor.service.js';
 import {
   AuthToken,
@@ -55,7 +56,7 @@ import {
 } from './types/index.js';
 
 type RotationResult =
-  | { status: 'ok'; refreshToken: string }
+  | { status: 'ok'; refreshToken: string; deviceId: string | null }
   | { status: 'invalid' }
   | { status: 'reused' }
   | { status: 'expired' };
@@ -97,14 +98,14 @@ export class AuthService {
       lastName: registerDto.lastName,
     });
 
-    const { token } = await this.issueSession(user.id, metadata);
+    const { token, device } = await this.issueSession(user.id, metadata);
 
     // The account is usable before the address is confirmed; Phase 19 adds the
     // gate. Issuing the link here means a user who never checks the address
     // cannot be reached later without asking for a new one.
     void this.sendVerification(user).catch(() => undefined);
 
-    return this.createAuthToken(user, token);
+    return this.createAuthToken(user, token, device);
   }
 
   /**
@@ -212,9 +213,9 @@ export class AuthService {
       return this.twoFactorService.issueChallenge(user.id);
     }
 
-    const { token } = await this.issueSession(user.id, metadata);
+    const { token, device } = await this.issueSession(user.id, metadata);
 
-    return this.createAuthToken(userResponse, token);
+    return this.createAuthToken(userResponse, token, device);
   }
 
   /**
@@ -469,9 +470,13 @@ export class AuthService {
 
     await this.twoFactorService.verifyChallenge(userId, twoFactorLoginDto.code);
 
-    const { token } = await this.issueSession(user.id, metadata);
+    const { token, device } = await this.issueSession(user.id, metadata);
 
-    return this.createAuthToken(UserResponseDto.fromEntity(user), token);
+    return this.createAuthToken(
+      UserResponseDto.fromEntity(user),
+      token,
+      device,
+    );
   }
 
   twoFactorSetup(currentUser: RequestUser): Promise<TwoFactorSetup> {
@@ -521,9 +526,30 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token expired');
     }
 
+    // The access token has to name the device it was minted on, and carry that
+    // device's current version, or signing out of this device would not touch it.
+    // A device that has since been deleted cannot be named, so the session is over
+    // even though its refresh token still verifies.
+    if (rotation.deviceId === null) {
+      // A session with no device cannot produce a device-scoped access token, and
+      // minting one without the claim would silently downgrade that session to a
+      // token no logout can reach. Refusing is the fail-closed answer.
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    const device = await this.deviceService.findByIdForSession(
+      user.id,
+      rotation.deviceId,
+    );
+
+    if (!device) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
     return this.createAuthToken(
       UserResponseDto.fromEntity(user),
       rotation.refreshToken,
+      device,
     );
   }
 
@@ -532,10 +558,33 @@ export class AuthService {
       ignoreExpiration: true,
     });
 
+    // The refresh token carries no device claim, so the device behind this session
+    // comes from the row the token points at. Read before the revoke, because the
+    // revoke is a flag on that same row.
+    const record = await this.refreshTokenService.findByJti(jti);
+
     await this.refreshTokenService.revokeByJti(
       jti,
       RefreshTokenRevokedReason.Logout,
     );
+
+    // Revoking the refresh token only stops the *next* access token being minted.
+    // The access token in the caller's hand would keep working for the rest of its
+    // fifteen minutes, which is not what signing out of a device means to whoever
+    // just did it.
+    //
+    // Scoped to this device rather than the account, so the phone and the laptop
+    // stay signed in. `logoutAll` is the one that takes everything.
+    //
+    // A token with no device cannot be scoped to one. It also predates the access
+    // token claim that names a device, so there is nothing on it for the bump to
+    // catch, and skipping it is consistent rather than a hole.
+    if (record?.deviceId) {
+      await this.deviceService.revokeDeviceSessions(
+        record.userId,
+        record.deviceId,
+      );
+    }
   }
 
   async logoutAll(currentUser: RequestUser): Promise<void> {
@@ -655,11 +704,16 @@ export class AuthService {
   private async issueSession(
     userId: string,
     metadata: DeviceMetadata,
-  ): Promise<{ token: string }> {
+  ): Promise<{ token: string; device: UserDevice }> {
     const device = await this.deviceService.register(userId, metadata);
     const tokenMetadata = this.toTokenMetadata(metadata);
+    const { token } = await this.refreshTokenService.issue(
+      userId,
+      tokenMetadata,
+      device.id,
+    );
 
-    return this.refreshTokenService.issue(userId, tokenMetadata, device.id);
+    return { token, device };
   }
 
   private async rotate(
@@ -724,7 +778,7 @@ export class AuthService {
         manager,
       );
 
-      return { status: 'ok', refreshToken: token };
+      return { status: 'ok', refreshToken: token, deviceId: current.deviceId };
     });
   }
 
@@ -738,8 +792,9 @@ export class AuthService {
   private async createAuthToken(
     user: UserResponseDto,
     refreshToken: string,
+    device: { id: string; sessionsVersion: number },
   ): Promise<AuthToken> {
-    const accessToken = await this.signAccessToken(user);
+    const accessToken = await this.signAccessToken(user, device);
 
     return {
       accessToken,
@@ -750,12 +805,21 @@ export class AuthService {
     };
   }
 
-  private async signAccessToken(user: UserResponseDto): Promise<string> {
+  private async signAccessToken(
+    user: UserResponseDto,
+    device: { id: string; sessionsVersion: number },
+  ): Promise<string> {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
       isManager: user.isManager,
+      // Naming the device is what lets signing out of one browser leave the
+      // others alone. `sv` above is per account and takes every device with it;
+      // these two are the same counter narrowed to the machine the token was
+      // minted on.
+      did: device.id,
+      dv: device.sessionsVersion ?? 0,
       // Carried so "log out everywhere" is visible on the next request instead
       // of after this token expires. Read from the DTO rather than re-fetched, so
       // the value in the token always matches the row it was minted from.

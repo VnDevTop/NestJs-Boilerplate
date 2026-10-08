@@ -6,7 +6,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { authUserKey, CacheService } from '../../core/cache/index.js';
+import {
+  authDeviceSessionsKey,
+  authUserKey,
+  CacheService,
+} from '../../core/cache/index.js';
 import type { CacheConfig } from '../../configs/index.js';
 import { ConfigService } from '@nestjs/config';
 
@@ -162,15 +166,22 @@ export class UsersService {
   }
 
   /**
-   * Drops one user's cached claims.
+   * Drops one user's cached claims, and their device session versions with them.
    *
    * Every write that could change an authentication answer calls this, and the
    * list is deliberately short: the role, the active flag, the manager flag, the
    * address, and the sessions version. Anything else about a user can change
    * without touching the cache.
+   *
+   * Two keys rather than one, because a token that presents a device reads both.
+   * Dropping the claims alone would leave a revoked device looking valid to the
+   * very next request.
    */
   async invalidateAuthCache(userId: string): Promise<void> {
-    await this.cache.delete(authUserKey(userId));
+    await this.cache.deleteKeys(
+      authUserKey(userId),
+      authDeviceSessionsKey(userId),
+    );
   }
 
   /**

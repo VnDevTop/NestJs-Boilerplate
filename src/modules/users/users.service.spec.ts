@@ -46,6 +46,12 @@ function fakeCache() {
       deleted.push(key);
       store.delete(key);
     }),
+    deleteKeys: vi.fn(async (...keys: string[]) => {
+      deleted.push(...keys);
+      for (const key of keys) {
+        store.delete(key);
+      }
+    }),
   };
 }
 
@@ -203,15 +209,20 @@ describe('findAuthClaims', () => {
 });
 
 describe('invalidateAuthCache', () => {
-  it('drops exactly one key', async () => {
+  it('drops the claims and the device versions together', async () => {
+    // A token that presents a device reads both keys. Dropping the claims alone
+    // would leave a revoked device looking valid to the very next request.
     const h = harness();
 
     await h.service.invalidateAuthCache('u1');
 
-    expect(h.cache.delete).toHaveBeenCalledWith('user:u1');
+    expect(h.cache.deleteKeys).toHaveBeenCalledWith(
+      'user:u1',
+      'user:u1:devices',
+    );
   });
 
-  it('forces the next request back to the database', async () => {
+  it('forces the next claim read back to the database', async () => {
     const h = harness();
 
     await h.service.findAuthClaims('u1');
@@ -228,7 +239,7 @@ describe('runThenInvalidateAuthCache', () => {
     // in between repopulate the entry from the old, uncommitted snapshot.
     const h = harness();
     const order: string[] = [];
-    h.cache.delete.mockImplementation(async () => {
+    h.cache.deleteKeys.mockImplementation(async () => {
       order.push('invalidate');
     });
 
@@ -258,7 +269,7 @@ describe('runThenInvalidateAuthCache', () => {
       }),
     ).rejects.toThrow('rollback');
 
-    expect(h.cache.deleted).toEqual(['user:u1']);
+    expect(h.cache.deleted).toEqual(['user:u1', 'user:u1:devices']);
   });
 
   it('does not drop the entry when the work never ran', async () => {
@@ -267,7 +278,7 @@ describe('runThenInvalidateAuthCache', () => {
 
     await h.service.runThenInvalidateAuthCache('u1', async () => 'fine');
 
-    expect(h.cache.deleted).toEqual(['user:u1']);
+    expect(h.cache.deleted).toEqual(['user:u1', 'user:u1:devices']);
   });
 });
 
@@ -291,7 +302,7 @@ describe('the writes that move an authentication answer', () => {
     // unless the cache is dropped.
     await h.service.softDelete('u1');
 
-    expect(h.cache.deleted).toEqual(['user:u1']);
+    expect(h.cache.deleted).toEqual(['user:u1', 'user:u1:devices']);
   });
 
   it('drops the entry even when the update changed nothing a claim holds', async () => {
@@ -299,6 +310,6 @@ describe('the writes that move an authentication answer', () => {
     // forgetting it silently keeps a revoked role in force.
     await h.service.update('u1', { firstName: 'Ada' } as never);
 
-    expect(h.cache.deleted).toEqual(['user:u1']);
+    expect(h.cache.deleted).toEqual(['user:u1', 'user:u1:devices']);
   });
 });
