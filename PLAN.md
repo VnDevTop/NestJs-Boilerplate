@@ -563,14 +563,41 @@ Tasks:
 - [ ] Make `PermissionsGuard` read the cached set
 - [ ] Invalidate on every write to `User`, `Role`, `RolePermission` and device
       state
-- [ ] Do the invalidation from a TypeORM subscriber in
-      `src/database/subscribers/`, not from each service, so it cannot be
-      forgotten in one of them
+- [x] ~~Do the invalidation from a TypeORM subscriber in
+      `src/database/subscribers/`~~ — dropped, and replaced with a guard test. See
+      the note below for the two reasons, both checked against the installed
+      TypeORM rather than assumed.
 - [ ] Fall back to the database and log only when redis is unreachable, so an
       outage costs latency rather than availability
 - [ ] Report cache loss as degraded rather than down in the Terminus indicator
 
 Dropped from the original task list, and why:
+
+- **The invalidation subscriber.** The plan wanted invalidation to live in a
+  TypeORM subscriber so it "cannot be forgotten in one of them". Two things make
+  that impossible here, both verified in `node_modules` rather than reasoned
+  about:
+
+  1. **A subscriber gets no dependency injection.**
+     `ConnectionMetadataBuilder.buildSubscribers` instantiates them with
+     `new metadata.target()`, so there is no constructor argument to inject
+     `CacheService` through, and Nest does not rewrite the options it is given.
+     Reaching the cache would need a module-level singleton or a second redis
+     client, and a second client has to reproduce the key derivation that
+     `CacheService` owns — which is exactly the drift `cache-keys.ts` exists to
+     prevent.
+
+  2. **It could not identify the row.** `UpdateQueryBuilder` passes `valuesSet`
+     as the event entity, so `update()` and `increment()` deliver
+     `{ sessionsVersion: 1 }` with no id; `DeleteQueryBuilder` passes no entity
+     at all. Every write whose invalidation matters is a query-builder write, so
+     the subscriber would fire on all of them and be able to act on none.
+
+  What replaces it is a guard test, `sessions-version-guard.spec.ts`: a write to
+  a revocation-critical column may only appear in a file that also invalidates,
+  and the amount must be an increment. Adding a third bump site fails the build
+  rather than quietly weakening logout-everywhere. It was checked by planting a
+  bump in `DeviceService`, which failed the two relevant tests.
 
 - **`wrapOrLoad()`.** `CacheService.wrap()` already does this: it coalesces
   concurrent callers on the same key and stores a nullish result for `emptyTtl`
@@ -582,16 +609,17 @@ Dropped from the original task list, and why:
   would have nothing to read from.
 
 Implementation note: a stale cache entry is an authorization bug, not a
-performance bug. That is why invalidation lives in a subscriber, why TTLs stay
-short, and why the integration test mutates a user and re-reads immediately rather
-than waiting one out.
+performance bug. That is why invalidation is explicit at every write and guarded
+by a test, why the deletes happen after the transaction rather than inside it, why
+TTLs stay short, and why the integration test mutates a user and re-reads
+immediately rather than waiting one out.
 
 Commits:
 
 ```text
 perf: serve authentication from cache
 perf: serve authorization from cache
-perf: invalidate the auth cache from a subscriber
+perf: guard the sessions version against an uninvalidate write
 perf: report cache loss as degraded
 ```
 
