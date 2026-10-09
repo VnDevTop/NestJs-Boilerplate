@@ -15,6 +15,26 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## docs: document the authentication cache
+
+Phase 17b. Intended commit: `docs: document the authentication cache`
+
+**Tasks**
+
+- [x] Replace the note saying authentication state is not cached, which Phase 17b
+      made false
+- [x] State the three keys, their TTLs, and the two rules that keep a stale entry
+      from becoming an authorisation bug
+
+**Notes**
+
+- `src/core/cache/README.md` still carried the line from Phase 10 that
+  `JwtStrategy` reads `isActive`, `role` and `isManager` on every request on
+  purpose. It stopped being true the moment the claims moved into the cache, and a
+  reader following it would conclude that a deactivation waits out a TTL.
+
+---
+
 ## refactor: build the redis store through the keyv factory
 
 Phase 17b. Intended commit: `refactor: build the redis store through the keyv factory`

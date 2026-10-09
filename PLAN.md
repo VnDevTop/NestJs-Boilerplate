@@ -1021,7 +1021,7 @@ lands after the harness in Phase 12 is solid.
 | Phase 15  | Background Job Queue                           | Done    |
 | Phase 16  | Data Retention and Cleanup                     | Done    |
 | Phase 17a | Permission-based Authorization                 | Done    |
-| Phase 17b | Authentication and Authorization through Cache | Pending |
+| Phase 17b | Authentication and Authorization through Cache | Done    |
 | Phase 18  | Notifications                                  | Pending |
 | Phase 19  | Account Security Features                      | Pending |
 | Phase 20  | Operational Hardening                          | Pending |
