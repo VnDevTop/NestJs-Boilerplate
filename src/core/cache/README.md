@@ -27,14 +27,14 @@ and the server cannot be reached, the app refuses to start.
 
 ## How it behaves when things go wrong
 
-| Situation | Behaviour |
-| --- | --- |
-| Cache unreachable at boot | Boot fails with a clear error, the app does not listen |
-| Cache dies after boot | Reads become misses, the loader runs, no 500s |
-| Database slow | `refreshThreshold` serves the cached value and refreshes in the background |
-| Key expires under load | Concurrent misses share one loader run |
-| Repeated miss on the same key | Answered from a short lived negative entry |
-| Many keys expire at once | Expirations carry a jitter, so they do not expire together |
+| Situation                     | Behaviour                                                                  |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| Cache unreachable at boot     | Boot fails with a clear error, the app does not listen                     |
+| Cache dies after boot         | Reads become misses, the loader runs, no 500s                              |
+| Database slow                 | `refreshThreshold` serves the cached value and refreshes in the background |
+| Key expires under load        | Concurrent misses share one loader run                                     |
+| Repeated miss on the same key | Answered from a short lived negative entry                                 |
+| Many keys expire at once      | Expirations carry a jitter, so they do not expire together                 |
 
 One cost to be aware of. While the cache is down, the store re-attempts the
 connection on every operation, and each attempt waits out
@@ -142,6 +142,41 @@ Prefer `CacheService.wrap()` when the value needs loading, validating or
 combining several sources, since the interceptor only has the response to work
 with.
 
-Authentication state is not cached. `JwtStrategy` reads `isActive`, `role` and
-`isManager` on every request on purpose, so a role change or a deactivation takes
-effect immediately instead of after a TTL.
+## Authentication and authorisation
+
+Authentication state _is_ cached, since Phase 17b, and the interesting part is the
+invalidation rather than the read. `JwtStrategy` authorises a request from two
+entries:
+
+| Key                 | Holds                                                                          | TTL                         |
+| ------------------- | ------------------------------------------------------------------------------ | --------------------------- |
+| `user:<id>`         | the claim projection: email, role, manager flag, active flag, sessions version | `CACHE_AUTH_USER_TTL`, 60s  |
+| `user:<id>:devices` | each device's session version, for a token naming a device                     | `CACHE_AUTH_USER_TTL`       |
+| `role:<role>`       | the permission names one role holds                                            | `CACHE_AUTH_ROLE_TTL`, 600s |
+
+The claim projection selects named columns and never reads the password hash. A
+bcrypt hash sitting in redis turns a cache compromise into offline cracking
+material for every account, and the request path does not need it. The email
+lookup behind `login` therefore stays a database read too, since `login` verifies
+against that row's hash.
+
+Two rules keep a stale entry from becoming an authorisation bug:
+
+- **A write invalidates, after its transaction commits.** Not inside it. A read
+  landing between the delete and the commit refills the entry from the row being
+  revoked, and that entry then outlives the token it wrongly admitted. See
+  `UsersService.runThenInvalidateAuthCache`.
+- **An absent claim means "this predates the column", not zero.** A token minted
+  before a version column existed carries no claim, and is accepted while the
+  counter is still at zero. Comparing for strict equality instead would sign every
+  user out on deploy.
+
+Grants are cached per role rather than per user, because a permission belongs to a
+role and invalidation is then one delete instead of one per holder. `CacheService`
+has no pattern delete on purpose, so a per-user key would mean scanning the user
+table on every role change.
+
+An unreachable cache is a miss, not an error: the loader runs and the request
+costs a database query. That is the whole failover story, and it is also why
+degradation is reported by the health indicator rather than by a log line, since
+every read looks like a miss. See `src/core/health/cache.health.ts`.
