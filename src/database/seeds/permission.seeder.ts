@@ -131,7 +131,7 @@ export class PermissionSeeder implements Seeder {
       return;
     }
 
-    const { store, close } = await createRedisStore(config, () => undefined);
+    const store = createRedisStore(config);
 
     try {
       await store.deleteMany?.([...CACHED_ROLE_GRANT_KEYS]);
@@ -142,9 +142,11 @@ export class PermissionSeeder implements Seeder {
       );
       return;
     } finally {
-      // Without this the socket keeps the event loop alive and the seed script
-      // sits there after its last line instead of exiting.
-      await close().catch(() => undefined);
+      // `disconnect` is how Keyv exposes the store's own close, and it is not
+      // optional in practice. Without it the open socket keeps the event loop alive
+      // and this script sits here after its last line instead of exiting, which is
+      // how this was first shipped.
+      await store.disconnect().catch(() => undefined);
     }
 
     process.stdout.write(

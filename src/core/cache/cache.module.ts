@@ -24,9 +24,21 @@ const onRedisError = (error: Error): void =>
           return { stores: [createMemoryStore(config)], ttl };
         }
 
-        const { store } = await createRedisStore(config, onRedisError, {
-          probe: true,
-        });
+        const store = createRedisStore(config);
+
+        // A Keyv store connects lazily, so this read is what turns an unreachable
+        // cache into a failed **boot**. Without it the app would start and then
+        // fail on its first request, which is harder to diagnose than not starting.
+        // Only the probe wants errors thrown; afterwards a store reports them as
+        // misses, which is the fail-open behaviour the rest of this cache needs.
+        try {
+          await store.get('__startup__');
+        } catch (error) {
+          onRedisError(error as Error);
+          throw error;
+        }
+
+        (store as { throwOnErrors: boolean }).throwOnErrors = false;
 
         return { stores: [store], ttl };
       },
