@@ -56,6 +56,19 @@ export function authDeviceSessionsKey(userId: string): string {
 }
 
 /**
+ * `user:<id>:notifications` — the notification preferences this user set.
+ *
+ * A second key under the same namespace rather than a field on the claims entry,
+ * for the same reason as the device versions above: this is read when a
+ * notification is being delivered and written by a different route, so the two have
+ * different lifetimes and different traffic. Putting it on the hot entry would mean
+ * every authenticated request carried a list that most of them never read.
+ */
+export function authPreferenceKey(userId: string): string {
+  return cacheKey(CACHE_NAMESPACE.User, userId, 'notifications');
+}
+
+/**
  * `token:revoked:<session>` — one revoked session, one key.
  *
  * **Not part of the cache that `invalidateAuthCache` drops.** Every other key here

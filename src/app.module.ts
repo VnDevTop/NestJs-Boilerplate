@@ -25,6 +25,7 @@ import {
   AdminModule,
   AuthModule,
   MaintenanceSchedulerModule,
+  NotificationEventsModule,
   QueueModule,
   UsersModule,
 } from './modules/index.js';
@@ -105,9 +106,19 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     AdminModule,
 
     // Enqueues the nightly retention job. Imported here rather than inside
-    // AuthModule, which already pulls in the queue for mail: the scheduler has
-    // to sit above the queue in the import graph, and AuthModule does not.
+    // AuthModule, which already pulls in the queue for mail: the scheduler has to
+    // sit above the queue in the import graph, and AuthModule does not.
     MaintenanceSchedulerModule,
+
+    /**
+     * The emit side of notifications, and the preferences routes.
+     *
+     * At the root for the same reason as the scheduler: it imports the queue, so it
+     * has to sit above it. AuthModule and UsersModule import it for the events they
+     * raise, which is what makes "a registration notifies every enabled channel" an
+     * import rather than a global.
+     */
+    NotificationEventsModule,
   ],
   controllers: [AppController],
   providers: [

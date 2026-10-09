@@ -9,10 +9,10 @@ import type { RetentionAges } from '../../configs/retention.config.js';
  * entry is testable without a database.
  *
  * The list is deliberately shorter than the plan. Only tables that exist are
- * listed: `mail_logs`, `notification_logs`, login-attempt bookkeeping and
- * `audit_logs` arrive in later phases, and a rule that names a missing table
- * would fail every night at 3am until someone noticed. They are named in
- * `DEFERRED_TARGETS` so the gap is visible rather than forgotten.
+ * listed: `mail_logs`, login-attempt bookkeeping and `audit_logs` arrive in later
+ * phases, and a rule that names a missing table would fail every night at 3am
+ * until someone noticed. They are named in `DEFERRED_TARGETS` so the gap is visible
+ * rather than forgotten.
  */
 
 /**
@@ -131,6 +131,23 @@ export const RETENTION_TARGETS: readonly RetentionTarget[] = [
     cascades: [],
   },
   {
+    // Added by Phase 18, alongside the entity. It is the one deferred target that
+    // arrived, so it moves out of `DEFERRED_TARGETS` and into the policy.
+    id: 'notification-logs',
+    table: 'notification_logs',
+    description:
+      'notification delivery records, once past the retention window',
+    ageKey: 'notificationLogs',
+    ageDays: 0,
+    // Keyed on the insert time rather than on the event, because a row is evidence
+    // that an attempt happened and its value is "how recently did we hear from these
+    // channels". An old row for a channel that started failing yesterday is the row
+    // an operator wants, and a predicate on the event's own date would keep exactly
+    // the wrong ones.
+    buildPredicate: (cutoff) => `"createdAt" < '${cutoff.toISOString()}'`,
+    cascades: [],
+  },
+  {
     id: 'user-devices',
     table: 'user_devices',
     description: 'devices with no live refresh token, immediately',
@@ -162,10 +179,6 @@ export const DEFERRED_TARGETS: readonly {
   readonly reason: string;
 }[] = [
   { id: 'mail-logs', reason: 'the mail log table arrives with its own phase' },
-  {
-    id: 'notification-logs',
-    reason: 'the notification log table has not been created',
-  },
   {
     id: 'login-attempts',
     reason: 'login-attempt bookkeeping is not stored in its own table',

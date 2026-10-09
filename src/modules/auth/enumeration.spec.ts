@@ -102,14 +102,21 @@ function harness(options: {
           blocked: false,
           retryAfterSeconds: 0,
           firstBlock: false,
+          failures: 0,
         }),
       recordFailure: () =>
         Promise.resolve({
           blocked: false,
           retryAfterSeconds: 0,
           firstBlock: false,
+          failures: 0,
         }),
       reset: () => Promise.resolve(undefined),
+    } as never,
+    // The notification emitter is fire-and-forget and these tests are about
+    // something else, so a fake that records nothing keeps them focused.
+    {
+      notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
     } as never,
   );
 

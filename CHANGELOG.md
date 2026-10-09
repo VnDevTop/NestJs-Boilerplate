@@ -15,6 +15,81 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: add multi-channel notifications
+
+Phase 18. Intended commit: `feat: add multi-channel notifications`
+
+**Tasks**
+
+- [x] `NotificationChannel { name, isEnabled(), send() }`, and every channel behind it
+- [x] Telegram, Slack and Discord over raw HTTPS, no package for any of them
+- [x] Console as the development default, and email delegating to `MailService`
+- [x] Per-channel enable flag, per-channel retry budget, and a dead-letter list
+- [x] `notify()` asynchronous and failure-isolated
+- [x] `notification_preferences`, opt-out per event and channel, with routes
+- [x] `notification_logs`, one row per channel, purged by the retention job
+- [x] MarkdownV2 escaping centralised, and Slack's `mrkdwn` escaping added beside it
+- [x] Telegram forum topics, per chat and per event
+- [x] Seven events: registered, deleted, failed logins, new device, 2FA on and off,
+      retention anomaly
+
+**Notes**
+
+- **The module is split in two, and the split is forced by the graph.** The queue's
+  router injects `NotificationProcessor`, which injects the delivery service, so that
+  service cannot be in a module that enqueues. `NotificationModule` sits below the
+  queue and `NotificationEventsModule` above it — the same shape Phase 16 used for
+  retention. `notification.graph.spec.ts` asserts it, because a cycle does not fail a
+  test, it fails at boot naming a provider rather than the import that caused it.
+- **Retries are per channel, inside the service, not in the queue.** A queue retry
+  would re-attempt every channel for the sake of the one that failed, and a Slack
+  alert would arrive five times because Telegram was down.
+- **A partial delivery is a job success.** The processor asks whether anybody
+  received the notification, which is the opposite of `MailProcessor`'s question and
+  for a concrete reason: mail is one recipient, a notification is several.
+- **Every attempt is logged, refusals included**, with the rendered body. The row that
+  says Telegram answered 401 is the row an operator needs at 3am, and a log of only
+  successes cannot answer "did it arrive".
+- **A failed preference lookup delivers anyway.** Failing closed would let a
+  preferences outage silence every operator alert in the deployment.
+- **Preferences have no foreign key to `users`,** against the precedent of
+  `role_permissions`. A user row is soft deleted first and hard deleted by the
+  retention job thirty days later, so a cascade would erase the preference at the
+  moment an administrator restored the account.
+- **Two emit sites were narrowed deliberately.** `auth.login.failed` fires for
+  addresses that do not exist, because the lockout counts those and an operator
+  watching for attack traffic needs to see them; `auth.device.login` fires only when
+  the device row was created, because alerting on every sign-in trains an operator to
+  ignore the channel.
+
+### The parts of the plan that did not survive the code
+
+- **Slack needed its own escaper.** `mrkdwn` is not Markdown: it escapes with HTML
+  entities, not backslashes, so Telegram's `escapeMarkdownV2` would have rendered as
+  a wall of backslashes and still left `<url|label>` clickable. A notification body
+  carries a user-supplied email address, so without this an address containing `<`
+  became a link in a shared ops channel. Two helpers, one per syntax.
+- **`isNotificationEventKey` uses `Object.hasOwn`, not `in`.** The event name arrives
+  off a queue, so `"constructor"` passed an `in` check and was then looked up in the
+  registry as a function. Found by writing the test.
+- **Discord could not reuse Slack's payload.** The Phase 12 comment said one
+  implementation could serve both, and for the url and the transport that is true.
+  The body is not: Discord ignores `text` and posts an empty message, because its
+  field is `content` and it calls a section an `embed`. Reusing it would have
+  delivered nothing while answering 200.
+- **The dedupe key needed the subject id before the notification id.** The first
+  version fell back to a fresh uuid for the recipient half, which made the key
+  unstable for any event carrying only a `subjectId` — silently disabling
+  deduplication for exactly the events that were using it.
+- **A preference cache eviction lands after the whole batch, not between writes.**
+  An eviction between two writes would let a concurrent read refill from a
+  half-applied state and cache that answer for the rest of the TTL.
+- **The `notification` mail template renders the app name in the footer, not the
+  subject.** An operator triages a mailbox by subject line, and "Security alert"
+  six times a day tells them nothing about which one to open. Every other template
+  still names the app in its subject, so the shared spec became a per-template
+  assertion.
+
 ## docs: document the authentication cache
 
 Phase 17b. Intended commit: `docs: document the authentication cache`

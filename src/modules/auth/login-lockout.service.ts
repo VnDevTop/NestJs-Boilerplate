@@ -49,12 +49,23 @@ export interface LockoutState {
    * notification per lockout rather than one per rejected request.
    */
   readonly firstBlock: boolean;
+  /**
+   * How many failures have been counted, so an operator alert can say how it
+   * looked rather than only that it happened.
+   *
+   * Carried on the state rather than returned separately because the count only
+   * exists inside `recordFailure`, and a second call would be a second `INCR` on
+   * redis — one more value to be wrong by one. Zero on the paths that never read
+   * it, which is honest rather than a guess at the current count.
+   */
+  readonly failures: number;
 }
 
 const ALLOWED: LockoutState = {
   blocked: false,
   retryAfterSeconds: 0,
   firstBlock: false,
+  failures: 0,
 };
 
 @Injectable()
@@ -93,6 +104,7 @@ export class LoginLockoutService {
         blocked: true,
         retryAfterSeconds: Math.ceil(remaining / 1000),
         firstBlock: false,
+        failures: 0,
       };
     } catch (error) {
       return this.failOpen(error, 'inspect');
@@ -123,7 +135,7 @@ export class LoginLockoutService {
       }
 
       if (failures < LOCKOUT_THRESHOLD) {
-        return ALLOWED;
+        return { ...ALLOWED, failures };
       }
 
       const blockSeconds = this.blockSeconds(failures);
@@ -141,6 +153,7 @@ export class LoginLockoutService {
           blocked: true,
           retryAfterSeconds: blockSeconds,
           firstBlock: false,
+          failures,
         };
       }
 
@@ -148,6 +161,7 @@ export class LoginLockoutService {
         blocked: true,
         retryAfterSeconds: blockSeconds,
         firstBlock: true,
+        failures,
       };
     } catch (error) {
       return this.failOpen(error, 'recordFailure');

@@ -1,0 +1,72 @@
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  PrimaryGeneratedColumn,
+  Unique,
+  UpdateDateColumn,
+} from 'typeorm';
+
+/**
+ * One user's answer to "should this event reach this channel".
+ *
+ * A row is an opt-out, not an opt-in. The table is empty on a fresh install and
+ * stays empty unless somebody deliberately changes something, which is what makes
+ * the default right: a user who has never heard of notifications receives them,
+ * and a user who does not want their registration announced in a shared ops
+ * channel has a way to say so.
+ *
+ * `enabled` is stored rather than implied by the row's existence so a grant can be
+ * written explicitly. The alternative is a row meaning "off" and its absence
+ * meaning "on", which makes "turn this back on" indistinguishable from "never set
+ * it", and the first thing an operator does with a mute button is press it twice.
+ *
+ * Unique per (user, event, channel) rather than per (user, event): a user who
+ * muted a security event in Slack has not muted it in email, and one row per pair
+ * is what lets the two answers disagree.
+ *
+ * Cascades with the user. A preference belonging to a row that no longer exists is
+ * a preference nobody can ever act on again, and it is the kind of row that
+ * accumulates quietly until somebody wonders why the table is large.
+ */
+@Entity({ name: 'notification_preferences' })
+@Unique('UQ_notification_preferences_user_event_channel', [
+  'userId',
+  'event',
+  'channel',
+])
+@Index('IDX_notification_preferences_user', ['userId'])
+export class NotificationPreference {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  /**
+   * No foreign key on purpose, unlike `role_permissions`.
+   *
+   * `role_permissions` is reachable from a role that outlives its holders, and a
+   * grant with no role is a bug worth blocking. A notification preference is
+   * different: the user row is *soft* deleted first and hard deleted by the
+   * retention job after thirty days, and a cascade would silently erase a
+   * preference at the moment an operator restores the account. The column is
+   * plain, so the preference survives the restore and the retention job prunes it
+   * on its own age rule instead.
+   */
+  @Column({ type: 'uuid' })
+  userId!: string;
+
+  @Column({ type: 'varchar', length: 64 })
+  event!: string;
+
+  @Column({ type: 'varchar', length: 20 })
+  channel!: string;
+
+  @Column({ type: 'boolean', default: true })
+  enabled!: boolean;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updatedAt!: Date;
+}

@@ -133,3 +133,16 @@ picking characters by `byte % length`, which would favour the first few.
    looks like boilerplate.
 4. `npm run migration:run`.
 5. Add the new entity to `ENTITIES` if it is not there yet.
+
+### Drift between an entity and a hand-written migration
+
+`synchronize` is off, so nothing compares the two. A column an entity names and a
+migration does not create surfaces as a runtime error on the first query that
+touches it — in whichever deployment ran the migration first, which is rarely the
+one you tested on.
+
+`migrations.spec.ts` closes that for the notification tables by parsing the DDL and
+comparing it to the entity metadata, with no database involved. A test needing a
+live Postgres is a test that does not run in CI. Extend it when you hand-write the
+next migration; extend the entity metadata path when you generate one, since a
+generated migration cannot drift from what produced it.

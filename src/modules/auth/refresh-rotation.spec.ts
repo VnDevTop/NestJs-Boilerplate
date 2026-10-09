@@ -109,7 +109,7 @@ function harness(
   const deviceService = {
     findByIdForSession: vi.fn().mockResolvedValue(DEVICE),
     revokeAllByUserId: vi.fn().mockResolvedValue(1),
-    register: vi.fn().mockResolvedValue(DEVICE),
+    register: vi.fn().mockResolvedValue({ device: DEVICE, created: false }),
   };
 
   const jwtService = {
@@ -137,7 +137,11 @@ function harness(
         blocked: false,
         retryAfterSeconds: 0,
         firstBlock: false,
+        failures: 0,
       }),
+    } as never,
+    {
+      notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
     } as never,
   );
 

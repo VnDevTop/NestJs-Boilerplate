@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import type { Job, JobResult } from '../../queue/queue.interface.js';
+import { NotificationService } from '../../notification/notification.service.js';
 import { RetentionTrigger } from '../entities/retention-trigger.enum.js';
 import {
   RetentionService,
@@ -33,7 +34,10 @@ export interface RetentionJobPayload {
 export class RetentionProcessor {
   private readonly logger = new Logger(RetentionProcessor.name);
 
-  constructor(private readonly retentionService: RetentionService) {}
+  constructor(
+    private readonly retentionService: RetentionService,
+    private readonly notifications: NotificationService,
+  ) {}
 
   /** True for the job name this processor handles, so routing stays in one place. */
   static handles(name: string): boolean {
@@ -91,7 +95,49 @@ export class RetentionProcessor {
       };
     }
 
+    await this.reportAnomaly(result);
+
     return this.toJobResult(result);
+  }
+
+  /**
+   * Tells an operator when a run did not finish cleanly.
+   *
+   * **Only for a run that stopped early or lost a target.** A run that deleted rows
+   * across every table is not news, and a notification for it would be the first
+   * thing an operator learns to ignore — which costs them the one notification that
+   * mattered.
+   *
+   * **Direct, not enqueued.** This code is already running inside a queue job, so
+   * there is no request to keep off the critical path, and enqueueing would mean a
+   * notification about a broken queue depends on the broken queue. It is also why
+   * `MaintenanceModule` can import `NotificationModule` while `NotificationEventsModule`
+   * sits above the queue: both point the same way.
+   *
+   * Swallowed. A webhook that times out must not turn a completed cleanup into a
+   * failed job, which would retry the whole idempotent run to deliver a message.
+   */
+  private async reportAnomaly(result: RetentionRunResult): Promise<void> {
+    if (!result.timedOut && result.failed.length === 0) {
+      return;
+    }
+
+    try {
+      await this.notifications.notify('maintenance.retention.anomaly', {
+        reason: result.timedOut
+          ? 'the run hit its timeout and stopped before finishing'
+          : `${result.failed.length} target(s) failed`,
+        pending: [...result.pending],
+        failed: [...result.failed],
+        durationMs: result.durationMs,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Could not report a retention anomaly: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   /**
