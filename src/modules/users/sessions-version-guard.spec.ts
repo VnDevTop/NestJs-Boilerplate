@@ -65,21 +65,6 @@ const ALLOWED: Record<string, RegExp> = {
   'src/modules/auth/device.service.ts': /invalidateAuthCache/,
 };
 
-function offenders(literal: string): string[] {
-  return walk(SRC)
-    .filter((file) => {
-      const source = readFileSync(file, 'utf8');
-
-      return (
-        source.includes(literal) &&
-        !source.includes('ALTER TABLE') &&
-        !source.includes('DROP COLUMN')
-      );
-    })
-    .map((file) => relative(SRC, file))
-    .filter((file) => file in ALLOWED === false);
-}
-
 /**
  * Every file naming the column, ignoring the migrations that created it.
  *

@@ -6,7 +6,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { authUserKey } from '../../core/cache/index.js';
 import type { JwtPayload } from '../../common/interfaces/index.js';
 import { UsersService } from '../users/users.service.js';
-import type { User } from '../users/entities/index.js';
 import { JwtStrategy } from './strategies/jwt.strategy.js';
 
 /**
