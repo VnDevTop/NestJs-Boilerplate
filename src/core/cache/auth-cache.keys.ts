@@ -54,3 +54,21 @@ export function authRoleKey(role: string): string {
 export function authDeviceSessionsKey(userId: string): string {
   return cacheKey(CACHE_NAMESPACE.User, userId, 'devices');
 }
+
+/**
+ * `token:revoked:<session>` — one revoked session, one key.
+ *
+ * **Not part of the cache that `invalidateAuthCache` drops.** Every other key here
+ * is a cache of something in the database and can be thrown away and refilled.
+ * This one is the record: a session revocation has no column to be re-read from,
+ * because it is a `revokedAt` on a row nobody looks up by jti. Deleting it would
+ * un-revoke the session on the very next request, so it is written and read
+ * directly and never invalidated.
+ *
+ * One key per session rather than a set under the user, because a write is then a
+ * plain `SET` instead of a read-modify-write, and two sessions revoked at the same
+ * moment cannot lose each other's entry.
+ */
+export function revokedSessionKey(sessionId: string): string {
+  return cacheKey(CACHE_NAMESPACE.Token, 'revoked', sessionId);
+}

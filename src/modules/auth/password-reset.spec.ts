@@ -28,6 +28,23 @@ function harness(options: { userExists: boolean; userActive?: boolean }) {
     ),
   };
 
+  const refreshTokenService = {
+    issue: vi.fn().mockResolvedValue({
+      token: 'refresh-token',
+      // The session id ends up in the access token, so the fake needs a row.
+      record: { jti: 'jti-1', id: 'row-1', deviceId: 'd1' },
+    }),
+    revokeAllByUserId: vi.fn().mockResolvedValue(0),
+  };
+
+  const deviceService = {
+    register: vi.fn().mockResolvedValue({
+      id: 'd1',
+      userId: 'user-1',
+      sessionsVersion: 0,
+    }),
+  };
+
   const passwordResetService = {
     issue: vi.fn().mockResolvedValue({
       token: 'reset-token',
@@ -75,8 +92,8 @@ function harness(options: { userExists: boolean; userActive?: boolean }) {
   const service = new TestableAuthService(
     {} as never,
     usersService as never,
-    {} as never,
-    {} as never,
+    refreshTokenService as never,
+    deviceService as never,
     {} as never,
     passwordResetService as never,
     emailVerificationService as never,

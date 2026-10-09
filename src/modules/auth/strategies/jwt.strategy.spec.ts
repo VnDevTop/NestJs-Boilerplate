@@ -23,7 +23,11 @@ const user = (overrides: Partial<User> = {}): User =>
   }) as User;
 
 function harness(
-  options: { user?: User | null; devices?: Record<string, number> } = {},
+  options: {
+    user?: User | null;
+    devices?: Record<string, number>;
+    revokedSessions?: string[];
+  } = {},
 ) {
   const found = options.user === undefined ? user() : options.user;
   const findAuthClaims = vi.fn().mockResolvedValue(found);
@@ -40,6 +44,13 @@ function harness(
       { findAuthClaims } as never,
       { forRole } as never,
       { findSessionVersions: vi.fn().mockResolvedValue(devices) } as never,
+      {
+        isSessionRevoked: vi
+          .fn()
+          .mockResolvedValue(
+            (options.revokedSessions ?? []).includes('sess-1'),
+          ),
+      } as never,
     ),
     findAuthClaims,
     forRole,

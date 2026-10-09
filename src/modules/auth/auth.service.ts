@@ -56,7 +56,19 @@ import {
 } from './types/index.js';
 
 type RotationResult =
-  | { status: 'ok'; refreshToken: string; deviceId: string | null }
+  | {
+      status: 'ok';
+      refreshToken: string;
+      deviceId: string | null;
+      /** The new session's id, so the new access token can be revoked with it. */
+      sessionId: string;
+      /**
+       * The session this rotation superseded, which the caller must record as
+       * revoked. Separate from `sessionId` because the new access token carries one
+       * and the old one has to die.
+       */
+      supersededSessionId: string;
+    }
   | { status: 'invalid' }
   | { status: 'reused' }
   | { status: 'expired' };
@@ -98,14 +110,17 @@ export class AuthService {
       lastName: registerDto.lastName,
     });
 
-    const { token, device } = await this.issueSession(user.id, metadata);
+    const { token, device, sessionId } = await this.issueSession(
+      user.id,
+      metadata,
+    );
 
     // The account is usable before the address is confirmed; Phase 19 adds the
     // gate. Issuing the link here means a user who never checks the address
     // cannot be reached later without asking for a new one.
     void this.sendVerification(user).catch(() => undefined);
 
-    return this.createAuthToken(user, token, device);
+    return this.createAuthToken(user, token, device, sessionId);
   }
 
   /**
@@ -213,9 +228,12 @@ export class AuthService {
       return this.twoFactorService.issueChallenge(user.id);
     }
 
-    const { token, device } = await this.issueSession(user.id, metadata);
+    const { token, device, sessionId } = await this.issueSession(
+      user.id,
+      metadata,
+    );
 
-    return this.createAuthToken(userResponse, token, device);
+    return this.createAuthToken(userResponse, token, device, sessionId);
   }
 
   /**
@@ -470,12 +488,16 @@ export class AuthService {
 
     await this.twoFactorService.verifyChallenge(userId, twoFactorLoginDto.code);
 
-    const { token, device } = await this.issueSession(user.id, metadata);
+    const { token, device, sessionId } = await this.issueSession(
+      user.id,
+      metadata,
+    );
 
     return this.createAuthToken(
       UserResponseDto.fromEntity(user),
       token,
       device,
+      sessionId,
     );
   }
 
@@ -526,6 +548,24 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token expired');
     }
 
+    // The rotation superseded the session the old access token was minted from, so
+    // that token stops working rather than running out its full fifteen minutes.
+    //
+    // After the commit, never inside the rotation: a record written before the
+    // transaction committed would kill the access token of a refresh that then
+    // rolled back, leaving the client with a working refresh token and no working
+    // access token at all.
+    //
+    // The cost, stated plainly: a client that loses the response to this refresh is
+    // left with nothing that works, and its retry presents a rotated token, which
+    // is the reuse signal that drops every session of the account. Without this the
+    // old access token would have carried it for up to fifteen minutes first. A
+    // lost response and a leaked token are indistinguishable from here, and the
+    // existing design already treats them as the same thing.
+    await this.refreshTokenService.markSessionRevoked(
+      rotation.supersededSessionId,
+    );
+
     // The access token has to name the device it was minted on, and carry that
     // device's current version, or signing out of this device would not touch it.
     // A device that has since been deleted cannot be named, so the session is over
@@ -550,6 +590,7 @@ export class AuthService {
       UserResponseDto.fromEntity(user),
       rotation.refreshToken,
       device,
+      rotation.sessionId,
     );
   }
 
@@ -678,11 +719,20 @@ export class AuthService {
       throw new UnauthorizedException('Authentication required');
     }
 
-    await this.refreshTokenService.revokeByIdForUser(
+    const jti = await this.refreshTokenService.revokeByIdForUser(
       currentUser.id,
       sessionId,
       RefreshTokenRevokedReason.SessionRevoked,
     );
+
+    // Revoking the refresh token only stops the *next* access token being minted.
+    // The access token already in that session's hand would keep working for the
+    // rest of its fifteen minutes, so the session is recorded as revoked too, and
+    // the strategy refuses any token that names it.
+    //
+    // Not device-scoped and not account-scoped: this is one session, and the other
+    // sessions on this machine have to survive it.
+    await this.refreshTokenService.markSessionRevoked(jti);
   }
 
   async revokeDevice(
@@ -704,16 +754,16 @@ export class AuthService {
   private async issueSession(
     userId: string,
     metadata: DeviceMetadata,
-  ): Promise<{ token: string; device: UserDevice }> {
+  ): Promise<{ token: string; device: UserDevice; sessionId: string }> {
     const device = await this.deviceService.register(userId, metadata);
     const tokenMetadata = this.toTokenMetadata(metadata);
-    const { token } = await this.refreshTokenService.issue(
+    const { token, record } = await this.refreshTokenService.issue(
       userId,
       tokenMetadata,
       device.id,
     );
 
-    return { token, device };
+    return { token, device, sessionId: record.jti };
   }
 
   private async rotate(
@@ -778,7 +828,13 @@ export class AuthService {
         manager,
       );
 
-      return { status: 'ok', refreshToken: token, deviceId: current.deviceId };
+      return {
+        status: 'ok',
+        refreshToken: token,
+        deviceId: current.deviceId,
+        sessionId: record.jti,
+        supersededSessionId: current.jti,
+      };
     });
   }
 
@@ -793,8 +849,9 @@ export class AuthService {
     user: UserResponseDto,
     refreshToken: string,
     device: { id: string; sessionsVersion: number },
+    sessionId: string,
   ): Promise<AuthToken> {
-    const accessToken = await this.signAccessToken(user, device);
+    const accessToken = await this.signAccessToken(user, device, sessionId);
 
     return {
       accessToken,
@@ -808,6 +865,7 @@ export class AuthService {
   private async signAccessToken(
     user: UserResponseDto,
     device: { id: string; sessionsVersion: number },
+    sessionId: string,
   ): Promise<string> {
     const payload: JwtPayload = {
       sub: user.id,
@@ -820,6 +878,10 @@ export class AuthService {
       // minted on.
       did: device.id,
       dv: device.sessionsVersion ?? 0,
+      // The session, so revoking one session also stops the access token already
+      // in that session's hand. Without it, `DELETE /auth/sessions/:id` only took
+      // effect at the next refresh.
+      sid: sessionId,
       // Carried so "log out everywhere" is visible on the next request instead
       // of after this token expires. Read from the DTO rather than re-fetched, so
       // the value in the token always matches the row it was minted from.

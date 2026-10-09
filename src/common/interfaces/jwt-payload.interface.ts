@@ -29,6 +29,19 @@ export interface JwtPayload {
   did?: string;
   /** This device's `sessionsVersion` when the token was minted. */
   dv?: number;
+  /**
+   * The session this token belongs to: the `jti` of the refresh token it was minted
+   * alongside.
+   *
+   * The session rather than the token, deliberately. Every access token minted from
+   * one refresh chain shares this id, so revoking a session is one write. Giving
+   * each access token its own id would mean a revocation had to name every token
+   * that chain ever produced, and that set is not knowable from the database.
+   *
+   * Absent for a token issued before this existed, and read as "predates session
+   * revocation" rather than as belonging to no session.
+   */
+  sid?: string;
   iat?: number;
   exp?: number;
 }

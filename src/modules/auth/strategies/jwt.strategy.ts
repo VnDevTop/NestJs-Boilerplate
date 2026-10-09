@@ -7,6 +7,7 @@ import { JwtPayload, RequestUser } from '../../../common/interfaces/index.js';
 import { PermissionsService } from '../../users/permissions.service.js';
 import { UsersService } from '../../users/index.js';
 import { DeviceService } from '../device.service.js';
+import { RefreshTokenService } from '../refresh-token.service.js';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -15,6 +16,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private readonly usersService: UsersService,
     private readonly permissionsService: PermissionsService,
     private readonly deviceService: DeviceService,
+    private readonly refreshTokenService: RefreshTokenService,
   ) {
     const secretOrKey = configService.get<string>('jwtAccessToken.secret');
 
@@ -75,6 +77,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       await this.assertDeviceSession(user.id, payload.did, payload.dv);
     }
 
+    // The session half. `DELETE /auth/sessions/:id` revokes one refresh token, and
+    // without this the access token already minted from it keeps working until it
+    // expires on its own.
+    //
+    // Skipped for a token that names no session, which is every token minted before
+    // this claim existed. Reading an absent claim as "no session, nothing to
+    // check" is what keeps a deploy from signing everybody out.
+    if (payload.sid !== undefined) {
+      await this.assertSessionLive(payload.sid);
+    }
+
     return {
       id: user.id,
       email: user.email,
@@ -98,6 +111,21 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * looks like from here. Treating absence as "nothing to check" would let a
    * device that retention removed last night keep its token this morning.
    */
+  /**
+   * Refuses a token whose session has been revoked.
+   *
+   * A miss is not a pass and a miss is not a fail either: it means no revocation
+   * was ever recorded for this session, which is the normal case. The entry is
+   * written by the revoke and expires on its own once every access token it could
+   * have stopped has expired, so there is nothing to clean up and nothing that can
+   * be resurrected by the cache emptying.
+   */
+  private async assertSessionLive(sessionId: string): Promise<void> {
+    if (await this.refreshTokenService.isSessionRevoked(sessionId)) {
+      throw new UnauthorizedException('Invalid access token');
+    }
+  }
+
   private async assertDeviceSession(
     userId: string,
     deviceId: string,

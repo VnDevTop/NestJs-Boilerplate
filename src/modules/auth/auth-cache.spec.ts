@@ -122,6 +122,19 @@ function harness(seed: Partial<Row> = {}) {
   const deviceVersions: Record<string, number> = {};
   let deviceQueries = 0;
 
+  const revokedSessions = new Set<string>();
+  let sessionQueries = 0;
+
+  const refreshTokenService = {
+    isSessionRevoked: vi.fn(async (sid: string) => {
+      sessionQueries += 1;
+      return revokedSessions.has(sid);
+    }),
+    markSessionRevoked: vi.fn(async (sid: string) => {
+      revokedSessions.add(sid);
+    }),
+  };
+
   const deviceService = {
     findSessionVersions: vi.fn(async () => {
       deviceQueries += 1;
@@ -138,12 +151,18 @@ function harness(seed: Partial<Row> = {}) {
     usersService,
     { forRole: vi.fn().mockResolvedValue(['user:read']) } as never,
     deviceService as never,
+    refreshTokenService as never,
   );
 
   return {
     strategy,
     usersService,
     deviceService,
+    revokedSessions,
+    refreshTokenService,
+    get sessionQueries() {
+      return sessionQueries;
+    },
     deviceVersions,
     get deviceQueries() {
       return deviceQueries;
@@ -391,5 +410,88 @@ describe('a device that signs out', () => {
     await h.strategy.validate(token({ sv: 0 }));
 
     expect(h.deviceQueries).toBe(0);
+  });
+});
+
+describe('a session that is revoked', () => {
+  let h: ReturnType<typeof harness>;
+
+  beforeEach(() => {
+    h = harness();
+    Object.assign(h.deviceVersions, { laptop: 0, phone: 0 });
+  });
+
+  it('kills the access token already minted from it', async () => {
+    // The hole this closes: `DELETE /auth/sessions/:id` revoked the refresh token,
+    // so the session came back on the next refresh, and the access token in the
+    // caller's hand kept working until it expired on its own.
+    const live = token({ sv: 0, did: 'laptop', dv: 0, sid: 'sess-1' });
+
+    await expect(h.strategy.validate(live)).resolves.toMatchObject({
+      id: 'u1',
+    });
+
+    h.revokedSessions.add('sess-1');
+
+    await expect(h.strategy.validate(live)).rejects.toThrow(
+      'Invalid access token',
+    );
+  });
+
+  it('leaves the other sessions on the same device alone', async () => {
+    // The distinction from `devices/:id`, which takes the whole machine. Two
+    // browsers on one laptop are two sessions and revoking one must not touch
+    // the other.
+    Object.assign(h.deviceVersions, { laptop: 0 });
+
+    h.revokedSessions.add('sess-1');
+
+    await expect(
+      h.strategy.validate(
+        token({ sv: 0, did: 'laptop', dv: 0, sid: 'sess-2' }),
+      ),
+    ).resolves.toMatchObject({ id: 'u1' });
+  });
+
+  it('leaves the other devices alone', async () => {
+    Object.assign(h.deviceVersions, { laptop: 0, phone: 0 });
+    h.revokedSessions.add('sess-1');
+
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'phone', dv: 0, sid: 'sess-2' })),
+    ).resolves.toMatchObject({ id: 'u1' });
+  });
+
+  it('ignores a token that names no session', async () => {
+    // Every token minted before this claim existed. Reading an absent claim as
+    // "revoked" would sign out every signed-in user on deploy.
+    await expect(
+      h.strategy.validate(token({ sv: 0, did: 'laptop', dv: 0 })),
+    ).resolves.toMatchObject({ id: 'u1' });
+  });
+
+  it('costs one cached read, not a query', async () => {
+    await h.strategy.validate(
+      token({ sv: 0, did: 'laptop', dv: 0, sid: 'sess-1' }),
+    );
+
+    expect(h.sessionQueries).toBe(1);
+    expect(h.queries).toHaveLength(1);
+  });
+
+  it('is checked after the device, so a revoked device is refused either way', async () => {
+    // Both are refused, so the order is invisible in the response. What it does
+    // decide is which cache is consulted, and the device map is the one that
+    // answers for a token that never named a session.
+    Object.assign(h.deviceVersions, { laptop: 2 });
+    h.revokedSessions.add('sess-1');
+
+    await expect(
+      h.strategy.validate(
+        token({ sv: 0, did: 'laptop', dv: 0, sid: 'sess-1' }),
+      ),
+    ).rejects.toThrow('Invalid access token');
+
+    expect(h.sessionQueries).toBe(0);
   });
 });
