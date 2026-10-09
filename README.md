@@ -34,8 +34,11 @@ else.
   recovery codes shown once.
 - `GET /auth/sessions` and `DELETE /auth/sessions/:id`, where a session is one
   live refresh token rather than one device, because one device can hold several.
-- Logout everywhere is immediate rather than a fifteen minute wait: every access
-  token carries the user's `sessionsVersion` and is compared on each request.
+  Revoking one also stops the access token already minted from it.
+- **Four levels of revocation**, each scoped to something smaller than the last:
+  the account, the device, the session, and the user row. Signing out of one
+  browser leaves the phone signed in, and each is a counter compared on every
+  request rather than a lookup.
 
 **Authorisation you can reason about**
 
@@ -184,6 +187,9 @@ Recorded rather than left to be discovered. See
 - Listing routes return every matching row, with no pagination yet.
 - A dead cache costs latency rather than correctness. Each request waits out
   `CACHE_CONNECT_TIMEOUT` for the failed read and again for the failed write.
+- A role's permissions changed directly in the database are invisible to the
+  application until `CACHE_AUTH_ROLE_TTL` expires, because invalidation runs where
+  the write runs. Use `PUT /admin/roles/:role/permissions`, which goes through it.
 - A dead Redis costs rate limiting and the login lockout, because both fail open.
   An outage that overlaps an attack removes that protection. Put a limit in front
   of the application as well; these are the inner layer, not the only one.

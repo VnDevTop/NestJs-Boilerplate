@@ -151,25 +151,72 @@ branch becomes the slow one and the padding equalises nothing.
 assertion that actually pins it: the difference assertion alone passes even with
 the padding removed, because the gap it measures is small.
 
-## Auth state is not cached
+## What a request is checked against
 
-`JwtStrategy` reads the user on every request, on purpose. Caching it would mean
-a deactivated account or a role change stayed in effect for the length of the
-TTL, which is the wrong trade for this field.
+The JWT is **not** trusted for authorisation. It is trusted for exactly three
+things: who the caller is (`sub`), and two counters that decide whether their
+sessions are still alive. Everything else is read from the row.
 
-What closes that gap without caching the claims:
+```text
+JwtAuthGuard      @Public()? skip : passport calls validate()
+  validate()        sub          -> findAuthClaims()  -> cache user:<id>        (60s)
+                    sv           -> compare users.sessionsVersion
+                    did, dv      -> compare against that device's version
+                    sid          -> is the session revoked?
+                    role         -> forRole()          -> cache role:<role>     (600s)
+  RolesGuard        @Roles()        against request.user.role
+  ManagerGuard      @ManagerOnly()  against request.user.isManager, and every /admin/ path
+  PermissionsGuard  @Permissions()  against request.user.permissions
+```
 
-- **Permissions are stored per role, not per user.** `PermissionsGuard` reads the
-  user's role, so a role change is one row to invalidate rather than one cache
-  entry per holder.
-- **`sessionsVersion` rides in the token.** Logout everywhere and a password reset
-  move a number, and the strategy compares it, so revocation is a comparison
-  rather than a lookup. A token issued before the column existed is accepted only
-  while the user is still at zero, meaning nothing has asked for their sessions to
-  die. That is what keeps a deploy from signing out everyone.
-- **Phase 17b** moves the read to Redis with an invalidation subscriber in front
-  of it, which is why the rule is "invalidate on write" rather than "pick a short
-  TTL and hope".
+`email`, `role` and `isManager` are **in the token and ignored**. They are
+overwritten from the cached row. That is the whole point: if the role came from
+the token, demoting somebody from `admin` to `user` would not take effect for
+fifteen minutes. From the cache it takes effect on the next request, because the
+write dropped the entry.
+
+Permissions are resolved in the strategy rather than in the guard, so it costs one
+read per request rather than one per guarded route.
+
+## Four levels of revocation
+
+Each is scoped to something smaller than the one above it, and each is a
+comparison rather than a lookup.
+
+| Scope    | Claim | Bumped by                                              | Leaves alone                          |
+| -------- | ----- | ------------------------------------------------------ | ------------------------------------- |
+| Account  | `sv`  | `logoutAll`, a password change                         | nothing, it is every device           |
+| Device   | `dv`  | signing out of that device, `DELETE /auth/devices/:id` | the user's other devices              |
+| Session  | `sid` | `DELETE /auth/sessions/:id`, and a rotation            | the other sessions on the same device |
+| User row | —     | deactivation, a role change, a soft delete             | nothing                               |
+
+- **`sv` and `dv` are increments**, never fixed values. A fixed value cannot tell
+  a token minted between two logouts from one minted before the first.
+- **A claim that is absent is not a claim of zero.** A token minted before a
+  column existed carries nothing and is accepted only while the counter is still
+  zero, meaning nothing has asked for those sessions to die. Strict equality would
+  sign out every signed-in user on deploy, for a token that expires on its own
+  anyway.
+- **A device that is absent is refused, not skipped.** Retention removes devices
+  with no live refresh token, and treating "no such device" as "nothing to check"
+  would let a token minted before the deletion keep working.
+- **An inactive user fails on their own account first**, before the version is
+  compared, so the error does not become a version oracle.
+
+## Revocation is a cache write, not an invalidation
+
+`token:revoked:<session>` is the record of a revoked session, and it is the one
+key here that **must not be dropped**: there is no column to re-read it from,
+because a revoked session is a `revokedAt` on a row nothing looks up by `jti`.
+Deleting it hands the session back.
+
+It carries an exact lifetime, the access token lifetime, with the jitter every
+other entry gets switched off. An entry that expires a little early lets the
+tokens it revoked start working again.
+
+It is recorded **after** the transaction commits, never inside it. Recorded
+before, a rollback leaves a client with a live refresh token and no live access
+token at all.
 
 ## Sessions and devices are different things
 
@@ -178,8 +225,9 @@ leaves a chain of revoked rows behind exactly one live row per chain.
 
 - `GET /auth/sessions` lists the live ones. Expired and revoked rows are excluded
   by the query, so the list only ever contains something the caller could act on.
-- `DELETE /auth/sessions/:id` ends one of them. `DELETE /auth/devices/:id` ends
-  every session on the machine.
+- `DELETE /auth/sessions/:id` ends one of them, and the access token already
+  minted from it. `DELETE /auth/devices/:id` ends every session on the machine,
+  and theirs too.
 - Revoking is scoped to the caller, and an id that is not theirs answers exactly
   as one that does not exist. Answering "not yours" would confirm the id is real,
   which is the only thing somebody guessing ids wants to learn.

@@ -544,7 +544,7 @@ Expected outcome:
 
 ## Phase 17b: Authentication and Authorization through Cache
 
-Status: Pending
+Status: Done
 
 Goal:
 
@@ -553,23 +553,33 @@ a changed role still takes effect immediately rather than at TTL expiry.
 
 Tasks:
 
-- [ ] Cache the sanitised user under `user:<id>`, TTL 60s, and read it from
+- [x] Cache the sanitised user under `user:<id>`, TTL 60s, and read it from
       `JwtStrategy.validate()`
-- [ ] Cache the email lookup under `user:email:<hash>`, TTL 300s, for `login`
-      only
-- [ ] Cache the permission set under `perm:user:<id>`, TTL 60s
-- [ ] Cache the role permission map under `role:<role>`, TTL 600s, so a permission
+- [x] ~~Cache the email lookup under `user:email:<hash>`~~ — dropped. The reason
+      is in the note below and it is the one thing in this phase that would have
+      been a mistake rather than a shortcut.
+- [x] ~~Cache the permission set under `perm:user:<id>`~~ — dropped, because
+      caching per role instead is both smaller and the only thing invalidation can
+      actually do.
+- [x] Cache the role permission map under `role:<role>`, TTL 600s, so a permission
       set is one small read rather than a join per request
-- [ ] Make `PermissionsGuard` read the cached set
-- [ ] Invalidate on every write to `User`, `Role`, `RolePermission` and device
-      state
+- [x] Have the strategy resolve permissions and hand them to the guard, so the
+      lookup is once per request rather than once per guarded route
+- [x] Invalidate on every write that changes an authentication answer: a user
+      update, a soft delete, a role's grants, a device sign-out, a session
+      revocation
 - [x] ~~Do the invalidation from a TypeORM subscriber in
       `src/database/subscribers/`~~ — dropped, and replaced with a guard test. See
       the note below for the two reasons, both checked against the installed
       TypeORM rather than assumed.
-- [ ] Fall back to the database and log only when redis is unreachable, so an
-      outage costs latency rather than availability
-- [ ] Report cache loss as degraded rather than down in the Terminus indicator
+- [x] Drop the cache entry **after** the transaction commits rather than inside
+      it, because a delete inside lets a concurrent read refill the entry from the
+      row being revoked
+- [x] Fall back to the database when redis is unreachable, so an outage costs
+      latency rather than availability. Detection is the health indicator reporting
+      `degraded`, not a log line: a store that fails open has nothing to log,
+      because every call looks like a miss.
+- [x] Report cache loss as degraded rather than down in the Terminus indicator
 
 Dropped from the original task list, and why:
 
@@ -623,11 +633,95 @@ perf: guard the sessions version against an uninvalidate write
 perf: report cache loss as degraded
 ```
 
+Beyond the plan, because caching the claims made it the obvious place to answer a
+question the claims could not:
+
+- [x] **A per-device revocation level.** `user_devices.sessionsVersion`, carried
+      as `did`/`dv`, so signing out of one browser leaves the phone signed in.
+- [x] **A per-session revocation level**, carried as `sid`, so
+      `DELETE /auth/sessions/:id` stops the access token already minted from that
+      session rather than only the next refresh.
+- [x] **A rotation supersedes the old access token**, recorded after the commit.
+- [x] `PUT /admin/roles/:role/permissions`, so changing a grant goes through the
+      application and therefore through the invalidation.
+- [x] The permission seed clears the cached grant sets it wrote.
+
+Commits:
+
+```text
+perf: serve authentication from cache
+perf: serve authorization from cache
+perf: guard the sessions version against an uninvalidate write
+perf: report cache loss as degraded
+feat: revoke an access token when its device signs out
+feat: revoke a session's access token, and the one a rotation supersedes
+fix: clear cached role grants from the permission seeder
+feat: expose role permissions over the admin api
+refactor: build the redis store through the keyv factory
+```
+
+What was built, and what it turned out to need:
+
+- **A projection, not the user row.** `findAuthClaims` selects six named columns
+  and never reads the password hash, because the strategy does not use it and a
+  bcrypt hash in Redis is offline cracking material in a store that is usually
+  less protected than the database it duplicates.
+- **One key per role for grants**, so a role change is one delete rather than one
+  per holder. `CacheService` has no pattern delete by choice, so a per-user key
+  would have made every role change a scan of the user table.
+- **Invalidation after the commit.** A delete inside the transaction lets a
+  request in between refill the entry from the uncommitted row, and that entry
+  then outlives the token it wrongly admitted. Small window, silent failure, so it
+  was worth three shapes of the same idiom.
+- **Four revocation scopes**: the account, the device, the session and the user
+  row. The two counters are increments, and an absent claim is read as "this
+  predates the column" rather than as zero, which is what keeps a deploy from
+  signing everybody out.
+
+Five things this phase found rather than built:
+
+- **Caching the email lookup would have been the mistake of the week.** The only
+  caller is `login`, and `login` needs the password hash to verify. Serving that
+  row from cache means a bcrypt hash in Redis; caching only the email-to-id mapping
+  saves nothing, because the row still has to be fetched for the hash. The lookup
+  is still a database read.
+- **A subscriber cannot do this job**, for two independent reasons: TypeORM builds
+  subscribers with `new target()` so there is no injection, and every write whose
+  invalidation matters arrives from a query builder with no row id. A guard test
+  replaced it, and it fails the build when a revocation-critical column is
+  written somewhere that does not invalidate.
+- **`createKeyv` does accept connection options.** The comment inherited from
+  Phase 12 said it "only accepts a URL and hardcodes the socket options", which is
+  false for the installed version, and that false belief is why the store was being
+  hand-built with a manual client. Verified by running both forms and reading one
+  from the other.
+- **A hand-built client that is never closed hangs the process.** `npm run seed`
+  printed its last line and sat there, because the open socket kept the event loop
+  alive. Found by running the seed rather than by reading it.
+- **Writing into the transaction is the same bug twice.** The rotation records the
+  superseded session after its commit for the same reason the user claims do; the
+  first version had it inside, and a test that asserts the order is what noticed.
+
+Known limits:
+
+- **A grant edited straight in the database is invisible to the application** until
+  `CACHE_AUTH_ROLE_TTL` expires. Invalidation runs where the write runs, and
+  nothing inside the application can see a write it did not make. The route exists
+  so that the normal path is not that path; `SECURITY.md` and
+  `docs/production.md` both say so.
+- **`CACHE_BACKEND=memory` cannot be evicted from outside the process**, so the
+  seeder's cache clear is a no-op there and those entries are left to expire.
+- **Rotation leaves a lost-response client with nothing.** A client that does not
+  receive the response to a refresh has no working token, and its retry presents a
+  rotated token, which is the reuse signal that drops every session on the account.
+  A lost response and a leaked token are indistinguishable server-side, and the
+  design already treated them as the same thing.
+
 Expected outcome:
 
-- An authenticated request costs one redis read instead of one or more postgres
-  queries.
-- A role change or a remote logout takes effect on the next request.
+- An authenticated request costs redis reads instead of postgres queries.
+- A role change, a deactivation or a revocation takes effect on the next request.
+- Signing out of one device leaves the others signed in.
 - A redis outage costs latency, not availability.
 
 ---

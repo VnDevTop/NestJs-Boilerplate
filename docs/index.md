@@ -6,10 +6,10 @@ README covers what the template contains.
 
 ## Guides
 
-| Guide                                             | Covers                                                                                                       |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| [Production hardening](production.md)             | rate limiting, headers, CORS, request ids, logging, health, shutdown, env validation, migrations, Docker, CI |
-| [Optional integrations](optional-integrations.md) | how a feature can exist in the code without its package on disk, and how to enable one                       |
+| Guide                                             | Covers                                                                                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Production hardening](production.md)             | rate limiting, login lockout, retention, the auth cache, headers, CORS, request ids, logging, health, shutdown, env validation, migrations, Docker, CI |
+| [Optional integrations](optional-integrations.md) | how a feature can exist in the code without its package on disk, and how to enable one                                                                 |
 
 ## Where the rest of the writing lives
 

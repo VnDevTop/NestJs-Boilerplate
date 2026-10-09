@@ -138,6 +138,64 @@ Human readable elsewhere. A message containing newlines is collapsed to a single
 line so a stack trace cannot be misread as several entries, and an `Error` is
 serialised with its name, message and stack rather than as `{}`.
 
+## Cache and what it holds
+
+Authentication is served from Redis, so an authenticated request costs cache reads
+instead of database queries. What that buys is only safe if the cache is dropped
+when it should be, so this section is mostly about what has to be dropped.
+
+| Key                       | Holds                                      | TTL                   | Dropped by                                                |
+| ------------------------- | ------------------------------------------ | --------------------- | --------------------------------------------------------- |
+| `user:<id>`               | the claims a request is authorised against | 60s                   | deactivation, role change, soft delete, revocation        |
+| `user:<id>:devices`       | each device's session version              | 60s                   | the same, plus signing out of that device                 |
+| `role:<role>`             | the permission names a role holds          | 600s                  | `PUT /admin/roles/:role/permissions`, the permission seed |
+| `token:revoked:<session>` | one revoked session                        | access token lifetime | **nothing. See below.**                                   |
+
+```dotenv
+CACHE_AUTH_USER_TTL=60       # claims, and the device versions beside them
+CACHE_AUTH_ROLE_TTL=600      # one entry per role, not per user
+```
+
+**Fail open.** A dead Redis means a miss, so the request falls back to the database
+and is slower rather than refused. `/health/ready` reports `degraded` and still
+returns 200; `degraded` is a status Terminus knows, and `down` would pull every
+instance out of rotation over a cache outage.
+
+**The TTL is a backstop, not the mechanism.** Writes invalidate; the TTL only
+bounds how long a _forgotten_ invalidation could hide a change. That is why the
+values are configurable rather than constants, and why they are named in the
+README.
+
+### The one key that is never invalidated
+
+`token:revoked:<session>` is the record of a revoked session, not a copy of
+something in the database. There is no column to re-read it from, because a
+revoked session is a `revokedAt` on a row nothing looks up by jti. Deleting it
+hands the session back, so it is written directly, with an exact lifetime, and
+reclaimed by Redis when the tokens it revokes have expired on their own.
+
+### Changing permissions
+
+Use the route, not SQL:
+
+```text
+PUT /admin/roles/:role/permissions     role:write, super administrator only
+```
+
+Invalidation runs where the write runs, so an edit made straight in the database
+is invisible to the application until the cached grant set expires. The window is
+`CACHE_AUTH_ROLE_TTL`, currently ten minutes. Either use the route, delete the
+entry, or wait:
+
+```sh
+redis-cli DEL nestjs_boiler_plate:role:admin
+```
+
+The direction of that failure is the safe one: a role with a stale grant set is
+_missing_ a permission, so the guard refuses rather than admits. A deploy that
+changes grants the other way, which this cache cannot cause, would be the
+dangerous one.
+
 ## Health checks
 
 ```text

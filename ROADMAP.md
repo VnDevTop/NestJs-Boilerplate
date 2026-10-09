@@ -22,7 +22,7 @@ starting point rather than a scaffold to fill in.
 | Authorisation   | `@Roles()`, `@ManagerOnly()`, and `@Permissions()` against a real permission table               |
 | Sessions        | Listable and individually revocable; logout everywhere is immediate, not a token-expiry wait     |
 | Configuration   | Namespaced and typed, whole environment validated before anything connects                       |
-| Cache           | Redis or Valkey with request coalescing and stale while revalidate                               |
+| Cache           | Redis or Valkey with request coalescing, stale while revalidate, and an auth path                |
 | Rate limiting   | Counted in Redis, so it holds across replicas; two buckets per credential route, plus a lockout  |
 | Mail            | Swappable transport, queued so a slow provider cannot fail a signup; verification and reset      |
 | Background jobs | Provider-level queue with an in-process fallback, retries, deduplication and a dead-letter list  |
@@ -39,7 +39,6 @@ it unmade is the point.
 | -------------------------------------------------- | ---------------------------------------------------------------------- |
 | Restrict `GET /users/:id` to the owner or an admin | Any authenticated user can read another user's profile, email included |
 | Paginate the listing routes                        | `GET /users` and the admin dashboard return every matching row         |
-| Cache the positive auth claims, or only negatives  | A stale positive entry is an authorisation bug, not a slow query       |
 
 ---
 
@@ -90,32 +89,37 @@ cost once nobody can use them.
 **Watch out:** foreign keys. Deleting a user cascades to devices and tokens by
 design, so the order matters and a partial run must be restartable.
 
-### 3. Auth and authorisation through the cache — half built
+### 3. Auth and authorisation through the cache — built, Phase 17b
 
-Phase 17a added the permission model, the guard that enforces it, listable and
-revocable sessions, an immediate logout everywhere, redis rate limiting and a
-login lockout. Phase 17b does the caching, and is the one with the sharp edge.
+Done, and it went further than caching: the shape that made it safe turned out to
+be the same shape that made revocation precise.
 
-One note from 17a that changes this recommendation: the permission model it
-caches is per role, so a role change invalidates every user holding it. That is a
-much smaller blast radius than caching per-user claims, and it is why the stale
-entry question is narrower than it was when this was first written.
+This section recommended a **negative** cache only, on the reasoning that a stale
+positive entry is an authorisation bug. That reasoning held, and the answer was
+not to avoid the positive entry but to make it impossible to leave one behind:
 
-- `JwtStrategy` reads `isActive`, `role` and `isManager` on every request, so a
-  deactivation or a role change takes effect immediately. A cache makes that
-  window real: for as long as the entry lives, a revoked user is still valid.
-- The workable shape is a **negative** cache only. Cache "this user is not
-  active" and "this user does not exist", never the positive claims. Those fail
-  closed, so a stale entry denies rather than grants.
-- Every write that touches those fields invalidates explicitly, and every
-  deployment invalidates by version prefix, so a new release does not inherit
-  entries written by the old code.
-- A short TTL on the positive entries, with the window named in the README rather
-  than left as a number in a config file.
+- Permissions are cached **per role**, so there is one entry per role rather than
+  one per user, and a role change is one delete rather than a delete per holder.
+  There is no pattern delete, by choice, so a per-user key would have turned every
+  role change into a scan of the user table.
+- **Every write that changes an authentication answer drops the entry**, after its
+  transaction commits rather than inside it. A delete inside the transaction lets a
+  request in between refill the entry from the row being revoked, and that entry
+  then outlives the token it wrongly admitted. That is a silent failure, which is
+  the worst kind, so it is the reason the ordering is the way it is.
+- **A guard test makes it unforgettable.** The phase planned a TypeORM subscriber
+  for this, and the subscriber turned out to be impossible: TypeORM builds them
+  with `new target()`, so there is no dependency injection, and every write whose
+  invalidation matters is a query-builder write that arrives with no row id. A
+  test now asserts that a revocation-critical column is only written in files that
+  also invalidate, which fails the build rather than quietly weakening a logout.
+- **The TTL is a backstop, not the mechanism**, and it is configurable because the
+  window is a security property.
 
-**Watch out:** a role escalation that survives in the cache until it expires.
-This is why the template does not cache it by default, and why the negative-only
-shape is the recommendation.
+The sharp edge is still the same one, and it has not gone away: a role escalation
+survives in the cache until something invalidates it. What changed is that there
+is now a check which notices when the invalidation is missing, instead of a
+convention that everyone is asked to remember.
 
 ### 4. Notifications — not started
 
