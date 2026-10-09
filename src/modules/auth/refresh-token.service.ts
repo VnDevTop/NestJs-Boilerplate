@@ -16,9 +16,20 @@ import {
   Repository,
 } from 'typeorm';
 
+import { revokedSessionKey, CacheService } from '../../core/cache/index.js';
+
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { RefreshToken } from './entities/index.js';
 import { RefreshTokenPayload, TokenMetadata } from './types/index.js';
+
+/**
+ * Used when the access token lifetime cannot be read.
+ *
+ * Matches the default of `JWT_EXPIRES_IN`, and deliberately the same number rather
+ * than a shorter one: an entry that expires early lets a revoked session's access
+ * tokens start working again, so the fallback errs long.
+ */
+const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 900;
 
 export interface IssuedRefreshToken {
   token: string;
@@ -33,6 +44,7 @@ export class RefreshTokenService {
     private readonly dataSource: DataSource,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly cache: CacheService,
   ) {}
 
   private get store(): EntityManager {
@@ -150,19 +162,121 @@ export class RefreshTokenService {
    * A session that is already gone is a 404 rather than a silent no-op, because
    * "I revoked it" when it was already revoked is an answer nobody asked for.
    */
+  /**
+   * Revokes one session by row id, and hands back its `jti`.
+   *
+   * The caller needs the jti, not the row id, because that is what the access
+   * token minted alongside this session carries. Returning it here rather than
+   * reading it back afterwards keeps the whole revocation on one statement, and
+   * `RETURNING` means no second round trip to learn what was just revoked.
+   */
   async revokeByIdForUser(
     userId: string,
     id: string,
     reason: RefreshTokenRevokedReason,
-  ): Promise<void> {
-    const result = await this.refreshTokensRepository.update(
-      { id, userId, revokedAt: IsNull() },
-      { revokedAt: new Date(), revokedReason: reason },
-    );
+  ): Promise<string> {
+    const result = await this.refreshTokensRepository
+      .createQueryBuilder()
+      .update()
+      .set({ revokedAt: new Date(), revokedReason: reason })
+      .where({ id, userId, revokedAt: IsNull() })
+      .returning('jti')
+      .execute();
 
     if (result.affected === 0) {
       throw new NotFoundException('Session not found');
     }
+
+    // A driver reports the rows it attempted on some configurations and the rows
+    // it kept on others, and with `RETURNING` the jtis arrive in `raw`. An empty
+    // answer here would mean the access token could not be stopped, so it is
+    // reported rather than defaulted: the session is revoked in the database and
+    // the caller needs to know the half that did not happen.
+    const jti = result.raw?.[0]?.jti as string | undefined;
+
+    if (typeof jti !== 'string' || jti.length === 0) {
+      throw new Error(
+        'Session was revoked but its jti was not returned, so its access token was not stopped',
+      );
+    }
+
+    return jti;
+  }
+
+  /**
+   * Whether an access token's session has been revoked.
+   *
+   * One key per session, written when the session is revoked and read on every
+   * request whose token names a session. There is no key to invalidate and
+   * nothing to refill from: a revoked session is recorded *here* rather than
+   * derived from the database, because nothing in the database can be looked up by
+   * jti on the request path without a query per request, which is the cost this
+   * cache exists to remove.
+   *
+   * The entry outlives the tokens it revokes and then expires on its own: an
+   * access token cannot outlive its own expiry, so once this is gone there is
+   * nothing left for it to protect.
+   */
+  async isSessionRevoked(sessionId: string): Promise<boolean> {
+    return (await this.cache.get(revokedSessionKey(sessionId))) !== undefined;
+  }
+
+  /**
+   * Records a session as revoked, for as long as its access tokens can live.
+   *
+   * A plain write rather than a cache invalidation, because this is the record
+   * itself. Every other cached answer about a user can be dropped and refilled;
+   * dropping this one would hand the session back.
+   */
+  async markSessionRevoked(sessionId: string): Promise<void> {
+    await this.cache.set(revokedSessionKey(sessionId), true, {
+      ttl: await this.accessTokenTtlSeconds(),
+      // Exact, because an entry that expires before the tokens it revokes lets
+      // those tokens start working again. The jitter every other entry gets exists
+      // to spread a burst of expirations, which is worth nothing here and would
+      // take up to a tenth of the window off the bottom.
+      exactTtl: true,
+    });
+  }
+
+  /**
+   * The access token lifetime in seconds, which is how long a revoked session has
+   * to be remembered.
+   *
+   * Asked of the signer rather than parsed out of the config string. `expiresIn`
+   * accepts `'15m'`, `'1h'` and a plain number, and `Number('15m')` is `NaN`, so a
+   * parser written here would have to agree with the JWT library about every
+   * format it supports. Signing one throwaway token and reading `exp - iat` off it
+   * cannot drift from what the access tokens actually get.
+   *
+   * A probe per revocation rather than a cached number: revocations are rare, and
+   * a cached value is one more thing to keep in step with the config.
+   */
+  private async accessTokenTtlSeconds(): Promise<number> {
+    const configured =
+      this.configService.get<JwtModuleOptions>('jwtAccessToken')?.signOptions
+        ?.expiresIn ?? DEFAULT_ACCESS_TOKEN_TTL_SECONDS;
+
+    try {
+      const probe = await this.jwtService.signAsync(
+        { probe: true },
+        { expiresIn: configured },
+      );
+      const { iat, exp } = this.jwtService.decode<{
+        iat?: number;
+        exp?: number;
+      }>(probe);
+
+      if (typeof iat === 'number' && typeof exp === 'number' && exp > iat) {
+        return exp - iat;
+      }
+    } catch {
+      // Falls through to the default below rather than throwing. This is the
+      // lifetime of a revocation entry, and refusing to record a revocation
+      // because the config could not be read would leave an access token alive.
+    }
+
+    return DEFAULT_ACCESS_TOKEN_TTL_SECONDS;
   }
 
   async revokeByJti(

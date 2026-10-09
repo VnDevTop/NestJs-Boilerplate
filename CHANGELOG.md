@@ -15,6 +15,214 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## refactor: build the redis store through the keyv factory
+
+Phase 17b. Intended commit: `refactor: build the redis store through the keyv factory`
+
+**Tasks**
+
+- [x] Stop building the redis client by hand
+- [x] Close the store through Keyv's own `disconnect`
+
+**Notes**
+
+- The comment inherited from Phase 12 claimed `createKeyv` "only accepts a URL and
+  hardcodes the socket options", so the store could not be configured. That is
+  false for the installed version, whose first argument is `RedisClientOptions`.
+  Verified by running both forms and reading one from the other.
+- The hand-built client had a real bug: it was never closed, so `npm run seed`
+  printed its last line and sat there with the event loop held open.
+
+## feat: expose role permissions over the admin api
+
+Phase 17b. Intended commit: `feat: expose role permissions over the admin api`
+
+**Tasks**
+
+- [x] `GET` and `PUT /admin/roles/:role/permissions`, behind `role:read` and
+      `role:write`
+- [x] Answer with what the role holds afterwards, not with what was requested
+
+**Notes**
+
+- The route exists so that changing a grant goes through the application, and
+  therefore through the invalidation that follows a write. Before it, the only way
+  to change a role's grants was SQL, which bypasses the cache and leaves the
+  change waiting out the TTL.
+- `role:write` is held by the super administrator alone. Handing it to `admin`
+  would let one administrator grant themselves another administrator's.
+- An unknown role is refused by a pipe rather than written: a role nobody holds is
+  a role that can reach no guarded route and looks merely empty.
+- This cannot catch an operator who still uses SQL. That window is documented in
+  `SECURITY.md` and `docs/production.md` rather than closed, because nothing inside
+  the application can see a write it did not make.
+
+## fix: clear cached role grants from the permission seeder
+
+Phase 17b. Intended commit: `fix: clear cached role grants from the permission seeder`
+
+**Tasks**
+
+- [x] Drop the cached grant set of every role the catalogue names
+- [x] Derive the key list from `ROLE_PERMISSIONS` rather than listing roles
+- [x] Fail soft, because a seed that cannot reach the cache has still seeded
+
+**Notes**
+
+- Without it a deploy that adds a permission keeps serving the old grant set until
+  the entry expires, so the permission that was just deployed does not work. The
+  direction is the safe one: the guard refuses rather than admits.
+- Best effort on purpose. Failing the seed over a cache outage would turn an
+  eviction problem into a failed deploy, and the operator is told instead.
+- A no-op for `CACHE_BACKEND=memory`, and necessarily so: an in-process cache holds
+  entries no other process can reach.
+
+## feat: revoke a session's access token, and the one a rotation supersedes
+
+Phase 17b. Intended commit: `feat: revoke a session's access token, and the one a rotation supersedes`
+
+**Tasks**
+
+- [x] Carry the session id in the access token, and refuse a revoked one
+- [x] Record the session a rotation superseded, after the transaction commits
+- [x] Return the revoked row's `jti` from the update rather than reading it back
+
+**Notes**
+
+- `DELETE /auth/sessions/:id` revoked the refresh token, so the session came back
+  on the next refresh and the access token in the caller's hand kept working for
+  the rest of its fifteen minutes. Nothing about the response changed; it was
+  simply not taking effect until the token expired on its own.
+- The session, not the access token, is the unit. Every access token from one
+  refresh chain shares the id, so a revocation is one write; giving each token its
+  own id would mean a revocation had to name every token that chain ever produced,
+  and that set is not knowable from the database.
+- Recorded **after** the commit, not inside it. Recorded before, a rollback leaves
+  a client holding a live refresh token and no live access token at all. The first
+  version had it inside, and the test that asserts the order is what noticed.
+- The revocation key is written directly and never invalidated, because a revoked
+  session has no column to re-read it from. It carries an exact lifetime, with the
+  jitter every other entry gets switched off: an entry that expires early lets the
+  tokens it revoked start working again.
+- Rotation ending the old access token means a client that loses the response to a
+  refresh is left with nothing, and its retry presents a rotated token, which is
+  the reuse signal that drops every session on the account. A lost response and a
+  leaked token are indistinguishable server-side, and the design already treated
+  them as the same thing.
+
+## feat: revoke an access token when its device signs out
+
+Phase 17b. Intended commit: `feat: revoke an access token when its device signs out`
+
+**Tasks**
+
+- [x] A `sessionsVersion` on `user_devices`, incremented on sign-out
+- [x] Carry the device and its version in the access token, and compare them
+- [x] Revoke a device's tokens from `DELETE /auth/devices/:id` as well
+
+**Notes**
+
+- `users.sessionsVersion` is per account by construction: bumping it takes out
+  every device at once. It cannot answer "is this session still allowed in",
+  because a logout names one machine and the token named none, so the counter moved
+  to where the scope already was.
+- Setting `isActive` alone would have done nothing. The strategy never reads that
+  column, so a revoked device with a row still in the table looks exactly like a
+  live one.
+- A device **absent** from the map is refused rather than skipped. Retention removes
+  devices with no live refresh token, and treating absence as "nothing to check"
+  would let a token minted before the deletion keep working for the rest of its
+  lifetime.
+- A token naming no device is not checked at all. That is every token minted before
+  this claim existed, so reading it as revoked would sign out every signed-in user
+  on deploy.
+
+## perf: report cache loss as degraded
+
+Phase 17b. Intended commit: `perf: report cache loss as degraded`
+
+**Tasks**
+
+- [x] Report an unreachable or mismatched cache as `degraded`, never `down`
+- [x] Pin the terminus behaviour this relies on
+
+**Notes**
+
+- Everything downstream of redis fails open: rate limiting lets requests through,
+  the lockout stops counting, the auth cache falls back to a query. The service
+  keeps serving traffic throughout, more slowly.
+- Terminus treats `down` as a failure and throws 503, so an orchestrator would pull
+  every instance out of rotation over a redis problem and turn a cache outage into
+  an outage of a system that was still answering requests. `degraded` lands in
+  `info` and the request returns 200.
+- The check still writes a value and reads it back. cache-manager turns a failing
+  store into a miss, so a plain read cannot tell an unreachable cache from an empty
+  one.
+
+## perf: guard the sessions version against an uninvalidate write
+
+Phase 17b. Intended commit: `perf: guard the sessions version against an uninvalidate write`
+
+**Tasks**
+
+- [x] Assert a revocation-critical column is only written where the cache is dropped
+- [x] Assert the amount is an increment and never a fixed value
+
+**Notes**
+
+- This replaces the invalidation subscriber the plan asked for. A subscriber gets
+  no dependency injection, because TypeORM builds it with `new target()`, and every
+  write whose invalidation matters arrives from a query builder with no row id. It
+  would have fired on all of them and been able to act on none.
+- A convention asks everyone to remember. This fails the build when a third site
+  appears without an invalidation, which is the outcome the subscriber was supposed
+  to give. Verified by planting a bump in `DeviceService` and watching it fail.
+
+## perf: serve authorization from cache
+
+Phase 17b. Intended commit: `perf: serve authorization from cache`
+
+**Tasks**
+
+- [x] Cache the permission names under `role:<role>`, TTL 600s
+- [x] Drop the entry when a role's grants are rewritten, after the commit
+
+**Notes**
+
+- Cached **per role**, not per user: one entry serves every holder, and invalidating
+  is one delete. `CacheService` has no pattern delete on purpose, so a per-user key
+  would have turned every role change into a scan of the user table.
+- A role with nothing granted is cached like any other answer, because a plain user
+  is the common case and an empty array is a value rather than a null. An absent
+  role is not cached at all: `cacheKey` drops an empty part, so it would be filed
+  under a bare `role` key.
+- `forRole` resolved in the strategy, not the guard, so it is one read per request
+  rather than one per guarded route.
+
+## perf: serve authentication from cache
+
+Phase 17b. Intended commit: `perf: serve authentication from cache`
+
+**Tasks**
+
+- [x] Cache the claims under `user:<id>`, TTL 60s, and read them in the strategy
+- [x] Select six named columns, so the password hash is never read
+- [x] Drop the entry after the write that changed it
+
+**Notes**
+
+- The projection omits the password hash on purpose. Caching the row the strategy
+  reads would put every bcrypt hash in redis, which is offline cracking material in
+  a store that is usually less protected than the database it duplicates.
+- The cache delete is **after** the transaction, and that ordering is the whole
+  point of `runThenInvalidateAuthCache`. A delete inside the transaction lets a
+  request arriving before the commit refill the entry from the old snapshot, and
+  that entry then outlives the token it wrongly admitted. Small window, silent
+  failure.
+- No try/catch here. cache-manager already turns a failing store into a miss, and a
+  local catch would also swallow a genuine failure from the loader.
+- No email lookup and no per-user permission key; both are explained in the plan.
+
 ## feat: block login temporarily after repeated failures
 
 Phase 17a. Intended commit: `feat: block login temporarily after repeated failures`

@@ -40,16 +40,6 @@ export class AuthSessionDto {
   expiresAt!: string;
 
   /**
-   * Deliberately no "is this my current session" flag.
-   *
-   * The access token carries neither a device nor a token id, and the refresh
-   * token travels in the request body rather than a header, so the server cannot
-   * tell which of a device's sessions the caller is using. A flag that was always
-   * false would be worse than none, and the client already holds the refresh
-   * token, so it can match this id itself.
-   */
-
-  /**
    * `deviceName` is passed in rather than read from a relation, because
    * `refresh_tokens.deviceId` is a bare uuid column with no foreign key and this
    * phase does not add one. A caller has a handful of devices, so they are read

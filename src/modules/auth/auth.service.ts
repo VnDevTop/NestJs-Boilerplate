@@ -45,6 +45,7 @@ import { LoginLockoutService } from './login-lockout.service.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { PasswordResetService } from './password-reset.service.js';
 import { User } from '../users/entities/index.js';
+import { UserDevice } from './entities/index.js';
 import { TwoFactorService } from './two-factor.service.js';
 import {
   AuthToken,
@@ -55,7 +56,19 @@ import {
 } from './types/index.js';
 
 type RotationResult =
-  | { status: 'ok'; refreshToken: string }
+  | {
+      status: 'ok';
+      refreshToken: string;
+      deviceId: string | null;
+      /** The new session's id, so the new access token can be revoked with it. */
+      sessionId: string;
+      /**
+       * The session this rotation superseded, which the caller must record as
+       * revoked. Separate from `sessionId` because the new access token carries one
+       * and the old one has to die.
+       */
+      supersededSessionId: string;
+    }
   | { status: 'invalid' }
   | { status: 'reused' }
   | { status: 'expired' };
@@ -97,14 +110,17 @@ export class AuthService {
       lastName: registerDto.lastName,
     });
 
-    const { token } = await this.issueSession(user.id, metadata);
+    const { token, device, sessionId } = await this.issueSession(
+      user.id,
+      metadata,
+    );
 
     // The account is usable before the address is confirmed; Phase 19 adds the
     // gate. Issuing the link here means a user who never checks the address
     // cannot be reached later without asking for a new one.
     void this.sendVerification(user).catch(() => undefined);
 
-    return this.createAuthToken(user, token);
+    return this.createAuthToken(user, token, device, sessionId);
   }
 
   /**
@@ -212,9 +228,12 @@ export class AuthService {
       return this.twoFactorService.issueChallenge(user.id);
     }
 
-    const { token } = await this.issueSession(user.id, metadata);
+    const { token, device, sessionId } = await this.issueSession(
+      user.id,
+      metadata,
+    );
 
-    return this.createAuthToken(userResponse, token);
+    return this.createAuthToken(userResponse, token, device, sessionId);
   }
 
   /**
@@ -469,9 +488,17 @@ export class AuthService {
 
     await this.twoFactorService.verifyChallenge(userId, twoFactorLoginDto.code);
 
-    const { token } = await this.issueSession(user.id, metadata);
+    const { token, device, sessionId } = await this.issueSession(
+      user.id,
+      metadata,
+    );
 
-    return this.createAuthToken(UserResponseDto.fromEntity(user), token);
+    return this.createAuthToken(
+      UserResponseDto.fromEntity(user),
+      token,
+      device,
+      sessionId,
+    );
   }
 
   twoFactorSetup(currentUser: RequestUser): Promise<TwoFactorSetup> {
@@ -521,9 +548,49 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token expired');
     }
 
+    // The rotation superseded the session the old access token was minted from, so
+    // that token stops working rather than running out its full fifteen minutes.
+    //
+    // After the commit, never inside the rotation: a record written before the
+    // transaction committed would kill the access token of a refresh that then
+    // rolled back, leaving the client with a working refresh token and no working
+    // access token at all.
+    //
+    // The cost, stated plainly: a client that loses the response to this refresh is
+    // left with nothing that works, and its retry presents a rotated token, which
+    // is the reuse signal that drops every session of the account. Without this the
+    // old access token would have carried it for up to fifteen minutes first. A
+    // lost response and a leaked token are indistinguishable from here, and the
+    // existing design already treats them as the same thing.
+    await this.refreshTokenService.markSessionRevoked(
+      rotation.supersededSessionId,
+    );
+
+    // The access token has to name the device it was minted on, and carry that
+    // device's current version, or signing out of this device would not touch it.
+    // A device that has since been deleted cannot be named, so the session is over
+    // even though its refresh token still verifies.
+    if (rotation.deviceId === null) {
+      // A session with no device cannot produce a device-scoped access token, and
+      // minting one without the claim would silently downgrade that session to a
+      // token no logout can reach. Refusing is the fail-closed answer.
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    const device = await this.deviceService.findByIdForSession(
+      user.id,
+      rotation.deviceId,
+    );
+
+    if (!device) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
     return this.createAuthToken(
       UserResponseDto.fromEntity(user),
       rotation.refreshToken,
+      device,
+      rotation.sessionId,
     );
   }
 
@@ -532,10 +599,33 @@ export class AuthService {
       ignoreExpiration: true,
     });
 
+    // The refresh token carries no device claim, so the device behind this session
+    // comes from the row the token points at. Read before the revoke, because the
+    // revoke is a flag on that same row.
+    const record = await this.refreshTokenService.findByJti(jti);
+
     await this.refreshTokenService.revokeByJti(
       jti,
       RefreshTokenRevokedReason.Logout,
     );
+
+    // Revoking the refresh token only stops the *next* access token being minted.
+    // The access token in the caller's hand would keep working for the rest of its
+    // fifteen minutes, which is not what signing out of a device means to whoever
+    // just did it.
+    //
+    // Scoped to this device rather than the account, so the phone and the laptop
+    // stay signed in. `logoutAll` is the one that takes everything.
+    //
+    // A token with no device cannot be scoped to one. It also predates the access
+    // token claim that names a device, so there is nothing on it for the bump to
+    // catch, and skipping it is consistent rather than a hole.
+    if (record?.deviceId) {
+      await this.deviceService.revokeDeviceSessions(
+        record.userId,
+        record.deviceId,
+      );
+    }
   }
 
   async logoutAll(currentUser: RequestUser): Promise<void> {
@@ -543,26 +633,32 @@ export class AuthService {
       throw new UnauthorizedException('Authentication required');
     }
 
-    await this.refreshTokenService.runInTransaction(async (manager) => {
-      await this.refreshTokenService.revokeAllByUserId(
-        currentUser.id,
-        RefreshTokenRevokedReason.LogoutAll,
-        manager,
-      );
+    // The cache delete is wrapped around the transaction rather than placed inside
+    // it: a request arriving before the commit would repopulate the entry from
+    // the old snapshot and cache the version we are revoking. See
+    // `runThenInvalidateAuthCache`.
+    await this.usersService.runThenInvalidateAuthCache(currentUser.id, () =>
+      this.refreshTokenService.runInTransaction(async (manager) => {
+        await this.refreshTokenService.revokeAllByUserId(
+          currentUser.id,
+          RefreshTokenRevokedReason.LogoutAll,
+          manager,
+        );
 
-      // Inside the transaction, and as an increment rather than a read and a
-      // write. If this committed without the version moving, every access token
-      // would keep working for its full lifetime while the refresh tokens behind
-      // them were gone, so the account looked revoked and was not.
-      await manager.increment(
-        User,
-        { id: currentUser.id },
-        'sessionsVersion',
-        1,
-      );
+        // Inside the transaction, and as an increment rather than a read and a
+        // write. If this committed without the version moving, every access token
+        // would keep working for its full lifetime while the refresh tokens behind
+        // them were gone, so the account looked revoked and was not.
+        await manager.increment(
+          User,
+          { id: currentUser.id },
+          'sessionsVersion',
+          1,
+        );
 
-      await this.deviceService.revokeAllByUserId(currentUser.id);
-    });
+        await this.deviceService.revokeAllByUserId(currentUser.id);
+      }),
+    );
   }
 
   async getMe(currentUser: RequestUser): Promise<UserResponseDto> {
@@ -623,11 +719,20 @@ export class AuthService {
       throw new UnauthorizedException('Authentication required');
     }
 
-    await this.refreshTokenService.revokeByIdForUser(
+    const jti = await this.refreshTokenService.revokeByIdForUser(
       currentUser.id,
       sessionId,
       RefreshTokenRevokedReason.SessionRevoked,
     );
+
+    // Revoking the refresh token only stops the *next* access token being minted.
+    // The access token already in that session's hand would keep working for the
+    // rest of its fifteen minutes, so the session is recorded as revoked too, and
+    // the strategy refuses any token that names it.
+    //
+    // Not device-scoped and not account-scoped: this is one session, and the other
+    // sessions on this machine have to survive it.
+    await this.refreshTokenService.markSessionRevoked(jti);
   }
 
   async revokeDevice(
@@ -649,11 +754,16 @@ export class AuthService {
   private async issueSession(
     userId: string,
     metadata: DeviceMetadata,
-  ): Promise<{ token: string }> {
+  ): Promise<{ token: string; device: UserDevice; sessionId: string }> {
     const device = await this.deviceService.register(userId, metadata);
     const tokenMetadata = this.toTokenMetadata(metadata);
+    const { token, record } = await this.refreshTokenService.issue(
+      userId,
+      tokenMetadata,
+      device.id,
+    );
 
-    return this.refreshTokenService.issue(userId, tokenMetadata, device.id);
+    return { token, device, sessionId: record.jti };
   }
 
   private async rotate(
@@ -718,7 +828,13 @@ export class AuthService {
         manager,
       );
 
-      return { status: 'ok', refreshToken: token };
+      return {
+        status: 'ok',
+        refreshToken: token,
+        deviceId: current.deviceId,
+        sessionId: record.jti,
+        supersededSessionId: current.jti,
+      };
     });
   }
 
@@ -732,8 +848,10 @@ export class AuthService {
   private async createAuthToken(
     user: UserResponseDto,
     refreshToken: string,
+    device: { id: string; sessionsVersion: number },
+    sessionId: string,
   ): Promise<AuthToken> {
-    const accessToken = await this.signAccessToken(user);
+    const accessToken = await this.signAccessToken(user, device, sessionId);
 
     return {
       accessToken,
@@ -744,12 +862,26 @@ export class AuthService {
     };
   }
 
-  private async signAccessToken(user: UserResponseDto): Promise<string> {
+  private async signAccessToken(
+    user: UserResponseDto,
+    device: { id: string; sessionsVersion: number },
+    sessionId: string,
+  ): Promise<string> {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
       isManager: user.isManager,
+      // Naming the device is what lets signing out of one browser leave the
+      // others alone. `sv` above is per account and takes every device with it;
+      // these two are the same counter narrowed to the machine the token was
+      // minted on.
+      did: device.id,
+      dv: device.sessionsVersion ?? 0,
+      // The session, so revoking one session also stops the access token already
+      // in that session's hand. Without it, `DELETE /auth/sessions/:id` only took
+      // effect at the next refresh.
+      sid: sessionId,
       // Carried so "log out everywhere" is visible on the next request instead
       // of after this token expires. Read from the DTO rather than re-fetched, so
       // the value in the token always matches the row it was minted from.

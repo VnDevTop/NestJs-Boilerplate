@@ -35,6 +35,26 @@ export enum Permission {
 
   /** Read what the application last sent and to whom. */
   MailLogRead = 'mail-log:read',
+
+  /**
+   * Read which permissions a role holds.
+   *
+   * Separate from the write below because the two answer different questions, and
+   * reading them is what an admin screen needs to render the current state without
+   * being able to change it.
+   */
+  RoleRead = 'role:read',
+
+  /**
+   * Replace a role's grants.
+   *
+   * The most dangerous permission in the list, and the reason the route is written
+   * to fail rather than to grant: a mistyped name refuses the request, and a role
+   * whose grants are emptied is a role nobody can reach. Held by the super
+   * administrator alone, because it is the one permission that can revoke another
+   * administrator's access.
+   */
+  RoleWrite = 'role:write',
 }
 
 /**
@@ -59,6 +79,10 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> =
       Permission.MailLogRead,
       Permission.UserRead,
       Permission.UserWrite,
+      // Read only. Granting an administrator the permission that edits roles would
+      // let one administrator grant themselves another administrator's, which is
+      // why `RoleWrite` is not here.
+      Permission.RoleRead,
     ]),
 
     [Role.SuperAdmin]: Object.freeze([
@@ -70,5 +94,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> =
       Permission.UserWrite,
       Permission.UserDelete,
       Permission.MaintenanceRun,
+      Permission.RoleRead,
+      Permission.RoleWrite,
     ]),
   });

@@ -22,21 +22,37 @@ const user = (overrides: Partial<User> = {}): User =>
     ...overrides,
   }) as User;
 
-function harness(options: { user?: User | null } = {}) {
+function harness(
+  options: {
+    user?: User | null;
+    devices?: Record<string, number>;
+    revokedSessions?: string[];
+  } = {},
+) {
   const found = options.user === undefined ? user() : options.user;
-  const findById = vi.fn().mockResolvedValue(found);
+  const findAuthClaims = vi.fn().mockResolvedValue(found);
   const forRole = vi.fn().mockResolvedValue([]);
   const config = {
     get: vi.fn().mockReturnValue(SECRET),
   } as unknown as ConfigService;
 
+  const devices = options.devices ?? {};
+
   return {
     strategy: new JwtStrategy(
       config,
-      { findById } as never,
+      { findAuthClaims } as never,
       { forRole } as never,
+      { findSessionVersions: vi.fn().mockResolvedValue(devices) } as never,
+      {
+        isSessionRevoked: vi
+          .fn()
+          .mockResolvedValue(
+            (options.revokedSessions ?? []).includes('sess-1'),
+          ),
+      } as never,
     ),
-    findById,
+    findAuthClaims,
     forRole,
   };
 }

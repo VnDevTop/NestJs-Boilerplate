@@ -31,6 +31,12 @@ function userDto(overrides: Partial<UserResponseDto> = {}): UserResponseDto {
   } as UserResponseDto;
 }
 
+/**
+ * The machine the token was minted on. Present because the payload now names it,
+ * which is what lets one device sign out without taking the others.
+ */
+const DEVICE = { id: 'd1', sessionsVersion: 0 };
+
 function harness() {
   const increment = vi.fn().mockResolvedValue({ affected: 1 });
   const manager = {
@@ -47,9 +53,26 @@ function harness() {
     ),
   };
 
+  const invalidateAuthCache = vi.fn().mockResolvedValue(undefined);
+
+  // Mirrors the real helper: run the work, then drop the cached claims. The work
+  // has to actually run here, or these tests would pass on an empty transaction.
+  const usersService = {
+    invalidateAuthCache,
+    runThenInvalidateAuthCache: vi.fn(
+      async (userId: string, work: () => Promise<unknown>) => {
+        try {
+          return await work();
+        } finally {
+          await invalidateAuthCache(userId);
+        }
+      },
+    ),
+  };
+
   const service = new AuthService(
     new JwtService({ secret: SECRET, signOptions: { expiresIn: '15m' } }),
-    {} as never,
+    usersService as never,
     refreshTokenService as never,
     { revokeAllByUserId: vi.fn() } as never,
     {} as never,
@@ -75,7 +98,13 @@ function harness() {
     } as never,
   );
 
-  return { service, increment, manager, revokeAllByUserId };
+  return {
+    service,
+    increment,
+    manager,
+    revokeAllByUserId,
+    invalidateAuthCache,
+  };
 }
 
 describe('the access token claim', () => {
@@ -96,9 +125,12 @@ describe('the access token claim', () => {
       // password hash and a token row, and what is under test is the payload.
       await (
         h.service as unknown as {
-          signAccessToken(u: UserResponseDto): Promise<string>;
+          signAccessToken(
+            u: UserResponseDto,
+            d: { id: string; sessionsVersion: number },
+          ): Promise<string>;
         }
-      ).signAccessToken(dto),
+      ).signAccessToken(dto, DEVICE),
     ) as Record<string, unknown>;
   }
 

@@ -1,5 +1,8 @@
 import type { DataSource } from 'typeorm';
 
+import { authRoleKey } from '../../core/cache/auth-cache.keys.js';
+import { createRedisStore } from '../../core/cache/redis-store.js';
+import { cacheConfig } from '../../configs/index.js';
 import { ROLE_PERMISSIONS } from '../../common/enums/permission.enum.js';
 import {
   Permission,
@@ -26,6 +29,16 @@ import type { Seeder } from './admin.seeder.js';
  * a deploy silently withdraws an access grant from a running system. Revoking a
  * permission is an operator action, taken in the database, on purpose.
  */
+/**
+ * The cache keys this seed invalidates, one per role the catalogue names.
+ *
+ * Derived from `ROLE_PERMISSIONS` rather than listed, so a role added to the
+ * catalogue is evicted by the same seed that writes its grants. Exported so the
+ * list can be asserted without standing up a cache.
+ */
+export const CACHED_ROLE_GRANT_KEYS: readonly string[] =
+  Object.keys(ROLE_PERMISSIONS).map(authRoleKey);
+
 export class PermissionSeeder implements Seeder {
   readonly name = 'permissions';
 
@@ -82,8 +95,62 @@ export class PermissionSeeder implements Seeder {
       }
     }
 
+    await this.dropCachedRoleGrants();
+
     process.stdout.write(
       `  permissions: ${byName.size} in the catalogue, ${inserted} new grants\n`,
+    );
+  }
+
+  /**
+   * Drops the cached grant set of every role the catalogue names.
+   *
+   * Without it a deploy that adds a permission to a role keeps serving the old
+   * grant set for the length of `CACHE_AUTH_ROLE_TTL`, and the permission that was
+   * just deployed does not work until it expires. That direction is the safe one —
+   * the guard refuses rather than admits — so this is a deploy that is briefly
+   * *less* capable rather than one that is briefly more permissive, which is why it
+   * is a cache eviction and not part of the transaction that wrote the grants.
+   *
+   * Explicitly targeted rather than swept. The keys are known, because the roles
+   * come from the same `ROLE_PERMISSIONS` the grants were written from, and a
+   * pattern delete over the keyspace is an unbounded operation on a shared server.
+   *
+   * Best effort: a seed that cannot reach the cache has still seeded the database,
+   * and failing here would turn a cache outage into a failed deploy. The operator
+   * is told, because the alternative is a permission that silently does not work.
+   *
+   * A no-op for `CACHE_BACKEND=memory`, and necessarily so: an in-process cache
+   * holds entries no other process can reach, so the only correct response is to
+   * let them expire, which is what the configured TTL bounds.
+   */
+  private async dropCachedRoleGrants(): Promise<void> {
+    const config = cacheConfig();
+
+    if (config.backend === 'memory') {
+      return;
+    }
+
+    const store = createRedisStore(config);
+
+    try {
+      await store.deleteMany?.([...CACHED_ROLE_GRANT_KEYS]);
+    } catch {
+      process.stderr.write(
+        `  could not clear cached role grants; newly seeded permissions may take ` +
+          `up to ${config.authRoleTtl}s to apply\n`,
+      );
+      return;
+    } finally {
+      // `disconnect` is how Keyv exposes the store's own close, and it is not
+      // optional in practice. Without it the open socket keeps the event loop alive
+      // and this script sits here after its last line instead of exiting, which is
+      // how this was first shipped.
+      await store.disconnect().catch(() => undefined);
+    }
+
+    process.stdout.write(
+      `  cleared cached grants for ${CACHED_ROLE_GRANT_KEYS.length} roles\n`,
     );
   }
 }

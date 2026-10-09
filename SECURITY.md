@@ -47,9 +47,22 @@ These are recorded rather than presented as fixed. Each is in
   published value when the variable is unset. Startup validation rejects that in
   production, but only when 2FA is enabled, so an unset key with 2FA off is not
   an error by design.
-- **Auth state is read from the database on every request**, not from the cache,
-  so a deactivated account or a changed role takes effect at once. That costs one
-  query per request.
+- **Auth state is cached, so correctness depends on the invalidation, not on the
+  TTL.** A deactivated account, a changed role and a revoked session all take
+  effect on the next request, because the write drops the cached entry rather than
+  waiting for it to expire. The TTL is only a backstop for an invalidation that was
+  forgotten, which is why it is configurable: that window is a security property,
+  and an operator who widens it is choosing a longer worst case.
+- **A permission changed straight in the database is invisible to the
+  application.** Invalidation happens where the write happens, so an operator who
+  edits `role_permissions` over SQL bypasses it, and the change takes effect only
+  when the cached grant set expires. Use `PUT /admin/roles/:role/permissions`, or
+  delete the entry, or wait out `CACHE_AUTH_ROLE_TTL`. Nothing inside the
+  application can see a write it did not make.
+- **Rotation ends the old access token too**, so a client that loses the response
+  to a refresh is left with nothing working and its retry presents a rotated
+  token, which is the reuse signal that drops every session on the account. A lost
+  response and a leaked token are indistinguishable from the server's side.
 - **The compose stack uses development secrets.** `docker-compose.yml` is for
   local work and is not a production deployment.
 

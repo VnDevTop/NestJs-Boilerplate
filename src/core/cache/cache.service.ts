@@ -19,6 +19,16 @@ export interface CacheOptions {
    * request, but a record created afterwards should appear promptly.
    */
   emptyTtl?: number;
+  /**
+   * Skip the random reduction applied to every entry lifetime.
+   *
+   * Only for entries whose lifetime is a correctness bound rather than a
+   * housekeeping one. The jitter exists so a bulk write does not expire in one
+   * burst, which is worth giving up where an entry that expires early *grants*
+   * something: a revoked session held for less than the lifetime of the tokens it
+   * revokes would let those tokens start working again.
+   */
+  exactTtl?: boolean;
 }
 
 export interface CacheStats {
@@ -75,7 +85,7 @@ export class CacheService {
     value: T,
     options: CacheOptions = {},
   ): Promise<number> {
-    const ttl = this.resolveTtl(options.ttl);
+    const ttl = this.resolveTtl(options.ttl, options.exactTtl);
 
     await this.cache.set(key, value, ttl);
 
@@ -168,9 +178,10 @@ export class CacheService {
    * otherwise share a deadline, turn into one burst of simultaneous misses, and
    * then stampede the loader all over again.
    */
-  private resolveTtl(seconds?: number): number {
+  private resolveTtl(seconds?: number, exact?: boolean): number {
     const base = seconds && seconds > 0 ? seconds : this.options.defaultTtl;
+    const jitter = exact ? 0 : TTL_JITTER_RATIO * Math.random();
 
-    return Math.round(base * 1000 * (1 - TTL_JITTER_RATIO * Math.random()));
+    return Math.round(base * 1000 * (1 - jitter));
   }
 }

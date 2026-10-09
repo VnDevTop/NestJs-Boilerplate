@@ -97,7 +97,14 @@ function harness(
   const service = new TestableAuthService(
     jwtService as never,
     usersService as never,
-    { issue: vi.fn().mockResolvedValue({ token: 'r' }) } as never,
+    {
+      // `record.jti` is the session id the access token carries, so the fake has to
+      // answer with a row rather than only a token.
+      issue: vi.fn().mockResolvedValue({
+        token: 'r',
+        record: { jti: 'jti-1', id: 'row-1', deviceId: 'd1' },
+      }),
+    } as never,
     deviceService as never,
     {} as never,
     passwordResetService as never,

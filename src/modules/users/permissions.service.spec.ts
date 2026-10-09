@@ -12,6 +12,38 @@ interface Harness {
   delete: ReturnType<typeof vi.fn>;
   insert: ReturnType<typeof vi.fn>;
   transaction: ReturnType<typeof vi.fn>;
+  store: Map<string, unknown>;
+  deletedKeys: string[];
+  cacheDelete: ReturnType<typeof vi.fn>;
+}
+
+/**
+ * A store behind the cache, rather than a recorded call. A `delete` that only
+ * recorded would pass with the entry still in place, which is the regression the
+ * invalidation tests exist to catch.
+ */
+function fakeCache() {
+  const store = new Map<string, unknown>();
+  const deletedKeys: string[] = [];
+
+  return {
+    store,
+    deletedKeys,
+    wrap: async <T>(key: string, loader: () => Promise<T>): Promise<T> => {
+      if (store.has(key)) {
+        return store.get(key) as T;
+      }
+
+      const value = await loader();
+      store.set(key, value);
+
+      return value;
+    },
+    delete: vi.fn(async (key: string) => {
+      deletedKeys.push(key);
+      store.delete(key);
+    }),
+  };
 }
 
 const grant = (role: string, name: string): Partial<RolePermission> =>
@@ -22,6 +54,7 @@ function harness(): Harness {
   const remove = vi.fn().mockResolvedValue({ affected: 0 });
   const insert = vi.fn().mockResolvedValue({ identifiers: [] });
   const findPermissions = vi.fn().mockResolvedValue([]);
+  const cache = fakeCache();
 
   const manager = {
     delete: remove,
@@ -38,11 +71,18 @@ function harness(): Harness {
   } as unknown as Repository<RolePermission>;
 
   return {
-    service: new PermissionsService(grants),
+    service: new PermissionsService(
+      grants,
+      cache as never,
+      { getOrThrow: () => ({ authRoleTtl: 600 }) } as never,
+    ),
     find,
     delete: remove,
     insert,
     transaction: manager.transaction,
+    store: cache.store,
+    deletedKeys: cache.deletedKeys,
+    cacheDelete: cache.delete,
   };
 }
 
@@ -211,4 +251,127 @@ describe('PermissionsService', () => {
       expect(h.transaction).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('the cached role grants', () => {
+    let h: Harness;
+
+    beforeEach(() => {
+      h = harness();
+      vi.spyOn(h.service, 'catalogue').mockResolvedValue([
+        { id: 'p1', name: 'user:read' },
+        { id: 'p2', name: 'maintenance:run' },
+      ] as never);
+    });
+
+    it('keys on the role, not the user', async () => {
+      h.find.mockResolvedValue([grant('admin', 'user:read')]);
+
+      await h.service.forRole('admin');
+
+      expect([...h.store.keys()]).toEqual(['role:admin']);
+    });
+
+    it('is read once for a role, however many holders ask', async () => {
+      // The reason the key is the role: five users with it is still one query.
+      h.find.mockResolvedValue([grant('admin', 'user:read')]);
+
+      await h.service.forRole('admin');
+      await h.service.forRole('admin');
+      await h.service.forUser({ id: 'u1', role: 'admin' });
+      await h.service.forUser({ id: 'u2', role: 'admin' });
+
+      expect(h.find).toHaveBeenCalledTimes(1);
+    });
+
+    it('caches an empty set, because a plain user is the common case', async () => {
+      // Not short-circuited: an empty array is a value, so the longer lifetime
+      // applies and the per-request query stops for everybody holding it.
+      h.find.mockResolvedValue([]);
+
+      await h.service.forRole('user');
+      await h.service.forRole('user');
+
+      expect(h.find).toHaveBeenCalledTimes(1);
+      expect(h.store.get('role:user')).toEqual([]);
+    });
+
+    it('caches nothing for an absent role', async () => {
+      // `cacheKey` drops an empty part, so caching this would file it under a
+      // bare `role` key.
+      await h.service.forRole('');
+      await h.service.forRole(undefined);
+
+      expect(h.store.size).toBe(0);
+      expect(h.find).not.toHaveBeenCalled();
+    });
+
+    it('drops the entry after a role is rewritten', async () => {
+      await h.service.forRole(Role.Admin);
+      expect(h.store.has('role:admin')).toBe(true);
+
+      await h.service.setForRole(Role.Admin, ['user:read']);
+
+      expect(h.deletedKeys).toEqual(['role:admin']);
+      expect(h.store.has('role:admin')).toBe(false);
+    });
+
+    it('makes the new grants visible to the next read', async () => {
+      h.find.mockResolvedValue([grant(Role.Admin, 'user:read')]);
+      await h.service.forRole(Role.Admin);
+
+      await h.service.setForRole(Role.Admin, ['maintenance:run']);
+      h.find.mockResolvedValue([grant(Role.Admin, 'maintenance:run')]);
+
+      await expect(h.service.forRole(Role.Admin)).resolves.toEqual([
+        'maintenance:run',
+      ]);
+    });
+
+    it('drops the entry after the transaction, not inside it', async () => {
+      // The ordering is the property. A read landing before the commit refills
+      // the entry from the old rows, and a withdrawn permission then keeps
+      // working for the rest of the TTL.
+      const order: string[] = [];
+
+      h.transaction.mockImplementation(
+        async (fn: (m: unknown) => Promise<void>) => {
+          await fn(managerOf(h));
+          order.push('commit');
+        },
+      );
+      h.cacheDelete.mockImplementation(async () => {
+        order.push('invalidate');
+      });
+
+      await h.service.setForRole(Role.Admin, ['user:read']);
+
+      expect(order).toEqual(['commit', 'invalidate']);
+    });
+
+    it('drops the entry even when the transaction throws', async () => {
+      // A rolled back write leaves the old grants in force, and a stale entry on
+      // top of them with nobody left to remove it.
+      h.transaction.mockRejectedValueOnce(new Error('rollback'));
+
+      await expect(
+        h.service.setForRole(Role.Admin, ['user:read']),
+      ).rejects.toThrow('rollback');
+
+      expect(h.deletedKeys).toEqual(['role:admin']);
+    });
+
+    it('leaves other roles alone', async () => {
+      // No pattern delete exists on purpose, so a broad sweep would be a scan of
+      // the keyspace on every role change.
+      await h.service.setForRole(Role.Admin, ['user:read']);
+
+      expect(h.deletedKeys).toEqual(['role:admin']);
+      expect(h.deletedKeys).not.toContain('role:super_admin');
+    });
+  });
 });
+
+/** The manager the fake transaction passes to its callback. */
+function managerOf(h: Harness): unknown {
+  return { delete: h.delete, insert: h.insert };
+}

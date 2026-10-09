@@ -7,6 +7,7 @@ import { QueueModule } from '../queue/index.js';
 import { AdminController } from './admin.controller.js';
 import { AdminService } from './admin.service.js';
 import { AdminRetentionController } from './retention.controller.js';
+import { AdminRolesController } from './roles.controller.js';
 
 @Module({
   // `QueueModule` for JOB_QUEUE, so the run route enqueues rather than opening a
@@ -18,7 +19,11 @@ import { AdminRetentionController } from './retention.controller.js';
     MaintenanceModule,
     TypeOrmModule.forFeature([MaintenanceLog]),
   ],
-  controllers: [AdminController, AdminRetentionController],
+  controllers: [
+    AdminController,
+    AdminRetentionController,
+    AdminRolesController,
+  ],
   providers: [AdminService],
 })
 export class AdminModule {}
