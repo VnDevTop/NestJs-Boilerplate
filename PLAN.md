@@ -882,7 +882,7 @@ Tasks:
 - [x] Add an `Idempotency-Key` header guard on mutating endpoints, so a client
       retry after a timeout cannot create a duplicate
 - [x] Add `@VersionColumn()` to the mutable entities for optimistic concurrency
-- [ ] Add `user.requestDeletion()`: soft delete, queue a data export, hard
+- [x] Add `user.requestDeletion()`: soft delete, queue a data export, hard
       delete at the end of the retention window, a right-to-erasure flow built
       on Phase 16
 - [ ] Add a data export endpoint, CSV and JSON, streamed for large result sets

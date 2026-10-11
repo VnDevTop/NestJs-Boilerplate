@@ -68,6 +68,9 @@ function harness(
     {
       notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
     } as never,
+    // The erasure path removes notification preferences. Not reached by these
+    // tests, but the constructor is.
+    { forget: vi.fn(async () => undefined) } as never,
   );
 
   return { service, save, merge, saved, stored, deleteKeys };

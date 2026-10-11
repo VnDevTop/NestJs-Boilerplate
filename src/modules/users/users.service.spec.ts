@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { authUserKey } from '../../core/cache/index.js';
 import { UsersService, type AuthClaims } from './users.service.js';
-import type { User } from './entities/index.js';
+import { User } from './entities/index.js';
 
 /**
  * The cache is only worth having if the write that revokes still reaches the next
@@ -64,9 +64,14 @@ const ROW = {
   sessionsVersion: 3,
   isEmailVerified: true,
   lockedAt: null,
+  deletedAt: null,
   // Present on purpose: the projection must not carry it, and a fake that
   // omitted it would let a regression pass unnoticed.
   password: '$2b$10$notarealhashnotarealhashnotareal',
+  // A real method, not a stand-in. The erasure path calls it, and a fixture that
+  // hand-rolled a `deletedAt` assignment would pass while the entity stopped being
+  // the place the rule lives.
+  requestDeletion: User.prototype.requestDeletion,
 } as unknown as User;
 
 function harness(options: { rows?: (User | null)[] } = {}) {
@@ -90,6 +95,7 @@ function harness(options: { rows?: (User | null)[] } = {}) {
     cache as never,
     { getOrThrow: () => CONFIG } as never,
     { notify } as never,
+    { forget: vi.fn(async () => undefined) } as never,
   );
 
   return { service, cache, findOne, save, softDelete, merge, notify };

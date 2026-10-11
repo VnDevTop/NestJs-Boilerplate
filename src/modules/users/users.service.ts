@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -15,6 +16,7 @@ import type { CacheConfig } from '../../configs/index.js';
 import { ConfigService } from '@nestjs/config';
 
 import { NotificationEventsService } from '../notification/notification-events.service.js';
+import { NotificationPreferencesService } from '../notification/notification-preferences.service.js';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto/index.js';
 import { User } from './entities/index.js';
 
@@ -83,12 +85,15 @@ const AUTH_CLAIM_COLUMNS = {
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
     private readonly cache: CacheService,
     private readonly configService: ConfigService,
     private readonly notifications: NotificationEventsService,
+    private readonly preferences: NotificationPreferencesService,
   ) {}
 
   private get authTtl(): number {
@@ -338,7 +343,10 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    if (user.lockedAt !== null) {
+    // Truthy rather than `!== null`, for the same reason as `requestDeletion`: an
+    // `undefined` lock is not a lock, and treating it as one would make every
+    // account look permanently locked to a caller holding a partial row.
+    if (user.lockedAt) {
       // Idempotent rather than an error: two concurrent failures can both cross the
       // threshold, and the second must not overwrite the reason and the timestamp the
       // operator is about to read.
@@ -380,7 +388,7 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    if (user.lockedAt === null) {
+    if (!user.lockedAt) {
       // Also idempotent. An unlock link can be clicked twice by an anxious user,
       // and a second write that bumped the sessions version again would sign the
       // person out of the session they had just recovered.
@@ -406,6 +414,80 @@ export class UsersService {
   }
 
   /**
+   * The right to erasure: soft delete, with the reason, and stop authenticating.
+   *
+   * **Soft, not hard.** The row stays for the retention window — thirty days by
+   * default — so a deletion made in anger, or by somebody who got an account
+   * closed on them, can be reversed by an operator. Erasing immediately would make
+   * the feature irreversible, which is the wrong property for an endpoint anybody
+   * can call.
+   *
+   * The reason goes through the entity's own `requestDeletion`, so `deletedAt` and
+   * `deletionReason` are set together and nothing else can set one without the
+   * other. The timestamp is what the retention job measures the thirty days from.
+   *
+   * `runThenInvalidateAuthCache`, not a bare `softDelete`, for the same reason the
+   * lock uses it: a soft delete leaves `isActive` alone, so nothing downstream would
+   * notice an erased account until its cached claims expired.
+   */
+  async requestDeletion(
+    id: string,
+    reason: string,
+    actor: string,
+  ): Promise<User> {
+    const user = await this.findById(id);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Truthy rather than `!== null`. Both are falsy for an un-erased account, but
+    // `undefined` is neither `null` nor a Date, and a row that has never been
+    // mapped — a partial select, an entity built by hand — would otherwise read as
+    // already deleted and the request would silently do nothing.
+    if (user.deletedAt) {
+      // Idempotent, and deliberately silent. An erasure request that is retried —
+      // by a client that lost the response, or by a person clicking twice — must
+      // not restart the thirty-day clock, or a user could hold their account in a
+      // half-erased state indefinitely by requesting once a day.
+      return user;
+    }
+
+    user.requestDeletion(reason);
+
+    const erased = await this.runThenInvalidateAuthCache(id, () =>
+      this.usersRepository.save(user),
+    );
+
+    // Notification preferences go now rather than with the retention job, so the
+    // erasure is complete on the day it is asked for while the user row is still
+    // recoverable for thirty days. A channel choice is not part of the person, and
+    // restoring an account should not restore "email me about this" for an address
+    // that was just erased.
+    try {
+      await this.preferences.forget(id);
+    } catch (error) {
+      // Logged rather than thrown: the account is already marked, so failing here
+      // would leave a caller believing the erasure did not happen, and retrying it
+      // would not un-mark the row. These rows are configuration with no security
+      // value; the audit trail and the notification are the parts that matter.
+      this.logger.error(
+        `Could not remove notification preferences for the erased account ${id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    await this.notifications.notify(
+      'user.deleted',
+      { email: erased.email, actor },
+      { userId: id },
+    );
+
+    return erased;
+  }
+
+  /**
    * Soft deletes a user and tells the operators.
    *
    * **After the delete, not before**, for the same reason as the cache invalidation
@@ -419,23 +501,13 @@ export class UsersService {
    * did it — an id resolves to a name in the audit log that Phase 19 adds.
    */
   async softDelete(id: string, actor = 'unknown'): Promise<void> {
-    const user = await this.findById(id);
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    await this.usersRepository.softDelete(id);
-
-    // A soft-deleted account must stop authenticating now, not when its cached
-    // claims expire. `JwtStrategy` reads `isActive`, which a soft delete does not
-    // touch, so nothing downstream would otherwise notice.
-    await this.invalidateAuthCache(id);
-
-    await this.notifications.notify(
-      'user.deleted',
-      { email: user.email, actor },
-      { userId: id },
-    );
+    // No lookup here. `requestDeletion` does its own — the id, not the row — and a
+    // second one would consume a second row from a repository that pages, which in
+    // a real database costs a query and in a test harness reads as a user that does
+    // not exist.
+    //
+    // The reason defaults to something that says who did it, because this is the
+    // administrative path and the row has to explain itself after the hard delete.
+    await this.requestDeletion(id, 'deleted by an administrator', actor);
   }
 }

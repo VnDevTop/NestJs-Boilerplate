@@ -47,6 +47,7 @@ POST   /auth/2fa/setup
 POST   /auth/2fa/verify
 POST   /auth/account/unlock
 POST   /auth/account/unlock/:token
+POST   /auth/account/erasure
 GET    /health/live
 GET    /health/ready
 ```

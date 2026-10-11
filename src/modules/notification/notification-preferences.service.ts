@@ -162,6 +162,25 @@ export class NotificationPreferencesService {
    * `Map` answers it without allocating a key string per check. Only explicit
    * `false` is recorded in the map, so absence and "on" are the same answer.
    */
+  /**
+   * Deletes every preference for a user whose account is being erased.
+   *
+   * **These are removed at request time, not by the retention job**, and that is a
+   * deliberate asymmetry with the user row itself. The row is kept for thirty days
+   * so an erasure made in anger can be undone; a channel choice is not part of the
+   * person, and restoring an account should not restore a preference that said
+   * "email me about this", because the address that preference referred to is
+   * exactly what was erased.
+   *
+   * The alternative was a foreign key, and there is deliberately not one: a cascade
+   * would erase a preference silently when the retention job hard-deleted the user,
+   * which is the moment an operator might be about to restore. Erasing on request
+   * makes the removal visible and attributable instead.
+   */
+  async forget(userId: string): Promise<void> {
+    await this.preferences.delete({ userId });
+  }
+
   private async entriesFor(userId: string): Promise<Map<string, boolean>> {
     const rows = await this.read(userId);
 

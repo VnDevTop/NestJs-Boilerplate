@@ -140,6 +140,44 @@ export class User {
   @VersionColumn({ type: 'integer', default: 1 })
   version!: number;
 
+  /**
+   * Why this account was erased, in the words the request was made with.
+   *
+   * Stored rather than derived, because the answer to "why is this row gone" after
+   * it is gone is the only thing left. The alternative is inferring it from
+   * `deletedAt` and the actor on an audit entry, which is a join across a table
+   * that intentionally outlives this one and a guess on top of that.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  deletionReason!: string | null;
+
   @DeleteDateColumn({ type: 'timestamptz', nullable: true })
   deletedAt!: Date | null;
+
+  /**
+   * Marks the account as erased, starting the clock on the hard delete.
+   *
+   * **The rule lives on the row, not in a service.** "An erasure request soft
+   * deletes and records why" is a statement about what an erasure *is* — it is what
+   * makes `deletedAt` mean "somebody asked for this" rather than "an operator
+   * archived it", and that distinction is what Phase 16's retention job acts on
+   * thirty days later. A service method that did the same three writes would let
+   * somebody soft-delete with `repository.softDelete()` and get a row the
+   * retention job treats identically but nobody can explain.
+   *
+   * Sets `deletedAt` itself rather than taking it, so the timestamp is the moment
+   * the request was made and not a value a caller can pass. That timestamp is what
+   * the thirty-day clock is measured from, and a caller who could set it could ask
+   * for deletion and skip the grace period by backdating it.
+   */
+  requestDeletion(reason: string): void {
+    this.deletedAt = new Date();
+
+    // Trimmed because the reason goes in an email to whoever asks about it later,
+    // and a leading space from a form field is not part of what they said. The
+    // fallback is spelled out rather than left blank for the same reason.
+    const trimmed = reason.trim();
+
+    this.deletionReason = trimmed === '' ? 'no reason given' : trimmed;
+  }
 }

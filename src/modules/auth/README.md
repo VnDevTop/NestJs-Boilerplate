@@ -179,9 +179,10 @@ is the window an attacker who already holds a token is using.
 ### The unlock routes
 
 ```text
-POST /auth/account/unlock        public, throttled — emails the link
-POST /auth/account/unlock/:token public — spends the token, clears the lock
-PATCH /auth/account/:id/unlock   UserWrite — the operator route
+POST   /auth/account/unlock         public, throttled — emails the link
+POST   /auth/account/unlock/:token  public — spends the token, clears the lock
+POST   /auth/account/erasure        authenticated, confirmed address — soft delete
+PATCH  /auth/account/:id/unlock     UserWrite — the operator route
 ```
 
 The admin route lives in `auth` rather than in `users` for one concrete reason:
@@ -292,3 +293,31 @@ leaves a chain of revoked rows behind exactly one live row per chain.
 - Revoking is scoped to the caller, and an id that is not theirs answers exactly
   as one that does not exist. Answering "not yours" would confirm the id is real,
   which is the only thing somebody guessing ids wants to learn.
+
+## Erasure
+
+`POST /auth/account/erasure` marks the account deleted and starts the thirty-day
+clock that `RETENTION_SOFT_DELETED_USERS_DAYS` measures.
+
+**It requires a confirmed address, and that is the whole security of the route.**
+An erasure is not reversible by the person who asked for it once the grace period
+ends, so a request from an unverified account is a request from somebody who cannot
+prove the inbox is theirs — which is exactly the shape of an attack: sign somebody
+up with their address, then erase the account they cannot get into.
+
+**It is a `POST`, not a `DELETE`,** because it starts a process rather than
+performing an act.
+
+`user.requestDeletion()` is a method **on the entity**, not a service method. It
+stamps `deletedAt` itself rather than taking it — the timestamp is what the clock is
+measured from, and a caller who could set it could skip the grace period by
+backdating it — and it writes `deletionReason` at the same time, so the two cannot
+be set apart by somebody reaching past it with a repository call.
+
+**A second request does not restart the clock.** Otherwise a user could hold their
+account in a half-erased state indefinitely by asking once a day.
+
+**Notification preferences go immediately, the row does not.** That asymmetry is
+deliberate: a channel choice is not part of the person, and restoring an account
+should not restore "email me about this" for an address that was just erased. The
+user row is kept so an erasure made in anger can be reversed.

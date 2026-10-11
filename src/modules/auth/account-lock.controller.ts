@@ -19,10 +19,12 @@ import {
 } from '@nestjs/swagger';
 
 import {
+  Audited,
   CurrentUser,
   Permissions,
   Public,
   RateLimit,
+  RequireVerifiedEmail,
   Roles,
 } from '../../common/decorators/index.js';
 import type { RequestUser } from '../../common/interfaces/index.js';
@@ -30,6 +32,8 @@ import { Permission, Role } from '../../common/enums/index.js';
 import { mailThrottleOptions } from '../../common/constants/index.js';
 import { ThrottleByEmailGuard } from '../../common/guards/index.js';
 import { GenericMessageDto } from './dto/generic-message.dto.js';
+import { RequestErasureDto } from './dto/request-erasure.dto.js';
+import { UsersService } from '../users/users.service.js';
 import { RequestUnlockDto } from './dto/request-unlock.dto.js';
 import { AccountLockService } from './account-lock.service.js';
 
@@ -49,7 +53,10 @@ import { AccountLockService } from './account-lock.service.js';
 @ApiTags('Auth')
 @Controller('auth/account')
 export class AccountLockController {
-  constructor(private readonly accountLock: AccountLockService) {}
+  constructor(
+    private readonly accountLock: AccountLockService,
+    private readonly usersService: UsersService,
+  ) {}
 
   /**
    * Asks for the link that clears a lock.
@@ -117,6 +124,55 @@ export class AccountLockController {
 
     const generic = new GenericMessageDto();
     generic.message = 'Your account is unlocked. You can sign in again.';
+
+    return generic;
+  }
+
+  /**
+   * Asks for this account to be erased.
+   *
+   * **Confirmed address required**, and that is the whole security of the route.
+   * An erasure is not reversible by the person who asked for it once the grace
+   * period ends, so a request from an account whose address was never verified is
+   * a request from somebody who cannot prove the inbox is theirs — and that is
+   * exactly the shape of an attack: sign somebody up with their address, erase the
+   * account they cannot get into.
+   *
+   * Soft, not immediate. The row stays for `RETENTION_SOFT_DELETED_USERS_DAYS` so
+   * an operator can reverse a deletion made in anger. That is why this is a
+   * `POST` and not a `DELETE`: it starts a process rather than performing an act.
+   */
+  @RequireVerifiedEmail()
+  @Audited({
+    action: 'users.erasure.requested',
+    targetType: 'user',
+    targetIdFrom: ['user'],
+    diffResponse: false,
+  })
+  @Post('erasure')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Ask for this account to be erased',
+    description:
+      'Soft deletes the account now and hard deletes it at the end of the ' +
+      'retention window. Notification preferences are removed immediately.',
+  })
+  @ApiOkResponse({ type: GenericMessageDto })
+  async requestErasure(
+    @CurrentUser() currentUser: RequestUser,
+    @Body() body: RequestErasureDto,
+  ): Promise<GenericMessageDto> {
+    await this.usersService.requestDeletion(
+      currentUser.id,
+      body.reason ?? 'requested by the account owner',
+      'the account owner',
+    );
+
+    const generic = new GenericMessageDto();
+    generic.message =
+      'Your account has been marked for deletion. You can restore it by ' +
+      'contacting support before the retention window closes.';
 
     return generic;
   }

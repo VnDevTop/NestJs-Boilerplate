@@ -480,6 +480,27 @@ an unbounded value into a keyspace shared with the queue.
 Two windows: **60 seconds** to catch a duplicate arriving while the first is still
 running, and **24 hours** to serve a retry from a client that was offline.
 
+## Erasure
+
+`POST /api/v1/auth/account/erasure` soft-deletes the caller's account and starts
+the `RETENTION_SOFT_DELETED_USERS_DAYS` clock (30 by default).
+
+**A confirmed address is required.** An erasure is not reversible by the person who
+asked for it once the grace period ends, so a request from an unverified account is
+a request from somebody who cannot prove the inbox is theirs.
+
+**A second request does not restart the clock**, so an account cannot be held in a
+half-erased state by asking daily.
+
+**Notification preferences are removed immediately; the user row is not.** A
+channel choice is not part of the person, and restoring an account should not
+restore "email me about this" for an address that was just erased. There is
+deliberately no foreign key from `notification_preferences` to `users` — a cascade
+would erase a preference at the moment an operator might be about to restore.
+
+The address in `mail_logs.recipient` is removed by that table's own 30-day window,
+not by this flow.
+
 ## Health checks
 
 ```text

@@ -297,7 +297,7 @@ export class AccountLockService {
   async requestUnlock(email: string): Promise<void> {
     const user = await this.usersService.findByEmail(email);
 
-    if (!user || user.lockedAt === null || !user.isEmailVerified) {
+    if (!user || !user.lockedAt || !user.isEmailVerified) {
       // The same statement the qualifying branch runs, against an id with no rows.
       // Without it the miss is measurably cheaper and response time alone answers
       // the question — the reason `forgot-password` pays for the same thing.
