@@ -412,6 +412,39 @@ attacker's chosen string into the `ipAddress` of every row they created.
 See [src/modules/audit/README.md](../src/modules/audit/README.md) for the
 indexes and the reasoning.
 
+## Optimistic locking
+
+`users` and `notification_preferences` carry a `@VersionColumn()`.
+
+```text
+Two administrators open the same profile.
+Admin A saves a role change.       -> version 3 -> 4
+Admin B saves a name change.       -> 409, reload
+```
+
+**Without it, Admin B's save silently writes the stale role back and both requests
+return 200.** That is the failure this prevents, and the reason it matters is that
+it is invisible: nobody sees an error, the audit log says the role changed twice,
+and the demotion is gone.
+
+`UsersService.update` catches `OptimisticLockVersionMismatchError` and answers
+**409**, not 500 — it is a conflict between two requests, not a fault, and a client
+that reads 500 retries the save.
+
+**Only those two entities.** Every other table here is written with `insert`,
+`delete` or a whole-set replace inside a transaction, so nothing loads a row to edit
+it field by field and there is no window for a version to close. A counter on those
+would be bumped on writes that never race, and would give a false impression that
+the entity is protected.
+
+**Optimistic, not pessimistic.** No row lock is taken; the conflict is detected at
+the write. The read-modify-write window here is a person filling in a form, and
+holding a lock across that would serialise every editor of every row behind whoever
+opened theirs first.
+
+Note that query-builder writes (`repository.update`, `.increment`) bypass the
+version check — which is why `lockAccount` uses `save`.
+
 ## Idempotency
 
 Mutating routes marked `@Idempotent()` require an `Idempotency-Key` header and

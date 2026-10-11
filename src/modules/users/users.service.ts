@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { OptimisticLockVersionMismatchError, Repository } from 'typeorm';
 
 import {
   authDeviceSessionsKey,
@@ -255,6 +255,19 @@ export class UsersService {
     return UserResponseDto.fromEntity(user);
   }
 
+  /**
+   * Edits a user, refusing if somebody else got there first.
+   *
+   * The 409 is the whole feature. Without it the second save would simply overwrite
+   * the first, and both callers would see a 200 — which is a lost update that looks
+   * like success to everybody involved. `version` on the entity makes TypeORM's
+   * `save` match on the version it read, so a row changed underneath affects zero
+   * rows and raises `OptimisticLockVersionMismatchError` here.
+   *
+   * Caught rather than allowed out as a 500: it is a conflict between two requests,
+   * not a fault, and a caller that reads 409 knows to reload rather than to page
+   * somebody.
+   */
   async update(
     id: string,
     updateUserDto: UpdateUserDto,
@@ -274,7 +287,21 @@ export class UsersService {
     }
 
     const updatedUser = this.usersRepository.merge(user, updateUserDto);
-    const savedUser = await this.usersRepository.save(updatedUser);
+
+    let savedUser: User;
+
+    try {
+      savedUser = await this.usersRepository.save(updatedUser);
+    } catch (error) {
+      if (error instanceof OptimisticLockVersionMismatchError) {
+        throw new ConflictException(
+          'This user was changed by somebody else while you were editing. ' +
+            'Reload and try again.',
+        );
+      }
+
+      throw error;
+    }
 
     // Unconditional rather than only when a claim field moved. The cached entry
     // holds none of the fields this endpoint actually edits, so the common case

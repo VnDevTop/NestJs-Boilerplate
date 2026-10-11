@@ -6,6 +6,7 @@ import {
   Index,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
+  VersionColumn,
 } from 'typeorm';
 
 import { Role } from '../../../common/enums/index.js';
@@ -110,6 +111,34 @@ export class User {
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt!: Date;
+
+  /**
+   * The optimistic lock counter.
+   *
+   * `sessionsVersion` answers "are my sessions still alive"; this answers "is the
+   * row I read still the row I am writing to". They are unrelated and both are
+   * counters, which is exactly why the distinction is worth stating.
+   *
+   * **The failure it prevents is a lost update.** Two administrators open the same
+   * profile. The first saves a role change; the second saves a name change from a
+   * form it loaded before that, and — with no version — overwrites the role back.
+   * Neither sees anything wrong: both get a 200, and the last write wins silently.
+   * With it, the second save affects zero rows and TypeORM raises
+   * `OptimisticLockVersionMismatchError`, which `UsersService` turns into a 409.
+   *
+   * **Optimistic, not pessimistic.** No row lock is taken, so two readers never
+   * block each other; the conflict is detected at the write. That is the right shape
+   * for a profile edit — the window between read and write is a person's form being
+   * filled in, which is seconds, and holding a lock across it would serialise every
+   * editor of every row behind whoever opened theirs first.
+   *
+   * Picked up automatically by `repository.save()`, so the places that already save
+   * a `User` are covered without being changed. Query-builder writes
+   * (`repository.update`, `.increment`) bypass it, which is why `lockAccount` uses
+   * `save` and not `increment`.
+   */
+  @VersionColumn({ type: 'integer', default: 1 })
+  version!: number;
 
   @DeleteDateColumn({ type: 'timestamptz', nullable: true })
   deletedAt!: Date | null;

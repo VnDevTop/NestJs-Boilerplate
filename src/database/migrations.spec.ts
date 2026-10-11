@@ -35,6 +35,20 @@ const MIGRATIONS: { file: string; tables: string[] }[] = [
   { file: '1791800000000-AddAuditLogs.ts', tables: ['audit_logs'] },
 ];
 
+/**
+ * Migrations that add a column to an existing table rather than creating one.
+ *
+ * Checked separately because `columnsOf` reads a `CREATE TABLE` statement and these
+ * write `ALTER TABLE … ADD`. The check that matters here is the reverse one: an
+ * entity column with no migration is the failure this whole file is for, and for an
+ * `ALTER` migration that means every column the migration adds must be one an
+ * entity declares — the entity is the larger set, and the extra columns here are the
+ * ones that migration brought in.
+ */
+const ALTER_MIGRATIONS: { file: string; adds: string[] }[] = [
+  { file: '1791900000000-AddVersionColumns.ts', adds: ['version'] },
+];
+
 function read(file: string): { up: string; down: string } {
   const text = readFileSync(
     join(new URL('.', import.meta.url).pathname, 'migrations', file),
@@ -65,6 +79,24 @@ function tablesMentioned(sql: string): string[] {
  * name: a statement also quotes constraint names and repeats the columns in the
  * primary key clause, and a looser pattern counts those as columns.
  */
+/**
+ * Columns an `ALTER TABLE … ADD` migration brought in after the table was created.
+ *
+ * The per-migration check compares a `CREATE TABLE` statement against an entity, so
+ * a table that gained a column later would look like the migration and the entity
+ * had drifted. Folding the later additions back in is what keeps the comparison
+ * honest rather than merely strict.
+ */
+function laterAdditions(table: string): string[] {
+  return ALTER_MIGRATIONS.filter((migration) =>
+    migration.adds.some((column) =>
+      new RegExp(`ALTER TABLE "${table}" ADD "${column}"`).test(
+        read(migration.file).up,
+      ),
+    ),
+  ).flatMap((migration) => migration.adds);
+}
+
 function columnsOf(table: string, up: string): string[] {
   const statement = up.split(`CREATE TABLE "${table}" (`)[1] ?? '';
 
@@ -138,7 +170,12 @@ describe.each(MIGRATIONS)('the $file migration', ({ file, tables: TABLES }) => {
     // A missing column is the failure this exists for: `synchronize` is off, so it
     // surfaces as a runtime error on the first insert rather than at the migration.
     for (const table of TABLES) {
-      expect(columnsOf(table, up).sort(), table).toEqual(entityColumns(table));
+      const created = columnsOf(table, up);
+      const added = laterAdditions(table);
+
+      expect([...created, ...added].sort(), table).toEqual(
+        entityColumns(table),
+      );
     }
   });
 
@@ -202,6 +239,49 @@ describe.each(MIGRATIONS)('the $file migration', ({ file, tables: TABLES }) => {
     // A down leaving a table behind means re-running up fails on a name that is
     // already taken, which is the failure a rollback is supposed to prevent.
     expect(down).not.toContain('CREATE TABLE');
+  });
+});
+
+describe.each(ALTER_MIGRATIONS)('the $file migration', ({ file, adds }) => {
+  const { up } = read(file);
+
+  it('adds every column it claims to', () => {
+    // Grepped out of the source rather than compared against the entity: this one
+    // adds a subset, and the subset is the point.
+    for (const column of adds) {
+      expect(up, column).toContain(`ADD "${column}"`);
+    }
+  });
+
+  it('gives the column a NOT NULL default, so no existing row is left unusable', () => {
+    // A nullable version would need a null case in every comparison, and the one
+    // place that would compare it is exactly the place that must not have an
+    // exception.
+    for (const column of adds) {
+      expect(up, column).toMatch(
+        new RegExp(`ADD "${column}" \\w+ NOT NULL DEFAULT`),
+      );
+    }
+  });
+
+  it('is declared on an entity, so `save()` actually uses it', () => {
+    // The migration alone changes nothing: `@VersionColumn()` is what makes
+    // TypeORM put the version in the WHERE clause.
+    const declared = ENTITIES.filter((entity) =>
+      getMetadataArgsStorage()
+        .columns.filter((column) => column.target === entity)
+        .some((column) => column.options?.type === 'integer'),
+    );
+
+    expect(declared.length).toBeGreaterThan(0);
+  });
+
+  it('can be rolled back without leaving the entities expecting a column that is gone', () => {
+    const { down } = read(file);
+
+    for (const column of adds) {
+      expect(down, column).toContain(`DROP COLUMN "${column}"`);
+    }
   });
 });
 
