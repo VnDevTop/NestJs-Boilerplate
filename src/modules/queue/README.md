@@ -97,3 +97,53 @@ Postgres table would mean something Phase 16 has to remember to purge. In redis 
 TTL does the cleanup. Trimmed to 500 entries, and every write is best effort: when
 redis is why the job failed, the log line is the only record, and that is
 deliberate.
+
+## Idempotency
+
+`IdempotencyService` is here rather than in `core/cache` because it is **not** a
+cache, and reusing the cache would have inverted its failure mode.
+
+`CacheService` fails open by design: an unreachable store is reported as a miss, so
+a redis outage costs a round trip rather than returning 500s. That is right for a
+cache. Here it is catastrophically wrong — **a miss on an idempotency check means
+the request is treated as new**, which is precisely the duplicate the feature exists
+to prevent. So the store is redis directly, and the outage is handled explicitly.
+
+It still fails open, deliberately: an outage means every mutating request is
+processed without the protection — degraded, not broken. Failing closed would turn a
+redis outage into an application that cannot write anything.
+
+### The two windows
+
+| Entry                | Default | Job                                                 |
+| -------------------- | ------- | --------------------------------------------------- |
+| in flight (`SET NX`) | 60s     | catch the second copy arriving while the first runs |
+| completed answer     | 24h     | serve a retry from a client that was offline        |
+
+They are deliberately very different. The in-flight window has to be long enough to
+catch a genuine duplicate and short enough that a request wedged for minutes does
+not answer 409 to everyone for the rest of its natural life. The completed window
+has to outlive a client's downtime, not just its timeout — the same 24 hours as the
+emailed links, for the same reason.
+
+`complete` **extends** the ttl rather than setting a second key. Without that, every
+retry more than a minute after the first would run the work again — the exact
+failure this feature prevents, appearing only in production.
+
+### Keys
+
+`idem:<scope>:<sha256(method:path:clientKey)>`, scoped by the caller's user id.
+
+The digest is fixed width because the client's key is attacker-controlled and
+unbounded: a 64KB redis key written by a caller is a denial of service against an
+instance shared with the queue. The path is the matched route plus its sorted
+params — **not `originalUrl`**, whose query string would make `?page=2` and `?page=3`
+two different keys for one action.
+
+### It goes through `RedisClientService`
+
+`setIfAbsent` applies the configured key prefix; a raw `getClient().set()` does not.
+A store that writes through one primitive and reads through the other writes under
+one key and looks under another — and looks like a key that was never claimed, on
+every request, forever. `get`, `set` and `delete` were added to that class for
+exactly this reason.

@@ -1,3 +1,6 @@
+export * from './idempotency-policy.interface.js';
+export * from './idempotency.decorator.js';
+export * from './idempotency.guard.js';
 export * from './jwt-auth.guard.js';
 export * from './manager.guard.js';
 export * from './permissions.guard.js';

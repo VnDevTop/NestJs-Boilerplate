@@ -31,6 +31,7 @@ import {
   UsersModule,
 } from './modules/index.js';
 import {
+  IdempotencyGuard,
   JwtAuthGuard,
   ManagerGuard,
   PermissionsGuard,
@@ -158,6 +159,15 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       // is advice that does not help.
       provide: APP_GUARD,
       useClass: RequireVerifiedEmailGuard,
+    },
+    {
+      // Last in the chain. A duplicate key is only meaningful once the caller is
+      // known and allowed: claiming a key for a request that was going to be
+      // refused would leave a key in redis that the real caller then collides with,
+      // and answering 409 to an unauthenticated request would leak that the key is
+      // in use.
+      provide: APP_GUARD,
+      useClass: IdempotencyGuard,
     },
     {
       // Registered last so a blocked request is counted before anything else

@@ -24,6 +24,7 @@ import {
   Permissions,
   Roles,
 } from '../../common/decorators/index.js';
+import { Idempotent } from '../../common/guards/index.js';
 import { AuditInterceptor } from '../audit/audit.interceptor.js';
 import type { RequestUser } from '../../common/interfaces/index.js';
 import { Permission, Role } from '../../common/enums/index.js';
@@ -41,6 +42,10 @@ import { UsersService } from './users.service.js';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  // Idempotent because a retry here creates a second person. The client's retry is
+  // the honest reason: it timed out, it does not know whether the first one landed,
+  // and without this it has no way to find out without issuing a second POST.
+  @Idempotent()
   @Audited({
     action: 'users.create',
     targetType: 'user',
@@ -88,6 +93,10 @@ export class UsersController {
     return this.usersService.update(id, updateUserDto);
   }
 
+  // A retry after a lost 204 answers 404, which a client reads as "the delete
+  // failed" when in fact it is the second delete. This is the exact confusion the
+  // header exists to remove.
+  @Idempotent()
   @Audited({
     action: 'users.delete',
     targetType: 'user',

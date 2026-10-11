@@ -29,6 +29,7 @@ import {
 } from '@nestjs/swagger';
 
 import { ThrottleByEmailGuard } from '../../common/guards/index.js';
+import { Idempotent } from '../../common/guards/idempotency.decorator.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
 import {
   DEVICE_NAME_HEADER,
@@ -82,6 +83,11 @@ export class AuthController {
   // Registration is cheap to call and creates rows, so it gets its own
   // tighter budget than the global one.
   @Throttle({ default: { limit: 10, ttl: 300000 } })
+  // Registration is the clearest case in the application. A client that loses the
+  // response to a register has a token it never saw and an account it cannot sign
+  // into; retrying gets it a conflict, because the address now exists. The replayed
+  // answer hands back the same tokens instead.
+  @Idempotent()
   @Public()
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })

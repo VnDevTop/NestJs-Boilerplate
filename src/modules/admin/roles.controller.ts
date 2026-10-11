@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 
 import { Audited, Permissions } from '../../common/decorators/index.js';
+import { Idempotent } from '../../common/guards/index.js';
 import { Permission, Role } from '../../common/enums/index.js';
 import { AuditInterceptor } from '../audit/audit.interceptor.js';
 import { PermissionsService } from '../users/permissions.service.js';
@@ -74,6 +75,9 @@ export class AdminRolesController {
   // it is how somebody reaches a route they could not otherwise reach. A row that
   // says who widened what, and what it went from, is the difference between an
   // incident and a mystery.
+  // Replayable, because a replace is a full-set write and a client that loses the
+  // response has no way to confirm what it granted without sending it all again.
+  @Idempotent()
   @Audited({
     action: 'roles.permissions.replace',
     targetType: 'role',

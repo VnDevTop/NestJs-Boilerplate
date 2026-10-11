@@ -19,6 +19,7 @@ import {
 import { MailProcessor } from './processors/mail.processor.js';
 import { ProcessorRouter } from './processor-router.service.js';
 import type { JobQueue } from './queue.interface.js';
+import { IdempotencyService } from './idempotency.service.js';
 import { RedisClientService } from './redis-client.service.js';
 
 /** The token both drivers are provided under, so a consumer never branches. */
@@ -76,6 +77,11 @@ const configOf = (configService: ConfigService): QueueConfig =>
         new RedisThrottlerStorage(redis),
     },
     RedisClientService,
+    // For `IdempotencyGuard`, which the application registers globally. It lives
+    // here rather than in the common guards because that is where
+    // `RedisClientService` is provided; the guard itself imports nothing from the
+    // queue beyond this one class.
+    IdempotencyService,
 
     /**
      * The registry every dispatcher calls, wrapped in the deduplication guard.
@@ -151,6 +157,7 @@ const configOf = (configService: ConfigService): QueueConfig =>
   ],
   exports: [
     JOB_QUEUE,
+    IdempotencyService,
     PROCESSOR_REGISTRY,
     RedisClientService,
     DeadLetterService,

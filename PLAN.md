@@ -879,7 +879,7 @@ Tasks:
       agent, request id, append-only
 - [x] Record an audit entry on every privileged action, through an interceptor
       plus a TypeORM subscriber for writes that bypass a controller
-- [ ] Add an `Idempotency-Key` header guard on mutating endpoints, so a client
+- [x] Add an `Idempotency-Key` header guard on mutating endpoints, so a client
       retry after a timeout cannot create a duplicate
 - [ ] Add `@VersionColumn()` to the mutable entities for optimistic concurrency
 - [ ] Add `user.requestDeletion()`: soft delete, queue a data export, hard

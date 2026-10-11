@@ -412,6 +412,41 @@ attacker's chosen string into the `ipAddress` of every row they created.
 See [src/modules/audit/README.md](../src/modules/audit/README.md) for the
 indexes and the reasoning.
 
+## Idempotency
+
+Mutating routes marked `@Idempotent()` require an `Idempotency-Key` header and
+replay the original answer to a retry that reuses it.
+
+```http
+POST /api/v1/auth/register
+Idempotency-Key: 9f1c2b8e-…
+```
+
+**The header is required, not optional.** A route marked with this and called
+without it is a 400. Generating a key on the client's behalf would silently promise
+a guarantee the caller is not making — the guarantee only works if the _same_ key
+comes back on the retry.
+
+**A key already in flight is a 409, not a wait.** Holding a connection open for work
+the client cannot cancel means it times out and retries anyway, which is the
+situation this exists to survive. The retry is safe: same key, so it gets the
+recorded answer.
+
+**A non-2xx answer releases the key rather than recording it.** A 400 for a
+validation failure is worth retrying once the client fixes the body; recording it
+would replay the rejection for 24 hours to a client that had already corrected what
+was wrong.
+
+**Redis down means the request proceeds.** Every mutating request is processed
+without the protection — degraded, not broken. Failing closed would trade a partial
+loss of a convenience guarantee for a total loss of the product.
+
+Responses over 64 KB are replayed as a status with no body, so a client cannot put
+an unbounded value into a keyspace shared with the queue.
+
+Two windows: **60 seconds** to catch a duplicate arriving while the first is still
+running, and **24 hours** to serve a retry from a client that was offline.
+
 ## Health checks
 
 ```text
