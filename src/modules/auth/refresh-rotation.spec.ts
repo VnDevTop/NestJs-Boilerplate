@@ -30,6 +30,10 @@ const USER = {
   isEmailVerified: true,
   emailVerifiedAt: null,
   lastLoginAt: null,
+  // Null rather than absent: the refresh path reads it, and a fixture that left it
+  // out would make `user.lockedAt !== null` true on `undefined` and refuse every
+  // refresh in the suite for a reason nobody could see.
+  lockedAt: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   deletedAt: null,
@@ -153,6 +157,12 @@ function harness(
     {
       record: vi.fn(async () => undefined),
       wasUsedBefore: vi.fn(async () => false),
+    } as never,
+    // The permanent lockout. These tests are about what happens around sign-in,
+    // not about the second lockout, so the fake records the call and does nothing.
+    // `lockOnRepeatedFailures` is exercised on its own in account-lock.service.spec.
+    {
+      lockOnRepeatedFailures: vi.fn(async () => undefined),
     } as never,
   );
 

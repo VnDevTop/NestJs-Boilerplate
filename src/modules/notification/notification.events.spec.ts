@@ -30,6 +30,8 @@ describe('the event registry', () => {
     expect([...NOTIFICATION_EVENT_KEYS].sort()).toEqual([
       'auth.2fa.disabled',
       'auth.2fa.enabled',
+      'auth.account.locked',
+      'auth.account.unlocked',
       'auth.device.login',
       'auth.login.failed',
       'maintenance.retention.anomaly',
@@ -315,6 +317,11 @@ describe('every event', () => {
       },
       'auth.2fa.enabled': { email: 'a@x.com' },
       'auth.2fa.disabled': { email: 'a@x.com' },
+      'auth.account.locked': {
+        email: 'a@x.com',
+        reason: '20 failed sign-in attempts',
+      },
+      'auth.account.unlocked': { email: 'a@x.com', actor: 'admin@x.com' },
       'maintenance.retention.anomaly': {
         reason: 'x',
         pending: [],

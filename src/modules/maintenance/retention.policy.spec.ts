@@ -28,6 +28,7 @@ describe('retention policy contents', () => {
     // table yet. If one were added here, every run would error at 3am on a table
     // that was never created.
     expect(RETENTION_TARGETS.map((t) => t.table).sort()).toEqual([
+      'account_unlock_tokens',
       'email_verification_tokens',
       'notification_logs',
       'password_reset_tokens',

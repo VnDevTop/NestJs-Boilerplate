@@ -858,7 +858,7 @@ Expected outcome:
 
 ## Phase 19: Account Security Features
 
-Status: Pending
+Status: In progress
 
 Goal:
 
@@ -866,13 +866,13 @@ Close the account-lifecycle gaps that real deployments get asked about.
 
 Tasks:
 
-- [ ] Add an email verification gate, blocking sensitive actions until the
+- [x] Add an email verification gate, blocking sensitive actions until the
       address is verified
-- [ ] Add a password policy in zod, with an optional `zxcvbn` strength score
-- [ ] Check new passwords against a breach list using the k-anonymity API, or
+- [x] Add a password policy in zod, with an optional `zxcvbn` strength score
+- [x] Check new passwords against a breach list using the k-anonymity API, or
       an offline list
-- [ ] Keep the last N password hashes and reject reuse
-- [ ] Add a permanent account lockout with an unlock flow and a notification.
+- [x] Keep the last N password hashes and reject reuse
+- [x] Add a permanent account lockout with an unlock flow and a notification.
       Phase 17a already blocks login temporarily; this is the version that needs
       an administrator or a verified email to clear
 - [ ] Add an audit log entity: actor, action, before/after diff, ip, user

@@ -114,6 +114,12 @@ function harness() {
       record: vi.fn(async () => undefined),
       wasUsedBefore: vi.fn(async () => false),
     } as never,
+    // The permanent lockout. These tests are about what happens around sign-in,
+    // not about the second lockout, so the fake records the call and does nothing.
+    // `lockOnRepeatedFailures` is exercised on its own in account-lock.service.spec.
+    {
+      lockOnRepeatedFailures: vi.fn(async () => undefined),
+    } as never,
   );
 
   return {

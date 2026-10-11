@@ -48,6 +48,20 @@ export interface AuthClaims {
    * cached projection, so it costs nothing extra.
    */
   isEmailVerified: boolean;
+  /**
+   * When the account was locked permanently, or null.
+   *
+   * A timestamp rather than a boolean, because the same reasons that put
+   * `isEmailVerified` here apply and one is stronger: a lock is a fact an
+   * operator needs to see the date of. A boolean would have to be paired with
+   * another column read from the row to be worth anything.
+   *
+   * The strategy refuses a locked account outright, which is the only thing that
+   * makes a permanent lock permanent. Without it, every session that existed
+   * before the lock would carry on working until its access token ran out, and
+   * the lockout would be an inconvenience rather than a lockout.
+   */
+  lockedAt: string | null;
 }
 
 /**
@@ -64,6 +78,7 @@ const AUTH_CLAIM_COLUMNS = {
   isActive: true,
   sessionsVersion: true,
   isEmailVerified: true,
+  lockedAt: true,
 } as const;
 
 @Injectable()
@@ -173,6 +188,10 @@ export class UsersService {
           // has not touched.
           sessionsVersion: user.sessionsVersion ?? 0,
           isEmailVerified: user.isEmailVerified,
+          // Serialised rather than kept as a `Date`, because the cached value is
+          // JSON and a `Date` becomes a string on the way in and a string on the
+          // way out. The strategy only tests it against null.
+          lockedAt: user.lockedAt ? user.lockedAt.toISOString() : null,
         };
       },
       { ttl: this.authTtl },
@@ -264,6 +283,99 @@ export class UsersService {
     await this.invalidateAuthCache(id);
 
     return UserResponseDto.fromEntity(savedUser);
+  }
+
+  /**
+   * Locks an account permanently and tells the operators.
+   *
+   * **The sessions version moves with it**, which is the part that makes this a
+   * lockout rather than a flag. Every access token already issued carries the
+   * version it was minted under, so a bump refuses all of them at once. Without
+   * it an account could stay usable for the life of its longest-lived refresh
+   * chain, which is the attack the lockout exists to stop.
+   *
+   * The bump goes through `runThenInvalidateAuthCache` rather than a bare save so
+   * the cache is dropped *after* the commit. The reverse order leaves a window in
+   * which a request reads the old version through a fresh cache entry and that
+   * entry then outlives the lock by a full TTL — a lockout with a fifteen minute
+   * hole in it, which is the sort of bug that reads as "the lock is flaky".
+   *
+   * Returns the user as it now stands, so a caller can render a notification from
+   * the same read that performed the change rather than from a second query that
+   * could disagree with it.
+   */
+  async lockAccount(id: string, reason: string): Promise<User> {
+    const user = await this.findById(id);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.lockedAt !== null) {
+      // Idempotent rather than an error: two concurrent failures can both cross the
+      // threshold, and the second must not overwrite the reason and the timestamp the
+      // operator is about to read.
+      return user;
+    }
+
+    const locked = await this.runThenInvalidateAuthCache(id, () =>
+      this.usersRepository.save(
+        this.usersRepository.merge(user, {
+          lockedAt: new Date(),
+          lockReason: reason,
+          sessionsVersion: user.sessionsVersion + 1,
+        }),
+      ),
+    );
+
+    await this.notifications.notify(
+      'auth.account.locked',
+      { email: locked.email, reason },
+      { userId: locked.id },
+    );
+
+    return locked;
+  }
+
+  /**
+   * Clears a permanent lock, whichever hand did the locking.
+   *
+   * `actor` is a free string rather than an id because the two callers are an
+   * administrator and the owner of the inbox, and the reader wants to know which
+   * of those two happened rather than to join against a table to find out. An
+   * audit entry for the administrative case is Phase 19's next task; this is the
+   * notification, which is what the person locked out reads.
+   */
+  async unlockAccount(id: string, actor: string): Promise<User> {
+    const user = await this.findById(id);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.lockedAt === null) {
+      // Also idempotent. An unlock link can be clicked twice by an anxious user,
+      // and a second write that bumped the sessions version again would sign the
+      // person out of the session they had just recovered.
+      return user;
+    }
+
+    const unlocked = await this.usersRepository.save(
+      this.usersRepository.merge(user, {
+        lockedAt: null,
+        lockReason: null,
+      }),
+    );
+
+    await this.invalidateAuthCache(id);
+
+    await this.notifications.notify(
+      'auth.account.unlocked',
+      { email: unlocked.email, actor },
+      { userId: unlocked.id },
+    );
+
+    return unlocked;
   }
 
   /**

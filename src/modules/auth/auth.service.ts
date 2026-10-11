@@ -46,6 +46,7 @@ import {
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { RefreshTokenService } from './refresh-token.service.js';
 import { DeviceService } from './device.service.js';
+import { AccountLockService } from './account-lock.service.js';
 import { LoginLockedException } from './exceptions/login-locked.exception.js';
 import { LoginLockoutService } from './login-lockout.service.js';
 import { PasswordPolicyService } from './password-policy.service.js';
@@ -103,6 +104,7 @@ export class AuthService {
     private readonly notifications: NotificationEventsService,
     private readonly passwordPolicy: PasswordPolicyService,
     private readonly passwordHistory: PasswordHistoryService,
+    private readonly accountLock: AccountLockService,
   ) {}
 
   private get appConfig(): AppConfig {
@@ -204,6 +206,12 @@ export class AuthService {
   private async recordLoginFailure(email: string): Promise<void> {
     const state = await this.loginLockout.recordFailure(email);
 
+    // Every failure, not only the one that starts a temporary block. The permanent
+    // lock counts the same failures and crosses at a much higher number, so a call
+    // made only on `firstBlock` would stop after the first five and the lock would
+    // never fire.
+    await this.accountLock.lockOnRepeatedFailures(email, state.failures);
+
     if (!state.firstBlock) {
       return;
     }
@@ -273,7 +281,15 @@ export class AuthService {
 
     const user = await this.usersService.findByEmail(loginDto.email);
 
-    if (!user || !user.isActive) {
+    // A locked account is in this branch rather than a check of its own, because
+    // the answer has to be the one an unregistered address gets. A separate 403
+    // would tell anybody burning twenty attempts which addresses exist, and the
+    // owner has the mail that explains it anyway.
+    if (!user || !user.isActive || user.lockedAt !== null) {
+      // Counted even for a locked account, and that is deliberate rather than an
+      // oversight: the temporary block still applies, and an attacker hammering a
+      // locked account should not find the temporary limits quietly switched off
+      // underneath them.
       await this.recordLoginFailure(loginDto.email);
 
       throw new UnauthorizedException('Invalid email or password');
@@ -611,7 +627,9 @@ export class AuthService {
     );
     const user = await this.usersService.findById(userId);
 
-    if (!user || !user.isActive) {
+    // Same reason as the password path: a lock is a lock, and finishing a
+    // two-factor sign-in is another way in.
+    if (!user || !user.isActive || user.lockedAt !== null) {
       throw new UnauthorizedException('Invalid two-factor challenge');
     }
 
@@ -688,7 +706,11 @@ export class AuthService {
     );
     const user = await this.usersService.findById(payload.sub);
 
-    if (!user || !user.isActive) {
+    // A locked account cannot mint new access tokens either. Without this the lock
+    // would be undone by a client holding a refresh token: every call here would
+    // be refused by the strategy, and a client that reacts by refreshing would be
+    // handed a fresh token and try again, forever.
+    if (!user || !user.isActive || user.lockedAt !== null) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 

@@ -73,6 +73,35 @@ export class User {
   @Column({ type: 'timestamptz', nullable: true })
   emailVerifiedAt!: Date | null;
 
+  /**
+   * When the account was locked permanently, or null while it is not.
+   *
+   * A separate pair of columns rather than a role on `isActive`, because the two
+   * mean different things and are cleared by different hands. `isActive` is an
+   * administrator's decision and nothing clears it but an administrator. This is
+   * set by the application after repeated failed sign-ins and cleared either by an
+   * administrator or by whoever controls the confirmed address. Overloading
+   * `isActive` would make "an attacker locked this person out" and "support
+   * disabled this account" indistinguishable in the audit trail, and would leave
+   * the victim no way back in without an operator.
+   *
+   * Indexed because the question an operator asks most often is "who is locked",
+   * and it is asked by filtering this column rather than by reading the table.
+   */
+  @Index()
+  @Column({ type: 'timestamptz', nullable: true })
+  lockedAt!: Date | null;
+
+  /**
+   * Why the account is locked, in words a person can read.
+   *
+   * Stored rather than rendered on demand because the reason is decided where the
+   * lock happens and the audience is both the operator and the owner, and a
+   * message rewritten by a deploy would make an old lock unreadable.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  lockReason!: string | null;
+
   @Column({ type: 'timestamptz', nullable: true })
   lastLoginAt!: Date | null;
 

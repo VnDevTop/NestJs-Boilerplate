@@ -45,6 +45,8 @@ POST   /auth/refresh-token
 POST   /auth/logout
 POST   /auth/2fa/setup
 POST   /auth/2fa/verify
+POST   /auth/account/unlock
+POST   /auth/account/unlock/:token
 GET    /health/live
 GET    /health/ready
 ```
@@ -75,6 +77,7 @@ POST   /users
 GET    /users
 PATCH  /users/:id
 DELETE /users/:id
+PATCH  /auth/account/:id/unlock
 ```
 
 ### Manager, via `@ManagerOnly()` on the controller

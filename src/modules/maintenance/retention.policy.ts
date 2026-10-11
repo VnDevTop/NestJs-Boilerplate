@@ -97,6 +97,9 @@ export const RETENTION_TARGETS: readonly RetentionTarget[] = [
       'refresh_tokens',
       'user_devices',
       'two_factor_secrets',
+      // An unlock token is a way into an account, so a restored account must not
+      // inherit the links that were mailed to whoever locked it.
+      'account_unlock_tokens',
     ],
   },
   {
@@ -145,6 +148,23 @@ export const RETENTION_TARGETS: readonly RetentionTarget[] = [
     // an operator wants, and a predicate on the event's own date would keep exactly
     // the wrong ones.
     buildPredicate: (cutoff) => `"createdAt" < '${cutoff.toISOString()}'`,
+    cascades: [],
+  },
+  {
+    // Phase 19. Same disjunction as the reset tokens above: a token is worthless
+    // once it is spent *or* once it is expired, and requiring both would leave an
+    // expired-but-unused unlock link in the table forever.
+    id: 'account-unlock-tokens',
+    table: 'account_unlock_tokens',
+    description: 'unlock tokens, once used or expired plus a grace period',
+    // The reset tokens' age, reused rather than given its own variable. An unlock
+    // link has exactly the same lifetime profile as a reset link — issued, expires,
+    // spent — so a second knob would be one more thing to set inconsistently with
+    // the first.
+    ageKey: 'passwordResetTokens',
+    ageDays: 0,
+    buildPredicate: (cutoff) =>
+      `("usedAt" IS NOT NULL AND "usedAt" < '${cutoff.toISOString()}') OR ("expiresAt" < '${cutoff.toISOString()}')`,
     cascades: [],
   },
   {

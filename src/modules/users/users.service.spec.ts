@@ -63,6 +63,7 @@ const ROW = {
   isActive: true,
   sessionsVersion: 3,
   isEmailVerified: true,
+  lockedAt: null,
   // Present on purpose: the projection must not carry it, and a fake that
   // omitted it would let a regression pass unnoticed.
   password: '$2b$10$notarealhashnotarealhashnotareal',
@@ -92,6 +93,11 @@ function harness(options: { rows?: (User | null)[] } = {}) {
   );
 
   return { service, cache, findOne, save, softDelete, merge, notify };
+}
+
+/** A row with the lock fields set, for the cases that need one. */
+function user(overrides: Partial<User> = {}): User {
+  return { ...ROW, ...overrides } as User;
 }
 
 const CACHE_KEY = authUserKey('u1');
@@ -143,6 +149,7 @@ describe('findAuthClaims', () => {
       isActive: true,
       sessionsVersion: true,
       isEmailVerified: true,
+      lockedAt: true,
     });
     expect(options.select).not.toHaveProperty('password');
   });
@@ -160,6 +167,7 @@ describe('findAuthClaims', () => {
       isActive: true,
       sessionsVersion: 3,
       isEmailVerified: true,
+      lockedAt: null,
     });
   });
 
@@ -339,5 +347,198 @@ describe('the writes that move an authentication answer', () => {
     await h.service.update('u1', { firstName: 'Ada' } as never);
 
     expect(h.cache.deleted).toEqual(['user:u1', 'user:u1:devices']);
+  });
+
+  it('drops the entry when an account is locked', async () => {
+    // The cached claims carry `lockedAt`, so a lock that never reached the cache
+    // would leave the strategy accepting the account for a full TTL.
+    await h.service.lockAccount('u1', '20 failed sign-in attempts');
+
+    expect(h.cache.deleted).toEqual(['user:u1', 'user:u1:devices']);
+  });
+
+  it('drops the entry when an account is unlocked', async () => {
+    // Locked in the row, because an account that is not locked returns early and
+    // this would pass on a no-op — asserting nothing about the cache drop it was
+    // written to catch.
+    const locked = harness({
+      rows: [user({ lockedAt: new Date('2026-02-01T00:00:00Z') })],
+    });
+
+    await locked.service.unlockAccount('u1', 'admin@x.com');
+
+    expect(locked.cache.deleted).toEqual(['user:u1', 'user:u1:devices']);
+  });
+});
+
+describe('locking an account', () => {
+  it('records the time and the reason', async () => {
+    // An operator opening the row has to see *why* without reading the log, and a
+    // reason rendered on demand would change under a deploy and make an old lock
+    // unreadable.
+    const h = harness();
+
+    await h.service.lockAccount(
+      'u1',
+      '20 failed sign-in attempts within 24 hours',
+    );
+
+    expect(h.merge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        lockReason: '20 failed sign-in attempts within 24 hours',
+        lockedAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it('bumps the sessions version, which is what actually ends the sessions', async () => {
+    // Every access token already issued carries the version it was minted under,
+    // so a bump refuses all of them at once. Without it the account keeps working
+    // until its longest-lived refresh chain runs out, which is the whole attack the
+    // lockout exists to stop.
+    const h = harness();
+
+    await h.service.lockAccount('u1', 'because');
+
+    expect(h.merge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sessionsVersion: ROW.sessionsVersion + 1 }),
+    );
+  });
+
+  it('tells the operators', async () => {
+    // A lock nobody was told about is the kind of thing that gets discovered by the
+    // user rather than by the person who could have stopped it.
+    const h = harness();
+
+    await h.service.lockAccount('u1', 'because');
+
+    expect(h.notify).toHaveBeenCalledWith(
+      'auth.account.locked',
+      expect.objectContaining({ email: 'a@x.com', reason: 'because' }),
+      { userId: 'u1' },
+    );
+  });
+
+  it('does not notify before the row is written', async () => {
+    // The notification says the account is locked, and a webhook slow enough for
+    // the request to be answered first must not describe a state the database has
+    // not reached.
+    const h = harness();
+    const order: string[] = [];
+
+    h.save.mockImplementation(async (value: Partial<User>) => {
+      order.push('save');
+
+      return value as User;
+    });
+    h.notify.mockImplementation(async () => {
+      order.push('notify');
+
+      return { notificationId: 'n1', queued: true };
+    });
+
+    await h.service.lockAccount('u1', 'because');
+
+    expect(order).toEqual(['save', 'notify']);
+  });
+
+  it('writes once when two attempts cross the threshold together', async () => {
+    // Two requests can read the same failure count and both believe they are the
+    // one that crossed it. The second must not overwrite the timestamp and reason
+    // the owner is reading right now, and must not send a second mail.
+    const h = harness({
+      rows: [user({ lockedAt: new Date('2026-02-01T00:00:00Z') })],
+    });
+
+    await h.service.lockAccount('u1', 'a second reason');
+
+    expect(h.save).not.toHaveBeenCalled();
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it('returns the account it found rather than erroring, for the same reason', async () => {
+    const h = harness({
+      rows: [user({ lockedAt: new Date('2026-02-01T00:00:00Z') })],
+    });
+
+    await expect(h.service.lockAccount('u1', 'x')).resolves.toMatchObject({
+      lockedAt: new Date('2026-02-01T00:00:00Z'),
+    });
+  });
+
+  it('refuses an id with no row', async () => {
+    const h = harness({ rows: [null] });
+
+    await expect(h.service.lockAccount('u1', 'because')).rejects.toThrow(
+      'User not found',
+    );
+  });
+});
+
+describe('unlocking an account', () => {
+  it('clears the time and the reason', async () => {
+    const h = harness({
+      rows: [
+        user({
+          lockedAt: new Date('2026-02-01T00:00:00Z'),
+          lockReason: 'because',
+        }),
+      ],
+    });
+
+    await h.service.unlockAccount('u1', 'admin@x.com');
+
+    expect(h.merge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lockedAt: null, lockReason: null }),
+    );
+  });
+
+  it('does not bump the sessions version again', async () => {
+    // The lock already killed every session. A second bump here would sign the
+    // person out of the very session they had just recovered.
+    const h = harness({
+      rows: [
+        user({
+          lockedAt: new Date('2026-02-01T00:00:00Z'),
+          sessionsVersion: 4,
+        }),
+      ],
+    });
+
+    await h.service.unlockAccount('u1', 'admin@x.com');
+
+    expect(h.merge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ sessionsVersion: expect.anything() }),
+    );
+  });
+
+  it('is a no-op on an account that is not locked', async () => {
+    // An unlock link can be clicked twice by an anxious user.
+    const h = harness();
+
+    await h.service.unlockAccount('u1', 'admin@x.com');
+
+    expect(h.save).not.toHaveBeenCalled();
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it('names who did it, because the two callers are not the same person', async () => {
+    // An operator watching the channel and the owner watching their inbox need
+    // different sentences out of the same event.
+    const h = harness({
+      rows: [user({ lockedAt: new Date('2026-02-01T00:00:00Z') })],
+    });
+
+    await h.service.unlockAccount('u1', 'admin@x.com');
+
+    expect(h.notify).toHaveBeenCalledWith(
+      'auth.account.unlocked',
+      { email: 'a@x.com', actor: 'admin@x.com' },
+      { userId: 'u1' },
+    );
   });
 });

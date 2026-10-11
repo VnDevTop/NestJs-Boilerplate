@@ -114,13 +114,20 @@ purpose: opt-out would put the three-per-hour mail limit on every endpoint.
 
 ## Login lockout
 
-Five failed sign-ins block an address for a minute, each further failure adds a
-minute, and the length stops growing at fifteen.
+There are two, and they answer different questions.
 
-- **Temporary, not permanent.** A permanent lockout is a denial of service
-  anyone can inflict on a victim, and the owner is the person least able to sign
-  in while it lasts. The ceiling is the part that matters: an unbounded
-  multiplier would park an account for hours.
+|                | Temporary (`LoginLockoutService`, Phase 17a) | Permanent (`AccountLockService`, Phase 19)         |
+| -------------- | -------------------------------------------- | -------------------------------------------------- |
+| Where it lives | Redis, with an hour ttl                      | `users.lockedAt`, a column                         |
+| Answers        | an attack in progress                        | an attack that has been going all day              |
+| Lifts itself   | yes, in minutes                              | never                                              |
+| Cleared by     | the clock                                    | the owner of the confirmed address, or an operator |
+
+The temporary one: five failed sign-ins block an address for a minute, each
+further failure adds a minute, and the length stops growing at fifteen.
+
+- **The ceiling is the part that matters.** An unbounded multiplier would park an
+  account for hours, which is a denial of service dressed up as a defence.
 - **Counted for addresses that do not exist too.** Counting only real accounts
   would make the 429 answer which addresses exist without a single successful
   guess. That is the same question `enumeration.spec.ts` works to keep closed.
@@ -131,6 +138,60 @@ minute, and the length stops growing at fifteen.
   never for an address that is not registered. Sending per attempt would turn this
   route into a way to make the application mail somebody repeatedly.
 - **It fails open** with the rest of the Redis state.
+
+### The permanent lockout is a weapon before it is a defence
+
+Twenty failed sign-ins lock an account, and twenty requests is nothing. Somebody
+with a list of addresses can lock every account in a deployment for the cost of
+the list. Three things bound that, and the first is the one the design rests on:
+
+1. **Only a confirmed address can be locked.** An unverified account has never
+   proved it can read its mail, so a link to it reaches nobody and the owner is
+   locked out until an operator intervenes — exactly the outcome an attacker
+   wants. This is a code invariant, not a setting: a config flag for it would be
+   one careless default away from locking every account in a deployment.
+2. **The owner can always clear it.** The mail goes to the confirmed address, so
+   the person _under_ attack holds the way back in, not the person running it.
+3. **An operator can always clear it**, for when the address itself is gone.
+
+What is left is a nuisance an attacker can inflict, on an account that can get
+itself back in without help.
+
+`ACCOUNT_PERMANENT_LOCK_THRESHOLD` at or below `LOCKOUT_THRESHOLD` is treated as
+**disabled**. At that number the permanent lock would fire on the very attempt
+that starts the temporary block, and the temporary block lifts on its own — an
+account locked and unlocked minutes apart, with a mail in between.
+
+### What a locked account sees
+
+Nothing, and that is the point. `login`, `refresh-token` and `2fa/login` all
+answer `Invalid email or password` — the same answer an unregistered address
+gets. A dedicated "this account is locked" status or message is a free oracle for
+anybody willing to burn twenty attempts on an address, which is the price of the
+feature. The owner finds out from the mail, which is the only channel that
+reaches the one person who can act on it.
+
+The lock also bumps `sessionsVersion`, so every access token already issued dies
+at once. `JwtStrategy` checks `lockedAt` separately and without an exception for
+tokens predating the version claim: a lock that left a fifteen minute window open
+is the window an attacker who already holds a token is using.
+
+### The unlock routes
+
+```text
+POST /auth/account/unlock        public, throttled — emails the link
+POST /auth/account/unlock/:token public — spends the token, clears the lock
+PATCH /auth/account/:id/unlock   UserWrite — the operator route
+```
+
+The admin route lives in `auth` rather than in `users` for one concrete reason:
+clearing a lock has to clear the **redis failure count** as well as the row, and
+`LoginLockoutService` lives here. Putting it in `users` would mean `UsersModule`
+importing `AuthModule`, which imports it right back.
+
+`requestUnlock` pays the same database cost on the miss path and claims no
+failure count it does not have — redis forgets within the hour, and a request
+usually comes later than that.
 
 ## Account enumeration
 

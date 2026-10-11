@@ -37,6 +37,21 @@ const SAMPLES: { [K in keyof TemplateDataByName]: TemplateDataByName[K] } = {
     supportUrl: 'https://example.com/support',
     appName: 'Example',
   },
+  'account-permanently-locked': {
+    reason: '20 failed sign-in attempts within 24 hours',
+    unlockUrl: 'https://app.example.com/auth/account/unlock/abc',
+    expiresInHours: 24,
+    // The null case is in the sample rather than a separate test because it is a
+    // real send: the owner asking for the link hours later gets a mail with no
+    // count, and rendering it must not print "after null attempts".
+    failures: 20,
+    appName: 'Example',
+  },
+  'account-unlocked': {
+    actor: 'an administrator',
+    supportUrl: 'https://example.com/support',
+    appName: 'Example',
+  },
   // The operator-alert template from Phase 18. Carrying hostile input here is
   // deliberate: it is the one template whose body arrives from an event rather than
   // from this repository, so it is the one that most needs the escaping asserted.
@@ -69,6 +84,8 @@ describe('renderTemplate', () => {
     // agree with itself.
     expect([...TEMPLATE_NAMES].sort()).toEqual([
       'account-locked',
+      'account-permanently-locked',
+      'account-unlocked',
       'new-device-login',
       'notification',
       'password-changed',

@@ -61,6 +61,10 @@ async function harness(
     role: 'user',
     isManager: false,
     sessionsVersion: 0,
+    // Explicit rather than omitted: the login path reads `lockedAt`, and a fixture
+    // that left it undefined would fail the check the same way a locked account
+    // does — every sign-in in this suite refused, with the fixture as the culprit.
+    lockedAt: null,
   };
 
   const usersService = {
@@ -120,6 +124,12 @@ async function harness(
     {
       record: vi.fn(async () => undefined),
       wasUsedBefore: vi.fn(async () => false),
+    } as never,
+    // The permanent lockout. These tests are about what happens around sign-in,
+    // not about the second lockout, so the fake records the call and does nothing.
+    // `lockOnRepeatedFailures` is exercised on its own in account-lock.service.spec.
+    {
+      lockOnRepeatedFailures: vi.fn(async () => undefined),
     } as never,
   );
 

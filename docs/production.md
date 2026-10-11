@@ -262,6 +262,48 @@ credentials for a policy that will never check them is pure risk.
 At a reset, the reuse check runs inside the transaction and throws, so a rejected
 password leaves the token unspent and the user able to try again.
 
+### The permanent lockout
+
+```dotenv
+ACCOUNT_PERMANENT_LOCK_THRESHOLD=20
+ACCOUNT_PERMANENT_LOCK_WINDOW_HOURS=24
+ACCOUNT_UNLOCK_TOKEN_TTL_HOURS=24
+```
+
+A second lockout, past the temporary one above. This one writes `users.lockedAt`
+and stays until somebody clears it. They are different features, not one bigger
+than the other: the temporary block slows an attack off in Redis, this ends a
+sustained one in the database.
+
+**Set the threshold above `LOGIN_MAX_FAILED_ATTEMPTS`, and know that a value at or
+below it is treated as disabled.** At the same number the permanent lock fires on
+the attempt that also starts a temporary block, and the temporary block lifts on
+its own — an account locked and unlocked minutes apart.
+
+**This is a denial-of-service surface, and the only thing bounding it is the
+recovery path.** Somebody with a list of addresses can lock every account for
+twenty requests each. They cannot keep them locked, because:
+
+- only a **confirmed address** can be locked — an unverified one could never
+  receive the unlock link, so locking it would be permanent with no owner able to
+  clear it. This is a code invariant, not a setting;
+- the owner clears it with an emailed link, which reaches the person _under_
+  attack;
+- an operator clears it with `PATCH /auth/account/:id/unlock` (`UserWrite`).
+
+What survives all three is a nuisance, on an account that can recover itself. That
+is the trade: an account nobody can lock is an account nobody can defend.
+
+**Raise `ACCOUNT_PERMANENT_LOCK_WINDOW_HOURS` above 1 if you want the window to mean
+anything.** The failure count in Redis carries an hour ttl, so a default of 24 is
+measuring "did the worst of these happen today" rather than "in the last 24
+hours" — which is the intended reading, but worth being clear about.
+
+**Clearing a lock resets the Redis failure count too**, which is not optional: the
+count is at its maximum at the moment of the lock, so skipping it means the owner
+clicks their own link, is told they are unlocked, and is then refused with a 429
+for the rest of a temporary block they never knew about.
+
 ### The optional strength score
 
 `npm install zxcvbn` adds a 0–4 strength score on top of the configured rules.
