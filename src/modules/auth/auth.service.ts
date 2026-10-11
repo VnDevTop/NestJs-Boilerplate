@@ -19,6 +19,7 @@ import {
   type MailJobPayload,
   type JobQueue,
 } from '../queue/index.js';
+import { NotificationEventsService } from '../notification/notification-events.service.js';
 import { UserResponseDto } from '../users/dto/index.js';
 import { UsersService } from '../users/index.js';
 import {
@@ -91,6 +92,7 @@ export class AuthService {
     @Inject(JOB_QUEUE) private readonly jobQueue: JobQueue,
     private readonly configService: ConfigService,
     private readonly loginLockout: LoginLockoutService,
+    private readonly notifications: NotificationEventsService,
   ) {}
 
   private get appConfig(): AppConfig {
@@ -120,7 +122,34 @@ export class AuthService {
     // cannot be reached later without asking for a new one.
     void this.sendVerification(user).catch(() => undefined);
 
+    // The operator alert is not awaited, and `notify` does not reject anyway.
+    // Detached rather than awaited so nothing about the notification path can delay
+    // a token that is already ready to return. Reads the address and the name off
+    // the response DTO rather than re-querying the user: `create` already returned
+    // it and a second read would be a second answer that could differ.
+    void this.notifyRegistered(user.id, user.email, user.firstName ?? '');
+
     return this.createAuthToken(user, token, device, sessionId);
+  }
+
+  /**
+   * Tells the operators a new account exists.
+   *
+   * Carries the user's id so a preference can mute it and the log row can be found
+   * later. Carries nothing else from the user: the event renders an address and a
+   * first name, and an event that could read `user.password` is one refactor away
+   * from posting a credential to a shared channel.
+   */
+  private async notifyRegistered(
+    userId: string,
+    email: string,
+    firstName: string,
+  ): Promise<void> {
+    await this.notifications.notify(
+      'user.registered',
+      { email, firstName },
+      { userId },
+    );
   }
 
   /**
@@ -129,11 +158,22 @@ export class AuthService {
    * the second factor on the two-factor login route.
    */
   /**
-   * Counts a rejected attempt and notifies the owner when it starts a lockout.
+   * Counts a rejected attempt and notifies when the failures become news.
    *
-   * The mail goes only when the account exists, and only on the attempt that
-   * begins the block. Sending per rejected request would turn the login route into
-   * a way to make the application mail an address repeatedly.
+   * The owner's mail goes only when the account exists, and only on the attempt
+   * that begins a block. Sending per rejected request would turn the login route
+   * into a way to make the application mail an address repeatedly.
+   *
+   * The **operator** alert is deliberately not gated on the account existing. The
+   * lockout counts failures for addresses nobody registered — that is the price of
+   * not letting a 429 answer which addresses exist — so an operator watching for
+   * attack traffic needs to see a burst against an address that is not in the
+   * database. It is gated on `firstBlock` instead, which is the deduplication that
+   * matters: one alert per block, not one per rejected request.
+   *
+   * The address is carried in the clear because an operator cannot act on a hash.
+   * That is a deliberate trade against `notification_logs` holding personal data,
+   * which is what `RETENTION_NOTIFICATION_LOGS_DAYS` bounds.
    */
   private async recordLoginFailure(email: string): Promise<void> {
     const state = await this.loginLockout.recordFailure(email);
@@ -141,6 +181,12 @@ export class AuthService {
     if (!state.firstBlock) {
       return;
     }
+
+    await this.notifications.notify('auth.login.failed', {
+      email,
+      failures: state.failures,
+      blockedMinutes: Math.max(1, Math.ceil(state.retryAfterSeconds / 60)),
+    });
 
     const user = await this.usersService.findByEmail(email);
 
@@ -228,12 +274,43 @@ export class AuthService {
       return this.twoFactorService.issueChallenge(user.id);
     }
 
-    const { token, device, sessionId } = await this.issueSession(
+    const { token, device, sessionId, isNewDevice } = await this.issueSession(
       user.id,
       metadata,
     );
 
+    // A new device is worth an operator alert and a repeat sign-in is not, which is
+    // why this hangs off `created` rather than off the login itself. Every sign-in
+    // alerting would train an operator to ignore the channel.
+    if (isNewDevice) {
+      void this.notifyNewDevice(user.email, user.id, metadata);
+    }
+
     return this.createAuthToken(userResponse, token, device, sessionId);
+  }
+
+  /**
+   * Tells the operators a sign-in arrived from a device nobody had seen.
+   *
+   * The timestamp is formatted here rather than inside the event, because an event
+   * is a pure function of its data and a `Date` in the payload would make two
+   * renderings of the same queued job differ.
+   */
+  private async notifyNewDevice(
+    email: string,
+    userId: string,
+    metadata: DeviceMetadata,
+  ): Promise<void> {
+    await this.notifications.notify(
+      'auth.device.login',
+      {
+        email,
+        deviceName: metadata.deviceName ?? 'unrecognised device',
+        ip: metadata.ipAddress ?? 'unknown',
+        time: new Date().toISOString(),
+      },
+      { userId },
+    );
   }
 
   /**
@@ -505,20 +582,49 @@ export class AuthService {
     return this.twoFactorService.setup(currentUser.id, currentUser.email);
   }
 
-  twoFactorVerify(
+  /**
+   * Confirming a setup turns two-factor on, which is the strongest security change
+   * a user can make to their own account and the one an operator most wants to know
+   * happened.
+   *
+   * The address comes from the request user rather than a lookup, because the
+   * strategy verified it on this very request and a second read would be a second
+   * answer that could differ from the one the guard authorised.
+   */
+  async twoFactorVerify(
     currentUser: RequestUser,
     twoFactorCodeDto: TwoFactorCodeDto,
   ): Promise<TwoFactorEnabledResponseDto> {
-    return this.twoFactorService
-      .verifySetup(currentUser.id, twoFactorCodeDto.code)
-      .then(({ recoveryCodes }) => ({ enabled: true as const, recoveryCodes }));
+    const { recoveryCodes } = await this.twoFactorService.verifySetup(
+      currentUser.id,
+      twoFactorCodeDto.code,
+    );
+
+    void this.notifications.notify(
+      'auth.2fa.enabled',
+      { email: currentUser.email },
+      { userId: currentUser.id },
+    );
+
+    return { enabled: true, recoveryCodes };
   }
 
+  /**
+   * Disabling a second factor is the same event in the wrong direction, and the one
+   * worth alerting on harder: it is also the first thing an attacker with a
+   * compromised password does.
+   */
   async twoFactorDisable(
     currentUser: RequestUser,
     twoFactorCodeDto: TwoFactorCodeDto,
   ): Promise<void> {
     await this.twoFactorService.disable(currentUser.id, twoFactorCodeDto.code);
+
+    void this.notifications.notify(
+      'auth.2fa.disabled',
+      { email: currentUser.email },
+      { userId: currentUser.id },
+    );
   }
 
   async refresh(
@@ -754,8 +860,20 @@ export class AuthService {
   private async issueSession(
     userId: string,
     metadata: DeviceMetadata,
-  ): Promise<{ token: string; device: UserDevice; sessionId: string }> {
-    const device = await this.deviceService.register(userId, metadata);
+  ): Promise<{
+    token: string;
+    device: UserDevice;
+    sessionId: string;
+    /** True when this call created the device row rather than reusing one. */
+    isNewDevice: boolean;
+  }> {
+    // `created` rather than a second lookup, because "is this device new" is the
+    // question the notification asks and `register` is the only place that knows:
+    // asking again after the fact would find the row that `register` just created.
+    const { device, created } = await this.deviceService.register(
+      userId,
+      metadata,
+    );
     const tokenMetadata = this.toTokenMetadata(metadata);
     const { token, record } = await this.refreshTokenService.issue(
       userId,
@@ -763,7 +881,7 @@ export class AuthService {
       device.id,
     );
 
-    return { token, device, sessionId: record.jti };
+    return { token, device, sessionId: record.jti, isNewDevice: created };
   }
 
   private async rotate(

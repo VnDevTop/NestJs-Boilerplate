@@ -5,6 +5,10 @@ import {
   type RetentionJobPayload,
 } from '../maintenance/processors/retention.processor.js';
 import {
+  NotificationProcessor,
+  type NotificationJobPayload,
+} from '../notification/processors/notification.processor.js';
+import {
   MailProcessor,
   type MailJobPayload,
 } from './processors/mail.processor.js';
@@ -28,11 +32,16 @@ export class ProcessorRouter {
   constructor(
     private readonly mailProcessor: MailProcessor,
     private readonly retentionProcessor: RetentionProcessor,
+    private readonly notificationProcessor: NotificationProcessor,
   ) {}
 
   /** True when some processor claims this name. */
   handles(name: string): boolean {
-    return MailProcessor.handles(name) || RetentionProcessor.handles(name);
+    return (
+      MailProcessor.handles(name) ||
+      RetentionProcessor.handles(name) ||
+      NotificationProcessor.handles(name)
+    );
   }
 
   async process(job: Job): Promise<JobResult> {
@@ -42,6 +51,12 @@ export class ProcessorRouter {
 
     if (RetentionProcessor.handles(job.name)) {
       return this.retentionProcessor.process(job as Job<RetentionJobPayload>);
+    }
+
+    if (NotificationProcessor.handles(job.name)) {
+      return this.notificationProcessor.process(
+        job as Job<NotificationJobPayload>,
+      );
     }
 
     this.logger.error(`No processor claims the job "${job.name}"`);

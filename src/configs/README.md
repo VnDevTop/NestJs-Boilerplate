@@ -113,6 +113,7 @@ combination being meaningful, or because a default is dangerous in production:
 | `MAIL_FROM` required in production                                     | A wrong value sends a password reset token to another deployment                                                         |
 | `APP_URL` required and `https` in production                           | Every email link is built from it                                                                                        |
 | `TELEGRAM_*`, `SLACK_*`, `DISCORD_*` credential when the channel is on | An enabled channel with no credential drops every message, which looks identical to a working one                        |
+| `NOTIFICATION_EMAIL_TO` when the email channel is on                   | Same, for the one channel that is a delegation rather than a webhook                                                     |
 | `QUEUE_REDIS_URL` required when the queue is on                        | Without it the queue silently becomes the in-process fallback, which is a slower deployment rather than the intended one |
 | `REDIS_KEY_PREFIX` must differ from `CACHE_KEY_PREFIX`                 | The cache evicts by TTL, so a shared prefix discards pending jobs                                                        |
 | `RETENTION_*_DAYS` at least 1                                          | A zero means "delete everything older than now": a typo becomes data loss                                                |

@@ -14,6 +14,7 @@ import {
   RetentionService,
   type RetentionRunResult,
 } from './retention.service.js';
+import { RETENTION_TARGETS } from './retention.policy.js';
 
 /**
  * The shape a TypeORM query runner returns for `DELETE ... RETURNING`, which is
@@ -149,7 +150,16 @@ function advancingClock(stepMs: number): () => number {
   };
 }
 
-const POLICY_LENGTH = 5;
+/**
+ * How many targets the policy has.
+ *
+ * Derived rather than written down, because a new target is exactly the change that
+ * should not require editing a dozen assertions in a service spec. When Phase 18
+ * added `notification-logs` this was a literal 5 and every count in this file was
+ * silently wrong until the tests were run — which is the failure mode a derived
+ * number removes.
+ */
+const POLICY_LENGTH = RETENTION_TARGETS.length;
 
 function entry(): MaintenanceLog {
   return {

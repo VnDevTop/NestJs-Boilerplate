@@ -36,12 +36,19 @@ export class DeviceService {
    * browser or app reuse a single row instead of piling up duplicates. A
    * previously revoked device is reactivated, because logging in again from the
    * same client is a legitimate new session.
+   *
+   * **Returns whether the row was created.** Phase 18 notifies operators about a
+   * sign-in from a device nobody has seen before, and that question is only
+   * answerable here: a caller that checked afterwards would find the row this method
+   * just created and conclude every sign-in was new. It is returned rather than
+   * inferred from the caller having no prior row, because that is the same question
+   * asked twice.
    */
   async register(
     userId: string,
     metadata: DeviceMetadata,
     manager: EntityManager = this.store,
-  ): Promise<UserDevice> {
+  ): Promise<{ device: UserDevice; created: boolean }> {
     const existing = await manager.findOne(UserDevice, {
       where: {
         userId,
@@ -54,7 +61,7 @@ export class DeviceService {
       existing.deviceName = metadata.deviceName ?? existing.deviceName;
       existing.isActive = true;
 
-      return manager.save(existing);
+      return { device: await manager.save(existing), created: false };
     }
 
     const device = manager.create(UserDevice, {
@@ -65,7 +72,7 @@ export class DeviceService {
       isActive: true,
     });
 
-    return manager.save(device);
+    return { device: await manager.save(device), created: true };
   }
 
   async listByUserId(userId: string): Promise<UserDeviceDto[]> {

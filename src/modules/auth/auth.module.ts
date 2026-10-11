@@ -23,6 +23,7 @@ import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
 import { MailModule } from '../mail/index.js';
 import { LoginLockoutService } from './login-lockout.service.js';
 import { QueueModule } from '../queue/index.js';
+import { NotificationEventsModule } from '../notification/notification-events.module.js';
 
 @Module({
   imports: [
@@ -39,6 +40,10 @@ import { QueueModule } from '../queue/index.js';
     // For the queue: auth enqueues mail instead of sending it, which is what
     // keeps a slow provider out of the registration request.
     QueueModule,
+    // For the operator alerts: a registration, a lockout, a new device and a
+    // two-factor change all raise one. Above the queue, like the mail enqueue, so
+    // nothing here depends on a channel being reachable.
+    NotificationEventsModule,
     TypeOrmModule.forFeature([
       RefreshToken,
       UserDevice,

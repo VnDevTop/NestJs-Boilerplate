@@ -81,13 +81,16 @@ function harness(options: { rows?: (User | null)[] } = {}) {
   }));
   const cache = fakeCache();
 
+  const notify = vi.fn(async () => ({ notificationId: 'n1', queued: true }));
+
   const service = new UsersService(
     { findOne, save, softDelete, merge } as never,
     cache as never,
     { getOrThrow: () => CONFIG } as never,
+    { notify } as never,
   );
 
-  return { service, cache, findOne, save, softDelete, merge };
+  return { service, cache, findOne, save, softDelete, merge, notify };
 }
 
 const CACHE_KEY = authUserKey('u1');

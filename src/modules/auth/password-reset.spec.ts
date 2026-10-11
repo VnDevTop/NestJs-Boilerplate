@@ -39,9 +39,8 @@ function harness(options: { userExists: boolean; userActive?: boolean }) {
 
   const deviceService = {
     register: vi.fn().mockResolvedValue({
-      id: 'd1',
-      userId: 'user-1',
-      sessionsVersion: 0,
+      device: { id: 'd1', userId: 'user-1', sessionsVersion: 0 },
+      created: false,
     }),
   };
 
@@ -108,14 +107,21 @@ function harness(options: { userExists: boolean; userActive?: boolean }) {
           blocked: false,
           retryAfterSeconds: 0,
           firstBlock: false,
+          failures: 0,
         }),
       recordFailure: () =>
         Promise.resolve({
           blocked: false,
           retryAfterSeconds: 0,
           firstBlock: false,
+          failures: 0,
         }),
       reset: () => Promise.resolve(undefined),
+    } as never,
+    // The notification emitter is fire-and-forget and these tests are about
+    // something else, so a fake that records nothing keeps them focused.
+    {
+      notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
     } as never,
   );
 

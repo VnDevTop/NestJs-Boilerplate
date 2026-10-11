@@ -149,6 +149,7 @@ when it should be, so this section is mostly about what has to be dropped.
 | `user:<id>`               | the claims a request is authorised against | 60s                   | deactivation, role change, soft delete, revocation        |
 | `user:<id>:devices`       | each device's session version              | 60s                   | the same, plus signing out of that device                 |
 | `role:<role>`             | the permission names a role holds          | 600s                  | `PUT /admin/roles/:role/permissions`, the permission seed |
+| `user:<id>:notifications` | a user's notification preferences          | 60s                   | `PATCH /notifications/preferences`                        |
 | `token:revoked:<session>` | one revoked session                        | access token lifetime | **nothing. See below.**                                   |
 
 ```dotenv
@@ -195,6 +196,51 @@ The direction of that failure is the safe one: a role with a stale grant set is
 _missing_ a permission, so the guard refuses rather than admits. A deploy that
 changes grants the other way, which this cache cannot cause, would be the
 dangerous one.
+
+## Operator notifications
+
+Off by default, and the console channel is on inside it — so the default profile
+logs what it would have sent and delivers nothing.
+
+```dotenv
+NOTIFICATION_ENABLED=true
+NOTIFICATION_CONSOLE_ENABLED=false
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+# Optional per-event forum routing, which overrides TELEGRAM_TOPIC_ID where it names
+# TELEGRAM_TOPICS=auth.login.failed=42,auth.2fa.enabled=43
+SLACK_ENABLED=true
+SLACK_WEBHOOK_URL=
+```
+
+Three things to check before trusting a channel:
+
+- **A channel with no credential logs why it is disabled and is dropped.** Silence
+  looks exactly like a working integration, so the log line is the difference
+  between "quiet" and "misconfigured". `env.validation.ts` also refuses an enabled
+  channel with no credential at boot.
+- **`NOTIFICATION_EMAIL_ENABLED` needs a real `MAIL_TRANSPORT`.** With `memory` the
+  channel reports success and nothing is delivered, which is the same
+  "reports success while sending nothing" property production validation already
+  refuses for mail.
+- **`TELEGRAM_TOPICS` is `event=topicId` pairs.** A malformed pair is dropped and
+  the notification lands in the default room rather than the boot failing over a
+  routing convenience.
+
+An event nobody hears about is worse than one that failed loudly, so the delivery
+log records both. Read it when a channel is quiet:
+
+```sql
+SELECT "createdAt", "event", "channel", "delivered", "statusCode", "error"
+FROM notification_logs
+ORDER BY "createdAt" DESC
+LIMIT 50;
+```
+
+Rows are removed at `RETENTION_NOTIFICATION_LOGS_DAYS`, 30 by default. That table
+holds operator addresses and, for the sign-in events, the attempted address — so the
+window is a data-retention decision rather than a housekeeping one.
 
 ## Health checks
 

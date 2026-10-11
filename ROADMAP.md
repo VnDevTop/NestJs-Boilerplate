@@ -27,6 +27,7 @@ starting point rather than a scaffold to fill in.
 | Mail            | Swappable transport, queued so a slow provider cannot fail a signup; verification and reset      |
 | Background jobs | Provider-level queue with an in-process fallback, retries, deduplication and a dead-letter list  |
 | Data retention  | Nightly batched cleanup with a dry run, run history and an admin route                           |
+| Notifications   | Telegram, Slack, Discord, operator mail and the log, one interface, per-user opt-out             |
 | Observability   | Request id, JSON production logs, liveness and readiness kept apart                              |
 | Operations      | Reviewed migrations, idempotent seed, two stage image, compose stack, CI                         |
 
@@ -121,22 +122,49 @@ survives in the cache until something invalidates it. What changed is that there
 is now a check which notices when the invalidation is missing, instead of a
 convention that everyone is asked to remember.
 
-### 4. Notifications — not started
+### 4. Notifications — built, Phase 18
 
-- Delivery to Telegram, Slack, Discord, email and a webhook, behind one interface
-  so a feature emits an event and does not know which channels are configured.
-- **Dependencies must not be in `package.json` for a feature that is not in use.**
-  A template that ships four SDKs costs install time, cold start memory and
-  attack surface for features nobody enabled. Two workable ways:
-  - `optionalDependencies`, so `npm install` does not fail and a missing channel
-    is reported at startup rather than at send time.
-  - `await import()` at call time, so the module is only loaded when a message is
-    actually sent. This costs a dynamic import on the send path and nothing
-    otherwise.
-- Retry with backoff, and a dead letter destination. A notification that failed
-  silently is worse than one that was never sent, because you believe it went out.
-- Webhook deliveries signed with HMAC, with a timestamp in the header so the
-  receiver can reject a replay.
+Delivery to Telegram, Slack, Discord, an operator mailbox and the log, behind one
+interface so a feature emits an event and does not know which channels exist.
+
+- **`NotificationChannel { name, isEnabled(), send() }` is the whole extension
+  story.** A third party adds a channel by providing a class and adding it to one
+  factory. Nothing in the service changes, and there is no `if (channel === …)` in
+  the delivery path.
+- **No channel needs a package.** Telegram is raw HTTPS to the Bot API; Slack and
+  Discord are incoming webhooks; the email channel delegates to `MailService`. The
+  only transport is `HttpModule`, which the boilerplate already depends on. That is
+  the whole reason `optionalDependencies` was not needed for any of them.
+- **Failure is isolated per channel, and so is retry.** A Telegram outage does not
+  cost the Slack copy, and the retries are spent on the channel that failed rather
+  than re-attempting all four — a queue-level retry would have delivered the Slack
+  alert five times because Telegram was down.
+- **A partial delivery is a success.** The processor asks "did anybody receive
+  it", not "did every channel", which is the opposite of `MailProcessor` and for a
+  concrete reason: mail is one recipient, a notification is several.
+- **Every attempt is logged, including the refusals.** `notification_logs` gets one
+  row per channel, with the rendered body, so "did it arrive" and "what did it
+  actually say" are answerable without a template history. The retention job cleans
+  it at 30 days.
+- **Per-user preferences, opt-out.** Absence means on, so a fresh install is not
+  silent. Cached per user, invalidated once after the whole batch rather than
+  between writes.
+- **Seven events**: registration, deletion, a blocked sign-in, a new device, 2FA
+  enabled and disabled, and a retention anomaly. Each takes only the fields it
+  renders, so no event can read `user.password`.
+
+Two things from this section that did not survive contact with the code:
+
+- **HMAC-signed webhooks are not built.** The plan proposed them for a _receiver_.
+  This module is a sender, and an outgoing webhook signed with a shared secret is a
+  secret the receiver now has to store — which is the opposite of the property
+  these channels were chosen for. Signing belongs on the inbound side, which is
+  Phase 19's audit and idempotency work.
+- **A generic webhook channel is not built.** Telegram, Slack and Discord each have
+  their own class because their payloads genuinely differ — Discord ignores Slack's
+  `text` and posts an empty message. A generic webhook that accepted arbitrary
+  payloads would need per-destination configuration to format anything, which is
+  the configuration this design removes.
 
 ### 5. Background jobs — built, Phase 15
 

@@ -728,7 +728,7 @@ Expected outcome:
 
 ## Phase 18: Notifications
 
-Status: Pending
+Status: Done
 
 Goal:
 
@@ -737,43 +737,124 @@ channels, without adding a dependency for any of them.
 
 Tasks:
 
-- [ ] Create `src/modules/notification` with `notification.service.ts`
-- [ ] Define `NotificationChannel { name, isEnabled(), send(n) }`
-- [ ] Implement `telegram.channel.ts` over raw HTTPS, no package
-- [ ] Implement `slack.channel.ts` over an incoming webhook, no package, with
+- [x] Create `src/modules/notification` with `notification.service.ts`
+- [x] Define `NotificationChannel { name, isEnabled(), send(n) }`
+- [x] Implement `telegram.channel.ts` over raw HTTPS, no package
+- [x] Implement `slack.channel.ts` over an incoming webhook, no package, with
       Block Kit payloads
-- [ ] Implement `discord.channel.ts` on the same webhook shape
-- [ ] Implement `email.channel.ts` delegating to `MailService`
-- [ ] Implement `console.channel.ts` as the development default
-- [ ] Add a per-channel enable flag, retry policy and dead-letter list
-- [ ] Make `notify()` asynchronous and failure-isolated; a broken webhook must
+- [x] Implement `discord.channel.ts` on the same webhook shape
+- [x] Implement `email.channel.ts` delegating to `MailService`
+- [x] Implement `console.channel.ts` as the development default
+- [x] Add a per-channel enable flag, retry policy and dead-letter list
+- [x] Make `notify()` asynchronous and failure-isolated; a broken webhook must
       never fail a registration
-- [ ] Add `notification_preferences` so a user can opt out per event and
+- [x] Add `notification_preferences` so a user can opt out per event and
       channel
-- [ ] Add `GET /notifications/preferences` and `PATCH /notifications/preferences`
-- [ ] Add the `notification_log` entity, purged by Phase 16
-- [ ] Centralise MarkdownV2 escaping in one helper; Telegram rejects messages
+- [x] Add `GET /notifications/preferences` and `PATCH /notifications/preferences`
+- [x] Add the `notification_log` entity, purged by Phase 16
+- [x] Centralise MarkdownV2 escaping in one helper; Telegram rejects messages
       containing unescaped `_`, `*` and backticks
-- [ ] Support Telegram topic/thread ids to route event types to different rooms
-- [ ] Emit these events: user registered, user deleted, repeated failed logins,
+- [x] Support Telegram topic/thread ids to route event types to different rooms
+- [x] Emit these events: user registered, user deleted, repeated failed logins,
       new device login, 2FA enabled or disabled, retention job anomaly
 
 Implementation note: the channel interface is the whole extension story. A
 third party adds a channel by providing one class; the core is not modified.
+
+Commits:
+
+```text
+feat: add multi-channel notifications
+```
+
+What was built:
+
+- Five channels behind one interface: console, telegram, slack, discord, email.
+  Not one package between them — the only transport is `HttpModule`, which the
+  boilerplate already depends on.
+- Two modules, because the graph demands it. The queue's router injects
+  `NotificationProcessor`, which injects the delivery service, so that service
+  cannot live in a module that enqueues. `NotificationModule` sits below the
+  queue, `NotificationEventsModule` above it, and a test asserts the split.
+- `notification_logs` with one row per channel per notification, refusals
+  included, carrying the rendered body.
+- `notification_preferences`, opt-out, cached per user, evicted once after the
+  whole write batch.
+- Seven events, each typed to exactly the fields it renders.
+
+Decisions taken against the plan above:
+
+- **Retries are per channel and live in the service, not in the queue.** A queue
+  retry re-attempts every channel for the sake of the one that failed, so a Slack
+  alert would arrive five times because Telegram was down. The queue's retry
+  budget is still what catches a job that failed outright.
+- **A partial delivery is a job success.** The processor asks whether anybody
+  received the notification. Mail is one recipient and one provider, so a failure
+  there is the job's failure; a notification is four channels and the useful
+  question is the other one.
+- **A skipped notification is a success too** — nothing enabled, or every channel
+  muted. A deployment told not to send must not fill the dead-letter list with
+  work it declined.
+- **The `notification` mail template is one entry, not six.** The events carry a
+  headline and a body and nothing else, so a registry entry per event would be six
+  chances to mail the wrong thing. It renders the app name in the footer rather
+  than the subject, because an operator triages a mailbox by subject line and
+  "Security alert" six times a day tells them nothing.
+
+Four things this phase found rather than built:
+
+- **Slack's `mrkdwn` is not Markdown.** It escapes with HTML entities, not
+  backslashes, so Telegram's `escapeMarkdownV2` would have rendered as a wall of
+  backslashes and still left `<url|label>` clickable. A notification body carries
+  a user-supplied email address, so without a second escaper an address containing
+  `<` became a link in a shared ops channel. Two helpers, one per syntax, each
+  next to the markup that needs it.
+- **Discord could not reuse Slack's payload.** Phase 12's comment said one
+  implementation could serve both, and for the url and the transport that is
+  true. The body is not: Discord ignores `text` and posts an empty message,
+  because its field is `content` and it calls a section an `embed`. Reusing it
+  would have delivered nothing while answering 200.
+- **`isNotificationEventKey` used `in`, which walks the prototype chain.** The
+  event name arrives off a queue, so `"constructor"` passed the guard and was then
+  looked up in the registry as a function. `Object.hasOwn` instead. Found by
+  writing the test for a name that only looks like a real one.
+- **The dedupe key fell back to a fresh uuid for the recipient half**, which made
+  it unstable for any event carrying only a `subjectId` — silently disabling
+  deduplication for exactly the events that were using it. The subject id now
+  falls back before the notification id.
+
+Dropped from the plan, with the reason:
+
+- **HMAC-signed webhooks.** The roadmap proposed these for a _receiver_. This
+  module is a sender, and an outgoing webhook signed with a shared secret is a
+  secret the receiver then has to store, which is the opposite of why these
+  channels were chosen. Signing belongs on the inbound side.
+- **A generic webhook channel.** Telegram, Slack and Discord each have their own
+  class because their payloads genuinely differ. A generic channel accepting
+  arbitrary payloads would need per-destination formatting configuration, which
+  is the configuration this design removes.
+
+Known limits:
+
+- **A redelivery of a subject-less event can deliver twice.** The dedupe key
+  carries a fresh uuid unless the caller supplies a subject, which is deliberate:
+  a key from the event name alone would suppress the second failed sign-in of an
+  ongoing attack.
+- **The email channel is queued twice** — once as a notification, then again by
+  the mail job its delegation enqueues. Acceptable because the notification job is
+  already off the request path.
+- **Preferences are read with the auth TTL**, so a mute can take up to a minute to
+  apply. One knob rather than two that mean roughly the same thing.
+- **`notification_logs` holds addresses** and is purged on an age, so the window is
+  a data-retention decision rather than a housekeeping one.
+- **Nothing reads `notification_logs` through the API.** The service has
+  `recent()` and `forNotification()`; Phase 20 puts them behind a route.
 
 Expected outcome:
 
 - Registration triggers a notification on every enabled channel.
 - Disabling a channel is a config flag, and a failing channel never blocks the
   request.
-
-Expected commit:
-
-```text
-feat: add multi-channel notifications
-```
-
----
 
 ## Phase 19: Account Security Features
 
@@ -1022,7 +1103,7 @@ lands after the harness in Phase 12 is solid.
 | Phase 16  | Data Retention and Cleanup                     | Done    |
 | Phase 17a | Permission-based Authorization                 | Done    |
 | Phase 17b | Authentication and Authorization through Cache | Done    |
-| Phase 18  | Notifications                                  | Pending |
+| Phase 18  | Notifications                                  | Done    |
 | Phase 19  | Account Security Features                      | Pending |
 | Phase 20  | Operational Hardening                          | Pending |
 | Phase 21  | Testing Depth and Documentation                | Pending |

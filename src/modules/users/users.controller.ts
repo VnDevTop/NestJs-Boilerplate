@@ -17,7 +17,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { Permissions, Roles } from '../../common/decorators/index.js';
+import {
+  CurrentUser,
+  Permissions,
+  Roles,
+} from '../../common/decorators/index.js';
+import type { RequestUser } from '../../common/interfaces/index.js';
 import { Permission, Role } from '../../common/enums/index.js';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto/index.js';
 import { UsersService } from './users.service.js';
@@ -70,7 +75,14 @@ export class UsersController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Soft delete a user' })
   @ApiNoContentResponse({ description: 'User deleted successfully' })
-  remove(@Param('id') id: string): Promise<void> {
-    return this.usersService.softDelete(id);
+  remove(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: RequestUser,
+  ): Promise<void> {
+    // The caller is passed through so the notification names who did it. An alert
+    // reading "account deleted" is half the information; one naming an
+    // administrator is the other half, and it is the difference between a routine
+    // offboarding and an incident.
+    return this.usersService.softDelete(id, currentUser.email);
   }
 }

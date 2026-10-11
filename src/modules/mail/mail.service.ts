@@ -165,6 +165,34 @@ export class MailService {
   }
 
   /**
+   * Sends an operator alert, reusing the `notification` template.
+   *
+   * The events in Phase 18 are not transactional mail: they have no per-event
+   * subject, no link and no recipient-specific wording. Rather than six more
+   * registry entries each carrying one pre-rendered string — six more chances to
+   * mail a credential to the wrong address — they share one template that takes a
+   * headline and a body.
+   *
+   * `appName` comes from the app config rather than the caller, because the
+   * notification module has no reason to know it and a template that takes it as an
+   * argument is a template somebody will pass wrong.
+   *
+   * Returns the same shape as `sendTemplate` rather than throwing, so the caller
+   * records the failure the way it records a webhook failure.
+   */
+  async sendNotification(
+    to: string,
+    headline: string,
+    body: string,
+  ): Promise<SendMailResult> {
+    return this.sendTemplate(to, 'notification', {
+      headline,
+      body,
+      appName: this.appConfig.name,
+    });
+  }
+
+  /**
    * `<template>-<uuid>`, so a log line names the template without a second
    * lookup, and the uuid keeps two sends of the same template distinguishable.
    */

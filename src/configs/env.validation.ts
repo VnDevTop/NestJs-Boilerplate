@@ -196,6 +196,13 @@ function createEnvSchema(strict: boolean) {
           })
           .optional(),
         SLACK_CHANNEL: z.string().min(1).max(64).optional(),
+        // Per-event topic routing, as `event=topicId` pairs. Deliberately a plain
+        // string rather than a parsed record: `notification.config.ts` owns the
+        // shape, and a malformed pair there drops one route instead of refusing
+        // the boot over a routing convenience.
+        TELEGRAM_TOPICS: z.string().min(1).optional(),
+        NOTIFICATION_EMAIL_ENABLED: z.enum(['true', 'false']).optional(),
+        NOTIFICATION_EMAIL_TO: z.string().min(1).optional(),
         DISCORD_ENABLED: z.enum(['true', 'false']).optional(),
         DISCORD_WEBHOOK_URL: z
           .url()
@@ -384,6 +391,13 @@ function createEnvSchema(strict: boolean) {
           ['TELEGRAM_ENABLED', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'],
           ['SLACK_ENABLED', 'SLACK_WEBHOOK_URL'],
           ['DISCORD_ENABLED', 'DISCORD_WEBHOOK_URL'],
+          // `MAIL_TRANSPORT` is deliberately absent from this list: it defaults
+          // to `memory` and only has to be non-memory in production, which is a
+          // rule the mail section below already states. The email channel reports
+          // a memory transport in its own log line instead, because "your operator
+          // alerts are going nowhere" is a fact about this channel rather than a
+          // reason to refuse a deploy that is otherwise correct.
+          ['NOTIFICATION_EMAIL_ENABLED', 'NOTIFICATION_EMAIL_TO'],
         ];
 
         for (const [flag, ...required] of channels) {

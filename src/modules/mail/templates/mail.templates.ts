@@ -128,6 +128,53 @@ export const newDeviceLoginTemplate: MailTemplate<NewDeviceLoginData> = {
   },
 };
 
+/**
+ * The operator-alert template, added by Phase 18.
+ *
+ * One template rather than one per notification event, because these events are not
+ * transactional mail: they carry no link, no per-recipient wording and no call to
+ * action. What they carry is a headline the event rendered and a body it rendered,
+ * and a registry entry per event would be six ways to get the escaping wrong in a
+ * message that goes to an operator rather than to a user.
+ *
+ * The subject is the headline rather than a fixed string, because an operator
+ * triages a mailbox by subject line and "Security alert" six times a day tells them
+ * nothing about which one to open.
+ */
+export interface NotificationData {
+  headline: string;
+  body: string;
+  appName: string;
+}
+
+export const notificationTemplate: MailTemplate<NotificationData> = {
+  name: 'notification',
+  subject: ({ headline }) => headline,
+  render: (data) => {
+    const text = data.body
+      .split('\n')
+      .map((line) => (line === '' ? '' : `• ${line}`))
+      .join('\n');
+
+    const html = `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;"><strong>${escapeHtml(
+      data.headline,
+    )}</strong></p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="font-size:14px;line-height:1.8;color:#3e4c59;">${data.body
+      .split('\n')
+      .filter((line) => line !== '')
+      .map(
+        (line) =>
+          `<tr><td style="padding:1px 10px 1px 0;color:#9aa5b1;">•</td><td>${escapeHtml(
+            line,
+          )}</td></tr>`,
+      )
+      .join('')}</table>
+<p style="margin:24px 0 0;font-size:13px;color:#52606d;">This is an operator alert, not a message for a user.</p>`;
+
+    return layout({ appName: data.appName, text, html });
+  },
+};
+
 export interface AccountLockedData {
   reason: string;
   supportUrl: string;

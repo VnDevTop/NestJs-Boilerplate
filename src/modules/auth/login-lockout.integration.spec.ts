@@ -20,18 +20,21 @@ const ALLOWED: LockoutState = {
   blocked: false,
   retryAfterSeconds: 0,
   firstBlock: false,
+  failures: 0,
 };
 
 const BLOCKED: LockoutState = {
   blocked: true,
   retryAfterSeconds: 60,
   firstBlock: false,
+  failures: 5,
 };
 
 const FIRST_BLOCK: LockoutState = {
   blocked: true,
   retryAfterSeconds: 60,
   firstBlock: true,
+  failures: 5,
 };
 
 const appConfig = {
@@ -104,6 +107,9 @@ async function harness(
     jobQueue as never,
     { getOrThrow: () => appConfig } as never,
     lockout as never,
+    {
+      notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
+    } as never,
   );
 
   const dto = { email: 'a@x.com', password: 'guess' };

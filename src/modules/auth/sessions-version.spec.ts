@@ -88,13 +88,20 @@ function harness() {
         blocked: false,
         retryAfterSeconds: 0,
         firstBlock: false,
+        failures: 0,
       }),
       recordFailure: vi.fn().mockResolvedValue({
         blocked: false,
         retryAfterSeconds: 0,
         firstBlock: false,
+        failures: 0,
       }),
       reset: vi.fn().mockResolvedValue(undefined),
+    } as never,
+    // The notification emitter is fire-and-forget and these tests are about
+    // revocation, so a fake that records nothing keeps them focused.
+    {
+      notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
     } as never,
   );
 

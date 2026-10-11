@@ -14,6 +14,7 @@ import {
 import type { CacheConfig } from '../../configs/index.js';
 import { ConfigService } from '@nestjs/config';
 
+import { NotificationEventsService } from '../notification/notification-events.service.js';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto/index.js';
 import { User } from './entities/index.js';
 
@@ -61,6 +62,7 @@ export class UsersService {
     private readonly usersRepository: Repository<User>,
     private readonly cache: CacheService,
     private readonly configService: ConfigService,
+    private readonly notifications: NotificationEventsService,
   ) {}
 
   private get authTtl(): number {
@@ -252,7 +254,20 @@ export class UsersService {
     return UserResponseDto.fromEntity(savedUser);
   }
 
-  async softDelete(id: string): Promise<void> {
+  /**
+   * Soft deletes a user and tells the operators.
+   *
+   * **After the delete, not before**, for the same reason as the cache invalidation
+   * below: the notification says the account is gone, and a webhook that is slow
+   * enough for the request to be answered first must not describe a state the
+   * database has not reached. Sending after the row is marked is also what makes the
+   * event meaningful to whoever reads it.
+   *
+   * The actor is the caller id rather than an address, because the audit trail wants
+   * a person and the operator reading the channel wants to know *which* administrator
+   * did it — an id resolves to a name in the audit log that Phase 19 adds.
+   */
+  async softDelete(id: string, actor = 'unknown'): Promise<void> {
     const user = await this.findById(id);
 
     if (!user) {
@@ -265,5 +280,11 @@ export class UsersService {
     // claims expire. `JwtStrategy` reads `isActive`, which a soft delete does not
     // touch, so nothing downstream would otherwise notice.
     await this.invalidateAuthCache(id);
+
+    await this.notifications.notify(
+      'user.deleted',
+      { email: user.email, actor },
+      { userId: id },
+    );
   }
 }

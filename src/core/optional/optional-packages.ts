@@ -70,4 +70,14 @@ export const PACKAGE_FREE_INTEGRATIONS = {
     envFlag: 'SLACK_ENABLED=true',
     install: 'nothing, built in',
   },
+  discord: {
+    feature: 'Discord notifications',
+    envFlag: 'DISCORD_ENABLED=true',
+    install: 'nothing, built in',
+  },
+  notificationEmail: {
+    feature: 'Operator alerts by mail',
+    envFlag: 'NOTIFICATION_EMAIL_ENABLED=true',
+    install: 'nothing, built in',
+  },
 } as const;

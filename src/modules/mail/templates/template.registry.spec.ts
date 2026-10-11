@@ -37,6 +37,14 @@ const SAMPLES: { [K in keyof TemplateDataByName]: TemplateDataByName[K] } = {
     supportUrl: 'https://example.com/support',
     appName: 'Example',
   },
+  // The operator-alert template from Phase 18. Carrying hostile input here is
+  // deliberate: it is the one template whose body arrives from an event rather than
+  // from this repository, so it is the one that most needs the escaping asserted.
+  notification: {
+    headline: 'Sign-in from a new device: <b>iPhone</b>',
+    body: 'Address: ada@example.com\nDevice: iPhone\nFrom: 203.0.113.9',
+    appName: 'Example',
+  },
 };
 
 describe('escapeHtml', () => {
@@ -55,9 +63,14 @@ describe('escapeHtml', () => {
 
 describe('renderTemplate', () => {
   it('registers every template the plan lists, and no others', () => {
+    // The six transactional templates from Phase 14, plus the operator-alert one
+    // Phase 18 added for the notification channel. Written out rather than compared
+    // against the registry, because a registry that lost an entry would otherwise
+    // agree with itself.
     expect([...TEMPLATE_NAMES].sort()).toEqual([
       'account-locked',
       'new-device-login',
+      'notification',
       'password-changed',
       'reset-password',
       'verify-email',
@@ -78,13 +91,17 @@ describe('renderTemplate', () => {
     expect(rendered.html).toContain('<html');
   });
 
-  it.each(TEMPLATE_NAMES)('includes the app name in the %s subject', (name) => {
+  it.each(TEMPLATE_NAMES)('names the app in the %s footer', (name) => {
     const rendered = renderTemplate(
       name as (typeof TEMPLATE_NAMES)[number],
       SAMPLES[name as keyof TemplateDataByName],
     );
 
-    expect(rendered.subject).toContain('Example');
+    // The footer rather than the subject: the operator-alert template's subject is
+    // the event's own headline, because an operator triages a mailbox by subject
+    // and "Security alert" repeated tells them nothing. Every template still carries
+    // the app name, so a shared mailbox answers which deployment spoke.
+    expect(rendered.text).toContain('Example');
   });
 
   it('puts the verification url in both parts', () => {

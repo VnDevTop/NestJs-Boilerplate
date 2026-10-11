@@ -9,7 +9,8 @@ modules
 ├── admin/      operator-only routes
 ├── mail/       transactional email, queued, swappable transport
 ├── queue/      background jobs, with an in-process fallback
-└── maintenance/ nightly retention, batching, dry run
+├── maintenance/ nightly retention, batching, dry run
+└── notification/ operator alerts to Telegram, Slack, Discord, email, log
 ```
 
 ## Rules
@@ -22,6 +23,13 @@ modules
 - A module may import from `common` and `core`. It must not import from another
   feature module's internals, and circular module dependencies are a bug.
 - Generic framework utilities belong in `common` or `core`, not here.
+- A module that needs the job queue cannot be imported _by_ the queue module. When
+  the work needs both — which is the shape of every module with a queue job —
+  it splits in two: the part that does the work goes below, the part that enqueues
+  goes above, and a third module above holds the cron or the route that triggers
+  it. `notification.graph.spec.ts` asserts the split, because a cycle does not
+  fail a test, it fails at boot naming a provider rather than the import that
+  caused it.
 
 ## Routes
 
@@ -50,6 +58,8 @@ DELETE /auth/devices/:id
 POST   /auth/logout-all
 POST   /auth/2fa/disable
 GET    /users/:id
+GET    /notifications/preferences
+PATCH  /notifications/preferences
 ```
 
 ### Admin or super admin

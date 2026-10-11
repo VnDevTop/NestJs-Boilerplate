@@ -142,7 +142,7 @@ src
 ├── database     migrations, seeds, the standalone data source
 ├── common       guards, decorators, middleware, utilities
 ├── core         cache, health, logger, swagger
-└── modules      auth, users, admin, mail, queue, maintenance
+└── modules      auth, users, admin, mail, queue, maintenance, notification
 ```
 
 Business features live in `modules`, each documenting itself. Technical
@@ -175,6 +175,7 @@ looking. The `docs/` folder is also published as a site at
 | [src/modules/users](src/modules/users/README.md)               | the user domain and its authorisation                     |
 | [src/modules/admin](src/modules/admin/README.md)               | operator-only routes                                      |
 | [src/modules/maintenance](src/modules/maintenance/README.md)   | nightly retention, batching, dry run, run history         |
+| [src/modules/notification](src/modules/notification/README.md) | operator alerts, channels, per-user preferences           |
 
 ## Known limitations
 

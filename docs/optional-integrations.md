@@ -49,13 +49,21 @@ never throw, because a feature nobody enabled must not be a startup failure.
 These ship in the box, because the implementation is small enough that a
 dependency would cost more than the code:
 
-| Feature                | Env flag                | Install command   | Implementation                                                     |
-| ---------------------- | ----------------------- | ----------------- | ------------------------------------------------------------------ |
-| Development mail       | `MAIL_TRANSPORT=memory` | nothing, built in | `transports/memory-mail.transport.ts` keeps messages in memory     |
-| Telegram notifications | `TELEGRAM_ENABLED=true` | nothing, built in | `transports/telegram.channel.ts`, MarkdownV2 escaped centrally     |
-| Slack / Discord        | `SLACK_ENABLED=true`    | nothing, built in | `transports/slack.channel.ts`, incoming webhook, Block Kit payload |
+| Feature                 | Env flag                          | Install command   | Implementation                                                     |
+| ----------------------- | --------------------------------- | ----------------- | ------------------------------------------------------------------ |
+| Development mail        | `MAIL_TRANSPORT=memory`           | nothing, built in | `transports/memory-mail.transport.ts` keeps messages in memory     |
+| Telegram notifications  | `TELEGRAM_ENABLED=true`           | nothing, built in | `transports/telegram.channel.ts`, MarkdownV2 escaped centrally     |
+| Slack notifications     | `SLACK_ENABLED=true`              | nothing, built in | `transports/slack.channel.ts`, incoming webhook, Block Kit payload |
+| Discord notifications   | `DISCORD_ENABLED=true`            | nothing, built in | `discord.channel.ts` in the notification module                    |
+| Operator alerts by mail | `NOTIFICATION_EMAIL_ENABLED=true` | nothing, built in | delegates to `MailService`, so it inherits its transport selection |
 
-None of these three adds a package of its own. They post through
+None of these five adds a package of its own. Discord has its own class rather
+than sharing Slack's, because the _url_ and the transport are the same shape but
+the _body_ is not: Discord ignores Slack's `text` field and posts an empty
+message, since its field is `content` and it calls a section an `embed`.
+
+`discord` is registered in `PACKAGE_FREE_INTEGRATIONS` alongside the other two, so
+`optional-packages.spec.ts` keeps the list honest. They post through
 `transports/json-poster.ts`, a thin wrapper on `HttpService` from `@nestjs/axios`,
 which the boilerplate already depends on, so a channel is payload building and
 nothing more:

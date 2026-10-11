@@ -24,11 +24,12 @@ function target(id: string) {
 
 describe('retention policy contents', () => {
   it('lists only tables that exist, so no nightly run fails on a missing table', () => {
-    // mail_logs, notification_logs, login attempts and audit_logs are named in
-    // the plan but have no table yet. If one were added here, every run would
-    // error at 3am on a table that was never created.
+    // mail_logs, login attempts and audit_logs are named in the plan but have no
+    // table yet. If one were added here, every run would error at 3am on a table
+    // that was never created.
     expect(RETENTION_TARGETS.map((t) => t.table).sort()).toEqual([
       'email_verification_tokens',
+      'notification_logs',
       'password_reset_tokens',
       'refresh_tokens',
       'user_devices',
@@ -37,12 +38,21 @@ describe('retention policy contents', () => {
   });
 
   it('keeps the deferred tables visible instead of forgetting them', () => {
+    // `notification-logs` left this list in Phase 18, when its entity arrived. It is
+    // named in the assertion rather than derived, so an entry that quietly reappears
+    // is a failure rather than a no-op.
     expect(DEFERRED_TARGETS.map((t) => t.id)).toEqual([
       'mail-logs',
-      'notification-logs',
       'login-attempts',
       'audit-logs',
     ]);
+  });
+
+  it('cleans the notification log on its own age, since Phase 18 created the table', () => {
+    // The log grows on every event on every channel, so it is the one table in this
+    // list that a deployment without it would notice as unbounded growth.
+    expect(target('notification-logs').ageKey).toBe('notificationLogs');
+    expect(target('notification-logs').description).toContain('notification');
   });
 
   it('gives every target a unique id, since the id is what the admin API returns', () => {

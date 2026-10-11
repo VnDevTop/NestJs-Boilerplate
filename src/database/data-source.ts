@@ -10,6 +10,10 @@ import {
 } from '../modules/auth/entities/index.js';
 import { MaintenanceLog } from '../modules/maintenance/entities/index.js';
 import {
+  NotificationLog,
+  NotificationPreference,
+} from '../modules/notification/entities/index.js';
+import {
   Permission,
   RolePermission,
   User,
@@ -35,6 +39,8 @@ export const ENTITIES = [
   MaintenanceLog,
   Permission,
   RolePermission,
+  NotificationPreference,
+  NotificationLog,
 ];
 
 export const migrations = ['dist/database/migrations/*.js'];

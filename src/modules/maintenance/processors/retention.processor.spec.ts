@@ -12,6 +12,7 @@ import type {
   RetentionService,
 } from '../retention.service.js';
 import type { Job } from '../../queue/queue.interface.js';
+import type { NotificationService } from '../../notification/notification.service.js';
 
 function runResult(
   overrides: Partial<RetentionRunResult> = {},
@@ -54,6 +55,8 @@ interface Harness {
   processor: RetentionProcessor;
   run: ReturnType<typeof vi.fn>;
   insert: ReturnType<typeof vi.fn>;
+  /** The anomaly notification the processor raises for a dirty run. */
+  notify: ReturnType<typeof vi.fn>;
 }
 
 function harness(result: RetentionRunResult | Error = runResult()): Harness {
@@ -65,14 +68,19 @@ function harness(result: RetentionRunResult | Error = runResult()): Harness {
   // service's public surface rather than a repository the processor no longer
   // touches. `insert` keeps its name so the call assertions read the same.
   const insert = vi.fn().mockResolvedValue({ id: 'log-1' });
+  const notify = vi.fn().mockResolvedValue({ deliveries: [] });
 
   return {
-    processor: new RetentionProcessor({
-      run,
-      record: insert,
-    } as unknown as RetentionService),
+    processor: new RetentionProcessor(
+      {
+        run,
+        record: insert,
+      } as unknown as RetentionService,
+      { notify } as unknown as NotificationService,
+    ),
     run,
     insert,
+    notify,
   };
 }
 

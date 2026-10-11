@@ -4,6 +4,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { queueConfig, type QueueConfig } from '../../configs/queue.config.js';
 import { MailModule } from '../mail/index.js';
 import { MaintenanceModule } from '../maintenance/index.js';
+import { NotificationModule } from '../notification/notification.module.js';
+import { NotificationProcessor } from '../notification/processors/notification.processor.js';
 import { BullMqDispatcher } from './bullmq.dispatcher.js';
 import { DeadLetterService } from './dead-letter.service.js';
 import { DedupeGuard } from './dedupe.guard.js';
@@ -37,22 +39,29 @@ const configOf = (configService: ConfigService): QueueConfig =>
  * config: this describes an optional integration, so an app that never queues a
  * job carries none of it.
  *
- * There is deliberately no cron wiring here. The only recurring work is the
- * retention job, which arrives with Phase 16. A `@Cron` entry today would enqueue a
- * job that no processor claims, which the router reports as a permanent failure and
- * the dead-letter list then fills with it every night. When the entries land they
- * will use `@nestjs/schedule` rather than a queue backend, so they keep firing when
- * redis is down — which is when the database most needs cleaning.
+ * There is deliberately no cron wiring here. A `@Cron` entry would enqueue a job
+ * that no processor claims, which the router reports as a permanent failure and the
+ * dead-letter list then fills with it every night. The retention entry that arrived
+ * with Phase 16 therefore lives in its own module above the queue, and anything
+ * Phase 18 or later schedules will do the same — using `@nestjs/schedule` rather
+ * than a queue backend, so entries keep firing when redis is down, which is when the
+ * database most needs cleaning.
  */
 @Module({
   imports: [
     ConfigModule.forFeature(queueConfig),
     MailModule,
     MaintenanceModule,
+    // Below the queue, like the two above it: the processor is injected into the
+    // router here, so the module holding the work has to be imported by the module
+    // holding the dispatch. `NotificationEventsModule` is the other half and sits
+    // above, which is where the emit path and the preferences routes live.
+    NotificationModule,
   ],
   providers: [
     MailProcessor,
     RetentionProcessor,
+    NotificationProcessor,
     ProcessorRouter,
 
     /**

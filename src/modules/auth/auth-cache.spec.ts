@@ -115,6 +115,11 @@ function harness(seed: Partial<Row> = {}) {
     repository as never,
     cache as never,
     { getOrThrow: () => ({ authUserTtl: 60, authRoleTtl: 600 }) } as never,
+    // The notification emitter is fire-and-forget, so a fake that records nothing is
+    // enough here: these tests are about the cache, not about what was announced.
+    {
+      notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
+    } as never,
   );
 
   /** Device id to its session version, standing in for the cached map. */

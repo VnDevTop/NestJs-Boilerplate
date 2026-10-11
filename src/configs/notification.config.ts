@@ -9,16 +9,17 @@ import { registerAs } from '@nestjs/config';
  * `NotificationModule`.
  *
  * No channel here needs a package. Telegram, Slack and Discord are reached over
- * HTTPS, so this namespace is pure configuration and nothing more.
+ * HTTPS, and the email channel delegates to `MailService`, which is already here.
+ * So this namespace is pure configuration and nothing more.
  */
 
 export type NotificationChannelName =
-  'console' | 'telegram' | 'slack' | 'discord';
+  'console' | 'email' | 'telegram' | 'slack' | 'discord';
 
 export interface NotificationConfig {
   /**
    * Master switch. When false every channel is skipped, whatever its own flag
-   * says, so an incident can silence notifications without editing four
+   * says, so an incident can silence notifications without editing five
    * variables.
    */
   enabled: boolean;
@@ -27,11 +28,12 @@ export interface NotificationConfig {
   telegram: TelegramOptions;
   slack: SlackOptions;
   discord: DiscordOptions;
+  email: EmailOptions;
   /** Delivery behaviour, applied to every channel. */
   delivery: NotificationDeliveryOptions;
 }
 
-/** Mirrors the fields `TelegramChannel` passes to the Bot API. */
+/** Mirrors the fields the Telegram channel passes to the Bot API. */
 export interface TelegramOptions {
   botToken?: string;
   chatId?: string;
@@ -40,9 +42,24 @@ export interface TelegramOptions {
    * single chat without topics needs no value here.
    */
   topicId?: string;
+  /**
+   * Per-event topic ids, which override `topicId` for the events they name.
+   *
+   * A separate map rather than one id per channel because a forum chat is
+   * usually several rooms: security events are worth their own topic so they are
+   * not buried under routine registration chatter, and putting them in a
+   * different chat means a second bot token.
+   *
+   * Parsed from `event=topicId` pairs rather than one variable per event, so a
+   * new event does not need a new variable in three files. A pair naming an event
+   * with no entry here falls back to `topicId`, and an unparsable pair is dropped
+   * rather than failing the boot: the notification still arrives, in the room
+   * every other event uses.
+   */
+  topics: Record<string, string>;
 }
 
-/** Mirrors the fields `SlackChannel` posts to an incoming webhook. */
+/** Mirrors the fields the Slack channel posts to an incoming webhook. */
 export interface SlackOptions {
   /** The incoming webhook url, which already carries the credential. */
   webhookUrl?: string;
@@ -54,6 +71,14 @@ export interface SlackOptions {
 export interface DiscordOptions {
   webhookUrl?: string;
   channel?: string;
+}
+
+export interface EmailOptions {
+  /**
+   * Where the email channel sends. Comma separated, because an operator with a
+   * shared mailbox and a personal one wants both.
+   */
+  to: string[];
 }
 
 export interface NotificationDeliveryOptions {
@@ -79,6 +104,47 @@ export interface NotificationDeliveryOptions {
 const flag = (value: string | undefined, fallback = false): boolean =>
   value === undefined ? fallback : value === 'true';
 
+/**
+ * `user.registered=42,auth.login.failed=43` into `{ 'user.registered': '42', ... }`.
+ *
+ * A malformed pair is skipped rather than throwing. A boot that fails over a typo
+ * in a routing convenience is a worse outcome than a notification arriving in the
+ * default room, and the reason the pair was dropped is on the config's own shape:
+ * it simply has no entry.
+ */
+export function parseTopicRoutes(
+  raw: string | undefined,
+): Record<string, string> {
+  const routes: Record<string, string> = {};
+
+  if (raw === undefined || raw.trim() === '') {
+    return routes;
+  }
+
+  for (const pair of raw.split(',')) {
+    const separator = pair.indexOf('=');
+
+    if (separator < 1) {
+      continue;
+    }
+
+    const event = pair.slice(0, separator).trim();
+    const topicId = pair.slice(separator + 1).trim();
+
+    if (event !== '' && topicId !== '') {
+      routes[event] = topicId;
+    }
+  }
+
+  return routes;
+}
+
+const addresses = (raw: string | undefined): string[] =>
+  (raw ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value !== '');
+
 export const notificationConfig = registerAs(
   'notification',
   (): NotificationConfig => ({
@@ -87,6 +153,11 @@ export const notificationConfig = registerAs(
       // The console channel is the development default, so a fresh clone shows
       // what the app would have sent.
       console: flag(process.env.NOTIFICATION_CONSOLE_ENABLED, true),
+      // Off by default even though the console channel is on: mail is the
+      // expensive one, and a developer running locally with a real SMTP
+      // credential in their environment should not have every test registration
+      // send an operator alert.
+      email: flag(process.env.NOTIFICATION_EMAIL_ENABLED),
       telegram: flag(process.env.TELEGRAM_ENABLED),
       slack: flag(process.env.SLACK_ENABLED),
       discord: flag(process.env.DISCORD_ENABLED),
@@ -95,6 +166,7 @@ export const notificationConfig = registerAs(
       botToken: process.env.TELEGRAM_BOT_TOKEN,
       chatId: process.env.TELEGRAM_CHAT_ID,
       topicId: process.env.TELEGRAM_TOPIC_ID,
+      topics: parseTopicRoutes(process.env.TELEGRAM_TOPICS),
     },
     slack: {
       webhookUrl: process.env.SLACK_WEBHOOK_URL,
@@ -103,6 +175,9 @@ export const notificationConfig = registerAs(
     discord: {
       webhookUrl: process.env.DISCORD_WEBHOOK_URL,
       channel: process.env.DISCORD_CHANNEL,
+    },
+    email: {
+      to: addresses(process.env.NOTIFICATION_EMAIL_TO),
     },
     delivery: {
       timeout: Number(process.env.NOTIFICATION_TIMEOUT ?? 5_000),

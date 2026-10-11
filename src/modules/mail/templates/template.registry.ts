@@ -1,12 +1,14 @@
 import {
   accountLockedTemplate,
   newDeviceLoginTemplate,
+  notificationTemplate,
   passwordChangedTemplate,
   resetPasswordTemplate,
   verifyEmailTemplate,
   welcomeTemplate,
   type AccountLockedData,
   type NewDeviceLoginData,
+  type NotificationData,
   type PasswordChangedData,
   type ResetPasswordData,
   type VerifyEmailData,
@@ -42,6 +44,12 @@ export interface TemplateDataByName {
   'password-changed': PasswordChangedData;
   'new-device-login': NewDeviceLoginData;
   'account-locked': AccountLockedData;
+  /**
+   * The operator-alert template from Phase 18. It is here rather than in the
+   * notification module because it is a mail: same layout, same escaping, same
+   * transport, and a second template system would be two renderers to keep in step.
+   */
+  notification: NotificationData;
 }
 
 const registry: {
@@ -53,6 +61,7 @@ const registry: {
   'password-changed': passwordChangedTemplate,
   'new-device-login': newDeviceLoginTemplate,
   'account-locked': accountLockedTemplate,
+  notification: notificationTemplate,
 };
 
 export type TemplateName = keyof TemplateDataByName;
