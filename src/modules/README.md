@@ -51,12 +51,18 @@ GET    /health/ready
 
 ### Authenticated
 
+Routes marked ▲ also require a confirmed address. See
+[src/modules/auth/README.md](src/modules/auth/README.md) for which ones and why.
+
 ```text
 GET    /auth/me
 GET    /auth/devices
 DELETE /auth/devices/:id
 POST   /auth/logout-all
-POST   /auth/2fa/disable
+POST   /auth/2fa/setup      ▲
+POST   /auth/2fa/verify     ▲
+POST   /auth/2fa/disable    ▲
+POST   /auth/refresh-token  ▲
 GET    /users/:id
 GET    /notifications/preferences
 PATCH  /notifications/preferences

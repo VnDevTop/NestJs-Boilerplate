@@ -62,6 +62,7 @@ const ROW = {
   isManager: true,
   isActive: true,
   sessionsVersion: 3,
+  isEmailVerified: true,
   // Present on purpose: the projection must not carry it, and a fake that
   // omitted it would let a regression pass unnoticed.
   password: '$2b$10$notarealhashnotarealhashnotareal',
@@ -141,6 +142,7 @@ describe('findAuthClaims', () => {
       isManager: true,
       isActive: true,
       sessionsVersion: true,
+      isEmailVerified: true,
     });
     expect(options.select).not.toHaveProperty('password');
   });
@@ -157,6 +159,29 @@ describe('findAuthClaims', () => {
       isManager: true,
       isActive: true,
       sessionsVersion: 3,
+      isEmailVerified: true,
+    });
+  });
+
+  it('carries the verification flag, because the gate reads it from here', async () => {
+    // Not a claim: confirming an address must take effect on the next request
+    // rather than when a fifteen minute token expires.
+    const h = harness();
+
+    await expect(h.service.findAuthClaims('u1')).resolves.toMatchObject({
+      isEmailVerified: true,
+    });
+  });
+
+  it('carries an unverified flag rather than omitting it', async () => {
+    // `undefined` would be falsy, so a gate would refuse the user either way — but
+    // the projection is a stated contract and an absent field is not `false`.
+    const h = harness({
+      rows: [{ ...ROW, isEmailVerified: false } as unknown as User],
+    });
+
+    await expect(h.service.findAuthClaims('u1')).resolves.toMatchObject({
+      isEmailVerified: false,
     });
   });
 

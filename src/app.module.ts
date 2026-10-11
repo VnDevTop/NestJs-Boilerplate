@@ -33,6 +33,7 @@ import {
   JwtAuthGuard,
   ManagerGuard,
   PermissionsGuard,
+  RequireVerifiedEmailGuard,
   RolesGuard,
 } from './common/guards/index.js';
 import { CacheModule, HealthModule } from './core/index.js';
@@ -138,6 +139,14 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     {
       provide: APP_GUARD,
       useClass: PermissionsGuard,
+    },
+    {
+      // After the permissions guard, so a caller without the permission is told
+      // that rather than being asked to verify an address first. A gate that runs
+      // earlier turns "you are not allowed this" into "confirm your email", which
+      // is advice that does not help.
+      provide: APP_GUARD,
+      useClass: RequireVerifiedEmailGuard,
     },
     {
       // Registered last so a blocked request is counted before anything else

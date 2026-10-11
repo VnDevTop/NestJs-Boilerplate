@@ -42,6 +42,7 @@ const holder: RequestUser = {
   isManager: false,
   isActive: true,
   permissions: ['user:read', 'user:write'],
+  isEmailVerified: true,
 };
 
 describe('PermissionsGuard', () => {

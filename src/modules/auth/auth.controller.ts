@@ -39,6 +39,7 @@ import {
   CurrentUser,
   DeviceName,
   Public,
+  RequireVerifiedEmail,
 } from '../../common/decorators/index.js';
 import type { RequestUser } from '../../common/interfaces/index.js';
 import { UserResponseDto } from '../users/dto/index.js';
@@ -156,6 +157,10 @@ export class AuthController {
     );
   }
 
+  // The two-factor routes are the ones that change how an account authenticates, so
+  // they require a confirmed address. Turning on a second factor and then losing
+  // access to the address is a lockout nobody can undo from the login screen.
+  @RequireVerifiedEmail()
   @Post('2fa/setup')
   @ApiBearerAuth('access-token')
   @ApiOperation({
@@ -171,6 +176,7 @@ export class AuthController {
   }
 
   @Throttle({ default: { limit: 5, ttl: 300000 } })
+  @RequireVerifiedEmail()
   @Post('2fa/verify')
   @ApiBearerAuth('access-token')
   @ApiOperation({
@@ -187,6 +193,7 @@ export class AuthController {
     return this.authService.twoFactorVerify(currentUser, twoFactorCodeDto);
   }
 
+  @RequireVerifiedEmail()
   @Post('2fa/disable')
   @ApiBearerAuth('access-token')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -308,6 +315,10 @@ export class AuthController {
   }
 
   @RateLimit('refresh')
+  // A refresh mints a new access token from a refresh token, so it is the one route
+  // where an unconfirmed address would let an account nobody owns be kept alive
+  // indefinitely.
+  @RequireVerifiedEmail()
   @Post('refresh-token')
   @ApiOperation({
     summary: 'Exchange a refresh token for a new token pair',

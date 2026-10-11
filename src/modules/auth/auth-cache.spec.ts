@@ -32,6 +32,7 @@ type Row = {
   isActive: boolean;
   isManager: boolean;
   sessionsVersion: number;
+  isEmailVerified: boolean;
 };
 
 /** Mutable, so a test can change the row the way an operator would. */
@@ -44,6 +45,7 @@ function harness(seed: Partial<Row> = {}) {
     isActive: true,
     isManager: false,
     sessionsVersion: 0,
+    isEmailVerified: true,
     ...seed,
   };
 
@@ -204,6 +206,16 @@ describe('an authenticated request served from cache', () => {
     await h.strategy.validate(token({ sv: 0 }));
 
     expect(h.queries[0]).not.toContain('password');
+  });
+
+  it('carries the verification flag, so a gate can read it without a query', async () => {
+    // Every other field is a claim; this one is read from the row. Asserted here
+    // because the strategy is the only thing that hands it to a guard.
+    const h = harness({ isEmailVerified: false });
+
+    await expect(h.strategy.validate(token({ sv: 0 }))).resolves.toMatchObject({
+      isEmailVerified: false,
+    });
   });
 
   it('keys the entry on the user, not on the token', async () => {

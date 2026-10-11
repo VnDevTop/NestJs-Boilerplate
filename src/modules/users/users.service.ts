@@ -38,6 +38,16 @@ export interface AuthClaims {
   isManager: boolean;
   isActive: boolean;
   sessionsVersion: number;
+  /**
+   * Read live rather than carried in the token.
+   *
+   * Everything else here is a claim, because those change only when a session is
+   * revoked. This one changes when somebody clicks a link, and a token minted
+   * before the click would keep saying "unverified" for the rest of its life — long
+   * enough that a gate built on it reads as broken. The column is already in the
+   * cached projection, so it costs nothing extra.
+   */
+  isEmailVerified: boolean;
 }
 
 /**
@@ -53,6 +63,7 @@ const AUTH_CLAIM_COLUMNS = {
   isManager: true,
   isActive: true,
   sessionsVersion: true,
+  isEmailVerified: true,
 } as const;
 
 @Injectable()
@@ -161,6 +172,7 @@ export class UsersService {
           // `undefined` would refuse every token from a database the migration
           // has not touched.
           sessionsVersion: user.sessionsVersion ?? 0,
+          isEmailVerified: user.isEmailVerified,
         };
       },
       { ttl: this.authTtl },

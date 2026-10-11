@@ -99,6 +99,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // 17b; the guard is written against the request user, so it does not care
       // where the names came from.
       permissions: await this.permissionsService.forRole(user.role),
+      // From the row, not the token: confirming an address must take effect on the
+      // next request rather than when a fifteen minute token expires.
+      isEmailVerified: user.isEmailVerified,
     };
   }
 
