@@ -118,6 +118,11 @@ function harness(options: {
     {
       notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
     } as never,
+    // The policy accepts everything here, because what these tests are about is
+    // what happens once a password is accepted.
+    {
+      check: vi.fn(async () => ({ ok: true, reasons: [] })),
+    } as never,
   );
 
   return { service, queries };

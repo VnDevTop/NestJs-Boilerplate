@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -19,11 +20,13 @@ import { RefreshTokenService } from './refresh-token.service.js';
 import { DeviceService } from './device.service.js';
 import { TwoFactorService } from './two-factor.service.js';
 import { JwtStrategy } from './strategies/index.js';
+import { passwordPolicyConfig } from '../../configs/password-policy.config.js';
 import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
 import { MailModule } from '../mail/index.js';
 import { LoginLockoutService } from './login-lockout.service.js';
 import { QueueModule } from '../queue/index.js';
 import { NotificationEventsModule } from '../notification/notification-events.module.js';
+import { PasswordPolicyService } from './password-policy.service.js';
 
 @Module({
   imports: [
@@ -44,6 +47,10 @@ import { NotificationEventsModule } from '../notification/notification-events.mo
     // two-factor change all raise one. Above the queue, like the mail enqueue, so
     // nothing here depends on a channel being reachable.
     NotificationEventsModule,
+    // The policy is defined next to the endpoints that enforce it, which is what
+    // the config's own docblock has claimed since Phase 13 and what was not true
+    // until now: the namespace existed and nothing read it.
+    ConfigModule.forFeature(passwordPolicyConfig),
     TypeOrmModule.forFeature([
       RefreshToken,
       UserDevice,
@@ -56,6 +63,7 @@ import { NotificationEventsModule } from '../notification/notification-events.mo
   controllers: [AuthController],
   providers: [
     LoginLockoutService,
+    PasswordPolicyService,
     AuthService,
     RefreshTokenService,
     PasswordResetService,

@@ -57,6 +57,14 @@ dependency would cost more than the code:
 | Discord notifications   | `DISCORD_ENABLED=true`            | nothing, built in | `discord.channel.ts` in the notification module                    |
 | Operator alerts by mail | `NOTIFICATION_EMAIL_ENABLED=true` | nothing, built in | delegates to `MailService`, so it inherits its transport selection |
 
+| Password strength scoring | none, the policy works without it | `npm install zxcvbn` | `password-policy.service.ts`, resolved through `loadOptional` |
+
+`zxcvbn` is the one optional package here that a _security_ feature degrades
+without. When it is absent the policy still enforces the configured length and
+character classes; only the strength score is skipped, and it is skipped by
+answering `null` rather than by scoring zero — otherwise a deployment that never
+installed it would reject every password with "too easy to guess".
+
 None of these five adds a package of its own. Discord has its own class rather
 than sharing Slack's, because the _url_ and the transport are the same shape but
 the _body_ is not: Discord ignores Slack's `text` field and posts an empty

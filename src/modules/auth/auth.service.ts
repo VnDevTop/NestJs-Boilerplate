@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 
@@ -43,6 +48,7 @@ import { RefreshTokenService } from './refresh-token.service.js';
 import { DeviceService } from './device.service.js';
 import { LoginLockedException } from './exceptions/login-locked.exception.js';
 import { LoginLockoutService } from './login-lockout.service.js';
+import { PasswordPolicyService } from './password-policy.service.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { PasswordResetService } from './password-reset.service.js';
 import { User } from '../users/entities/index.js';
@@ -93,6 +99,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly loginLockout: LoginLockoutService,
     private readonly notifications: NotificationEventsService,
+    private readonly passwordPolicy: PasswordPolicyService,
   ) {}
 
   private get appConfig(): AppConfig {
@@ -103,6 +110,12 @@ export class AuthService {
     registerDto: RegisterDto,
     metadata: DeviceMetadata,
   ): Promise<AuthToken> {
+    // Before the hash, not after. Hashing is deliberately slow, so a policy check
+    // that ran afterwards would have spent the work and then thrown it away — and a
+    // signup that reaches the database before refusing a password is a signup that
+    // has already charged somebody scrypt for the privilege of being told no.
+    await this.assertPasswordAcceptable(registerDto.password);
+
     const passwordHash = await hashPassword(registerDto.password);
 
     const user = await this.usersService.create({
@@ -536,6 +549,11 @@ export class AuthService {
   async resetPassword(
     resetPasswordDto: ResetPasswordDto,
   ): Promise<GenericMessageDto> {
+    // Before `consume`, so a refused password never spends the token. The token is
+    // single use and spending it on a rejected attempt would leave the user who
+    // mistyped their new password needing the whole reset flow again.
+    await this.assertPasswordAcceptable(resetPasswordDto.newPassword);
+
     await this.passwordResetService.consume(
       resetPasswordDto.token,
       resetPasswordDto.newPassword,
@@ -545,6 +563,27 @@ export class AuthService {
     generic.message = 'Your password has been changed. Sign in again.';
 
     return generic;
+  }
+
+  /**
+   * Refuses a password the policy will not accept.
+   *
+   * One call site for the policy and one place that turns its answer into an HTTP
+   * error, so `register` and `reset-password` cannot drift into checking different
+   * subsets of the same rules.
+   *
+   * Every reason is in the message rather than only the first. A user who typed a
+   * password failing three rules is shown three, because finding them one submit at
+   * a time is how a reset form gets abandoned halfway.
+   */
+  private async assertPasswordAcceptable(password: string): Promise<void> {
+    const result = await this.passwordPolicy.check(password);
+
+    if (result.ok) {
+      return;
+    }
+
+    throw new BadRequestException(result.reasons.join(' '));
   }
 
   /**
