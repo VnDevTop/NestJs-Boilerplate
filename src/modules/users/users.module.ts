@@ -5,6 +5,7 @@ import { AuditModule } from '../audit/audit.module.js';
 import { NotificationEventsModule } from '../notification/notification-events.module.js';
 import { Permission, RolePermission, User } from './entities/index.js';
 import { UsersController } from './users.controller.js';
+import { ExportService } from './export/export.service.js';
 import { PermissionsService } from './permissions.service.js';
 import { UsersService } from './users.service.js';
 
@@ -29,7 +30,7 @@ import { UsersService } from './users.service.js';
     AuditModule,
   ],
   controllers: [UsersController],
-  providers: [UsersService, PermissionsService],
-  exports: [UsersService, PermissionsService],
+  providers: [UsersService, PermissionsService, ExportService],
+  exports: [UsersService, PermissionsService, ExportService],
 })
 export class UsersModule {}

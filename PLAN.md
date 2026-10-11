@@ -885,7 +885,7 @@ Tasks:
 - [x] Add `user.requestDeletion()`: soft delete, queue a data export, hard
       delete at the end of the retention window, a right-to-erasure flow built
       on Phase 16
-- [ ] Add a data export endpoint, CSV and JSON, streamed for large result sets
+- [x] Add a data export endpoint, CSV and JSON, streamed for large result sets
 
 Expected outcome:
 

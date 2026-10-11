@@ -82,7 +82,10 @@ function routesOf(controller: object, prefix: string): RouteUnderTest[] {
     });
 }
 
-const usersRoutes = routesOf(new UsersController({} as never), 'users');
+const usersRoutes = routesOf(
+  new UsersController({} as never, {} as never),
+  'users',
+);
 const roleRoutes = routesOf(
   new AdminRolesController({} as never),
   'admin/roles',

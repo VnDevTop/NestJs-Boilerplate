@@ -59,6 +59,7 @@ Routes marked ▲ also require a confirmed address. See
 
 ```text
 GET    /auth/me
+GET    /users/me/export   ▲   CSV or NDJSON, streamed
 GET    /auth/devices
 DELETE /auth/devices/:id
 POST   /auth/logout-all

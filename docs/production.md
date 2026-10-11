@@ -501,6 +501,45 @@ would erase a preference at the moment an operator might be about to restore.
 The address in `mail_logs.recipient` is removed by that table's own 30-day window,
 not by this flow.
 
+## Data export
+
+`GET /api/v1/users/me/export?format=csv|json` returns everything held about the
+caller, streamed.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  'https://api.example.com/api/v1/users/me/export?format=csv' -o account.csv
+```
+
+**Streamed, not collected.** The response pipes TypeORM's cursor, so an account
+with a decade of sessions works and the ones with the most data — which are the ones
+asking — are not the ones that fall over.
+
+**JSON is newline-delimited, not a JSON document.** Each line is independently
+parseable with a `__type` naming the section. An array has to be complete before
+its first byte can be written; a caller who reaches for `JSON.parse` on a large
+export gets an error rather than an out-of-memory crash.
+
+**No credentials, and the exclusion is structural.** `users.password`, the two-factor
+secret and its ciphertext triple, the recovery codes, every refresh token's `jti` and
+hash, and `password_history.passwordHash` are never **selected**. A column that is
+not selected cannot be rendered, so there is nothing to forget at the output stage.
+`expiresAt`, `revokedAt` and the device ip address _are_ included — knowing when a
+session existed and where it came from is the part a person is entitled to.
+
+**CSV injection is defused.** A `userAgent` is chosen by a stranger, so a value
+beginning `=`, `+`, `-` or `@` is prefixed with a tab before quoting. The order
+matters: prefix-then-quote leaves the tab _inside_ the quotes, because a quoted CSV
+field that opens with `=` is still executed by Excel.
+
+**A confirmed address is required**, for the same reason the erasure route needs one:
+the export contains ip addresses and user agents, and an unverified account cannot
+prove the inbox is theirs.
+
+**There is no administrator route.** Not a permission, not a path parameter — the
+endpoint reads the caller's own id and has no way to be pointed at another one. A
+support agent who needs a user's data asks the user for their export.
+
 ## Health checks
 
 ```text
