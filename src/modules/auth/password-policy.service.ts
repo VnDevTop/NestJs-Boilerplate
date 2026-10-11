@@ -41,6 +41,20 @@ export interface BreachChecker {
 }
 
 /**
+ * Whether this user has already used this password.
+ *
+ * The interface lives here rather than in the history service so this file does
+ * not import a repository, and so a caller that only wants the local rules passes
+ * nothing and gets an answer without one.
+ */
+export interface PasswordHistoryCheck {
+  wasUsedBefore(userId: string, password: string): Promise<boolean>;
+}
+
+/** Injection token for the history reader, absent unless one is registered. */
+export const PASSWORD_HISTORY_READER = 'PASSWORD_HISTORY_READER';
+
+/**
  * Below this the password is refused outright.
  *
  * 2 is the first score a human-chosen password reaches, and it means "somewhat
@@ -79,6 +93,8 @@ export class PasswordPolicyService {
     private readonly config: ConfigType<typeof passwordPolicyConfig>,
     @Inject(BREACH_CHECKER)
     private readonly breachChecker: BreachChecker | null,
+    @Inject(PASSWORD_HISTORY_READER)
+    private readonly history: PasswordHistoryCheck | null,
   ) {
     this.zxcvbn = loadOptional<Zxcvbn>(ZXCVBN_SPECIFIER);
 
@@ -143,9 +159,42 @@ export class PasswordPolicyService {
       );
     }
 
-    // Both reasons rather than the first, because a password that is both breached
-    // and weak should not have to be fixed and resubmitted twice to find out.
+    // Every reason rather than the first. A password that is both breached and weak
+    // should not have to be fixed and resubmitted twice to find out.
     return { ok: reasons.length === 0, reasons };
+  }
+
+  /**
+   * Checks a password against one user's own history as well as the global rules.
+   *
+   * The history check is last because it is the only one that needs an identity:
+   * at registration there is no account to have a history, and at a reset the user
+   * is known but the check still needs the id the caller already has.
+   */
+  async checkForUser(
+    password: string,
+    userId: string,
+  ): Promise<PasswordCheckResult> {
+    const result = await this.check(password);
+
+    if (!result.ok || this.history === null || this.config.historyCount <= 0) {
+      return result;
+    }
+
+    // Only asked once the password is otherwise acceptable. Every entry is a scrypt
+    // verification, so running them for a password that already failed the length
+    // rule is work for an answer that is already known.
+    if (await this.history.wasUsedBefore(userId, password)) {
+      return {
+        ok: false,
+        reasons: [
+          ...result.reasons,
+          `This password has been used before. Choose one you have not used in your last ${this.config.historyCount} password changes.`,
+        ],
+      };
+    }
+
+    return result;
   }
 
   /**

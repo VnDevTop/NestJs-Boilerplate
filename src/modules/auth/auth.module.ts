@@ -10,6 +10,7 @@ import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import {
   EmailVerificationToken,
+  PasswordHistoryEntry,
   PasswordResetToken,
   RefreshToken,
   TwoFactorSecret,
@@ -34,9 +35,12 @@ import { NotificationEventsModule } from '../notification/notification-events.mo
 import {
   BREACH_CHECKER,
   type BreachChecker,
+  PASSWORD_HISTORY_READER,
+  type PasswordHistoryCheck,
   PasswordPolicyService,
 } from './password-policy.service.js';
 import { PasswordBreachService } from './password-breach.service.js';
+import { PasswordHistoryService } from './password-history.service.js';
 
 @Module({
   imports: [
@@ -71,6 +75,7 @@ import { PasswordBreachService } from './password-breach.service.js';
       TwoFactorSecret,
       PasswordResetToken,
       EmailVerificationToken,
+      PasswordHistoryEntry,
     ]),
     JwtModule.registerAsync(jwtAccessTokenConfig.asProvider()),
   ],
@@ -79,6 +84,7 @@ import { PasswordBreachService } from './password-breach.service.js';
     LoginLockoutService,
     PasswordPolicyService,
     PasswordBreachService,
+    PasswordHistoryService,
     {
       // Present only when the deployment asked for the check. A `null` provider is
       // the same shape `loadOptional` returns, so the policy service reads one
@@ -100,6 +106,16 @@ import { PasswordBreachService } from './password-breach.service.js';
 
         return null;
       },
+    },
+    {
+      // The history reader is the same shape as the breach checker: present or
+      // absent. Here it is always present — the service answers "no" itself when
+      // `PASSWORD_HISTORY_COUNT` is zero — so the policy does not need to know what
+      // the count is in order to decide whether to ask.
+      provide: PASSWORD_HISTORY_READER,
+      inject: [PasswordHistoryService],
+      useFactory: (history: PasswordHistoryService): PasswordHistoryCheck =>
+        history,
     },
     AuthService,
     RefreshTokenService,

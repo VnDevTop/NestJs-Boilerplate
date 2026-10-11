@@ -62,7 +62,15 @@ const build = (
   breachChecker: {
     isBreached: (password: string) => Promise<boolean>;
   } | null = null,
-) => new PasswordPolicyService({ ...config } as never, breachChecker as never);
+  history: {
+    wasUsedBefore: (id: string, password: string) => Promise<boolean>;
+  } | null = null,
+) =>
+  new PasswordPolicyService(
+    { ...config } as never,
+    breachChecker as never,
+    history as never,
+  );
 
 /** A password meeting every default rule. */
 const GOOD = 'Correct-Horse-1';

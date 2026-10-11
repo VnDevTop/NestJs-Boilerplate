@@ -128,10 +128,84 @@ function harness(
       notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
     } as never,
     policy as never,
+    // The history writer. Registration records the first entry after the row
+    // exists, and these tests are not about that.
+    {
+      record: vi.fn(async () => undefined),
+      wasUsedBefore: vi.fn(async () => false),
+    } as never,
   );
 
   return { service, check: policy.check, create, consume };
 }
+
+describe('the password history', () => {
+  it('records the very first hash after the account exists', async () => {
+    // The ordering is the point: a history row whose user does not exist is an
+    // orphan the cascade cannot clean up, whereas a missing row only costs the
+    // ability to reuse this one password.
+    const order: string[] = [];
+    const h = harness(accepting());
+
+    h.create.mockImplementation(async () => {
+      order.push('create');
+
+      return { ...USER };
+    });
+
+    (
+      h.service as never as { passwordHistory: { record: () => Promise<void> } }
+    ).passwordHistory = {
+      record: async () => {
+        order.push('history');
+      },
+      wasUsedBefore: async () => false,
+    } as never;
+
+    await h.service.register(
+      { email: 'ada@example.com', password: 'Correct-Horse-1' } as never,
+      METADATA as never,
+    );
+
+    expect(order).toEqual(['create', 'history']);
+  });
+
+  it('records the hash rather than the password', async () => {
+    const record = vi.fn(async () => undefined);
+    const h = harness(accepting());
+    (h.service as never as { passwordHistory: unknown }).passwordHistory = {
+      record,
+      wasUsedBefore: async () => false,
+    };
+
+    await h.service.register(
+      { email: 'ada@example.com', password: 'Correct-Horse-1' } as never,
+      METADATA as never,
+    );
+
+    expect(record).toHaveBeenCalledWith('u1', expect.any(String), 'register');
+    // The obvious mistake, and one `toHaveBeenCalledWith` above would not catch:
+    // `expect.any(String)` is satisfied by the password as readily as by a hash.
+    expect(JSON.stringify(record.mock.calls)).not.toContain('Correct-Horse-1');
+  });
+
+  it('does not check the history at registration, because there is none', async () => {
+    // The account does not exist yet, so there is nothing to have reused.
+    const wasUsedBefore = vi.fn(async () => true);
+    const h = harness(accepting());
+    (h.service as never as { passwordHistory: unknown }).passwordHistory = {
+      record: async () => undefined,
+      wasUsedBefore,
+    };
+
+    await h.service.register(
+      { email: 'ada@example.com', password: 'Correct-Horse-1' } as never,
+      METADATA as never,
+    );
+
+    expect(wasUsedBefore).not.toHaveBeenCalled();
+  });
+});
 
 describe('register', () => {
   it('refuses a password the policy rejects', async () => {

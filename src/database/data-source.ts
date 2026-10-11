@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 
 import {
   EmailVerificationToken,
+  PasswordHistoryEntry,
   PasswordResetToken,
   TwoFactorSecret,
   RefreshToken,
@@ -41,6 +42,7 @@ export const ENTITIES = [
   RolePermission,
   NotificationPreference,
   NotificationLog,
+  PasswordHistoryEntry,
 ];
 
 export const migrations = ['dist/database/migrations/*.js'];

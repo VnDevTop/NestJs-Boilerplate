@@ -241,6 +241,27 @@ as "not breached" to the caller, deliberately, because a check that must not den
 service cannot distinguish them. The TTL difference is what stops a brief outage
 from becoming a day of unchecked passwords.
 
+### The password history
+
+`PASSWORD_HISTORY_COUNT` (5 by default) keeps the last N hashes per user and
+refuses a password that matches any of them. Only the scrypt hash is stored, in the
+same `salt:key` form as `users.password`.
+
+**A check is five scrypt derivations.** There is no faster lookup available — a
+password is a password, and the only way to know whether it matches is to derive
+each candidate. That is the price of the feature, and the reason the default is five
+rather than twenty. Raising it costs a password change proportionally.
+
+**The window is trimmed on every write, not by a nightly job.** The table's size is
+always exactly N per user, which is also why it needs no retention rule: the only
+thing that removes a row is a newer password pushing it out.
+
+**Setting it to 0 disables the feature completely, including the write.** Storing
+credentials for a policy that will never check them is pure risk.
+
+At a reset, the reuse check runs inside the transaction and throws, so a rejected
+password leaves the token unspent and the user able to try again.
+
 ### The optional strength score
 
 `npm install zxcvbn` adds a 0–4 strength score on top of the configured rules.

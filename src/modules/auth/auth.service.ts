@@ -49,6 +49,8 @@ import { DeviceService } from './device.service.js';
 import { LoginLockedException } from './exceptions/login-locked.exception.js';
 import { LoginLockoutService } from './login-lockout.service.js';
 import { PasswordPolicyService } from './password-policy.service.js';
+import { PasswordHistoryService } from './password-history.service.js';
+import { PASSWORD_CHANGE_REASON } from './entities/index.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { PasswordResetService } from './password-reset.service.js';
 import { User } from '../users/entities/index.js';
@@ -100,6 +102,7 @@ export class AuthService {
     private readonly loginLockout: LoginLockoutService,
     private readonly notifications: NotificationEventsService,
     private readonly passwordPolicy: PasswordPolicyService,
+    private readonly passwordHistory: PasswordHistoryService,
   ) {}
 
   private get appConfig(): AppConfig {
@@ -124,6 +127,16 @@ export class AuthService {
       firstName: registerDto.firstName,
       lastName: registerDto.lastName,
     });
+
+    // The very first entry, written after the row exists and outside a transaction,
+    // because `create` is not one. The ordering is the point: a history row whose
+    // user does not exist is an orphan the cascade cannot clean up, whereas a
+    // missing history row costs a user the ability to reuse this one password.
+    await this.passwordHistory.record(
+      user.id,
+      passwordHash,
+      PASSWORD_CHANGE_REASON.Register,
+    );
 
     const { token, device, sessionId } = await this.issueSession(
       user.id,

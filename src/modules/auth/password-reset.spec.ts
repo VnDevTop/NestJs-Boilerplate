@@ -128,6 +128,12 @@ function harness(options: { userExists: boolean; userActive?: boolean }) {
     {
       check: vi.fn(async () => ({ ok: true, reasons: [] })),
     } as never,
+    // The history writer. A reset records the new hash in its own transaction,
+    // which this spec asserts separately.
+    {
+      record: vi.fn(async () => undefined),
+      wasUsedBefore: vi.fn(async () => false),
+    } as never,
   );
 
   return {

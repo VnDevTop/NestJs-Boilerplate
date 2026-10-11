@@ -123,6 +123,12 @@ function harness(options: {
     {
       check: vi.fn(async () => ({ ok: true, reasons: [] })),
     } as never,
+    // The history writer. Registration records the first entry after the row
+    // exists, and these tests are not about that.
+    {
+      record: vi.fn(async () => undefined),
+      wasUsedBefore: vi.fn(async () => false),
+    } as never,
   );
 
   return { service, queries };
