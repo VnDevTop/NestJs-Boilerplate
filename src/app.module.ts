@@ -23,6 +23,7 @@ import {
 } from './configs/index.js';
 import {
   AdminModule,
+  AuditModule,
   AuthModule,
   MaintenanceSchedulerModule,
   NotificationEventsModule,
@@ -105,6 +106,16 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     UsersModule,
     AuthModule,
     AdminModule,
+
+    /**
+     * The audit trail.
+     *
+     * Here rather than inside one of the modules that writes to it, because it is
+     * imported by all of them and a module that imported its own audit writer back
+     * would be a cycle. It imports nothing but TypeORM, so sitting at the root costs
+     * nothing.
+     */
+    AuditModule,
 
     // Enqueues the nightly retention job. Imported here rather than inside
     // AuthModule, which already pulls in the queue for mail: the scheduler has to

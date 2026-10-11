@@ -151,6 +151,27 @@ export const RETENTION_TARGETS: readonly RetentionTarget[] = [
     cascades: [],
   },
   {
+    // Phase 19. It moved out of `DEFERRED_TARGETS` when the entity arrived.
+    //
+    // A year, not the week everything else gets. `RETENTION_AUDIT_LOGS_DAYS`
+    // defaults to 365 and the plan's own comment says why: an audit trail kept for
+    // a month is not an audit trail. This is the largest table the job will ever
+    // hold, and the one where deleting a row destroys evidence rather than clearing
+    // clutter — which is why the default is deliberately conservative and the table
+    // is worth sizing for before raising anything else.
+    id: 'audit-logs',
+    table: 'audit_logs',
+    description: 'audit entries, once past the retention window',
+    ageKey: 'auditLogs',
+    ageDays: 0,
+    // On the insert time and nothing else. Every row is equally valuable whatever it
+    // recorded, so there is no predicate that would keep the interesting ones — and
+    // a rule that tried would be a rule about which actions somebody thought were
+    // worth keeping, which is not a decision this table should encode.
+    buildPredicate: (cutoff) => `"createdAt" < '${cutoff.toISOString()}'`,
+    cascades: [],
+  },
+  {
     // Phase 19. Same disjunction as the reset tokens above: a token is worthless
     // once it is spent *or* once it is expired, and requiring both would leave an
     // expired-but-unused unlock link in the table forever.
@@ -203,7 +224,6 @@ export const DEFERRED_TARGETS: readonly {
     id: 'login-attempts',
     reason: 'login-attempt bookkeeping is not stored in its own table',
   },
-  { id: 'audit-logs', reason: 'the audit log entity is a later phase' },
 ];
 
 /**

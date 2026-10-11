@@ -356,6 +356,42 @@ Rows are removed at `RETENTION_NOTIFICATION_LOGS_DAYS`, 30 by default. That tabl
 holds operator addresses and, for the sign-in events, the attempted address — so the
 window is a data-retention decision rather than a housekeeping one.
 
+## The audit trail
+
+`audit_logs` records who did what to which row, from which address, under which
+request id, with a before/after diff.
+
+```sql
+SELECT "createdAt", "actorEmail", "action", "targetType", "targetId", "outcome"
+FROM audit_logs
+WHERE "actorId" = '…'
+ORDER BY "createdAt" DESC
+LIMIT 50;
+```
+
+**A password never reaches a row.** An audit diff is built from whatever object
+the action was performed on, and that object is usually a `User` — which carries a
+scrypt hash. `AuditService` walks every diff on the way in and replaces the value
+of any key in its redaction list with `[redacted]`, at any nesting depth. The key
+stays, so "the password changed" is still readable.
+
+**The writer never throws.** An audit write that failed the action it was recording
+would mean an outage in the log turns into an outage in the product. The gap is
+logged at `error` instead. This is a deliberate trade: the trail can have holes,
+and it is the trail that is available during the incident rather than the one that
+proves what happened six months later.
+
+**No foreign keys on the actor or the target.** The right-to-erasure flow removes
+the row an audit entry is about; a key would block that erasure or cascade the
+evidence away with it.
+
+**`RETENTION_AUDIT_LOGS_DAYS` defaults to 365**, where every other retention
+window is a week. An audit trail kept for a month is not an audit trail, and this
+is the largest table the nightly job will hold. Size for it before raising it.
+
+See [src/modules/audit/README.md](../src/modules/audit/README.md) for the
+indexes and the reasoning.
+
 ## Health checks
 
 ```text

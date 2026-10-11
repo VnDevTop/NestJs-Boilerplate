@@ -875,7 +875,7 @@ Tasks:
 - [x] Add a permanent account lockout with an unlock flow and a notification.
       Phase 17a already blocks login temporarily; this is the version that needs
       an administrator or a verified email to clear
-- [ ] Add an audit log entity: actor, action, before/after diff, ip, user
+- [x] Add an audit log entity: actor, action, before/after diff, ip, user
       agent, request id, append-only
 - [ ] Record an audit entry on every privileged action, through an interceptor
       plus a TypeORM subscriber for writes that bypass a controller
