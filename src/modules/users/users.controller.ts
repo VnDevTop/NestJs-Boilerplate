@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  UseInterceptors,
   Delete,
   Get,
   HttpCode,
@@ -18,10 +19,12 @@ import {
 } from '@nestjs/swagger';
 
 import {
+  Audited,
   CurrentUser,
   Permissions,
   Roles,
 } from '../../common/decorators/index.js';
+import { AuditInterceptor } from '../audit/audit.interceptor.js';
 import type { RequestUser } from '../../common/interfaces/index.js';
 import { Permission, Role } from '../../common/enums/index.js';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto/index.js';
@@ -29,10 +32,21 @@ import { UsersService } from './users.service.js';
 
 @ApiTags('Users')
 @ApiBearerAuth('access-token')
+// Bound at the controller, deciding per route from `@Audited()`. A route in here
+// without the decorator is still unaudited — `audit-policy.spec.ts` reads the real
+// handler metadata to catch that, for the same reason the verified-email gate has
+// one: a convention nobody checks is a convention that erodes.
+@UseInterceptors(AuditInterceptor)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  @Audited({
+    action: 'users.create',
+    targetType: 'user',
+    // A create only learns the id from what it created.
+    targetIdFrom: ['result'],
+  })
   @Roles(Role.Admin, Role.SuperAdmin)
   @Permissions(Permission.UserWrite)
   @Post()
@@ -57,6 +71,11 @@ export class UsersController {
     return this.usersService.findProfileById(id);
   }
 
+  @Audited({
+    action: 'users.update',
+    targetType: 'user',
+    targetIdFrom: [['param', 'id']],
+  })
   @Roles(Role.Admin, Role.SuperAdmin)
   @Permissions(Permission.UserWrite)
   @Patch(':id')
@@ -69,6 +88,14 @@ export class UsersController {
     return this.usersService.update(id, updateUserDto);
   }
 
+  @Audited({
+    action: 'users.delete',
+    targetType: 'user',
+    targetIdFrom: [['param', 'id']],
+    // A 204 has nothing to diff, and diffing it would store an empty object that
+    // reads as "nothing changed" rather than "the row is gone".
+    diffResponse: false,
+  })
   @Roles(Role.Admin, Role.SuperAdmin)
   @Permissions(Permission.UserDelete)
   @Delete(':id')

@@ -11,3 +11,13 @@ export const MANAGER_ONLY_KEY = 'managerOnly';
  * config file with no `Reflector`.
  */
 export const EMAIL_VERIFIED_KEY = 'emailVerified';
+
+/**
+ * The audit policy for a route, set by `@Audited()`.
+ *
+ * An object rather than a string, because the two halves are separate decisions:
+ * what to call the action, and what to diff. A route that audits a sign-in has no
+ * before and no after — the action *is* the record — while a route that updates a
+ * user has both and the diff is the whole point.
+ */
+export const AUDIT_KEY = 'audit';

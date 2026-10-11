@@ -389,6 +389,26 @@ evidence away with it.
 window is a week. An audit trail kept for a month is not an audit trail, and this
 is the largest table the nightly job will hold. Size for it before raising it.
 
+**Only some routes are recorded.** `@Audited()` is opt-in, because a trail that
+records every request is one nobody reads — profile reads and sign-ins would bury
+the privileged writes. The routes that carry it are the ones that change something
+or grant access: creating, editing and deleting a user, and replacing a role's
+permissions. Adding a new privileged route without the decorator is caught by
+`audit-policy.spec.ts`, which reads the decorators off the real handlers.
+
+**A refused request is recorded too**, with the status the exception carried. A
+permission that was refused is evidence; one that was never asked for is not.
+
+**`before` is null on every interceptor-written entry.** The interceptor sees the
+request and the response, never the row as it was, and a reconstructed before-state
+in a table presented as evidence looks like a record while being an inference.
+Routes whose before-state matters call `AuditService.record` directly.
+
+**The address comes from `request.ip`**, resolved against the trust proxy setting,
+never from `x-forwarded-for` directly — that header is client-controlled and
+unbounded, and reading it without the proxy trust setting behind it would put an
+attacker's chosen string into the `ipAddress` of every row they created.
+
 See [src/modules/audit/README.md](../src/modules/audit/README.md) for the
 indexes and the reasoning.
 

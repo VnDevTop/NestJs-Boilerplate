@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AuditModule } from '../audit/audit.module.js';
 import { MaintenanceLog } from '../maintenance/entities/maintenance-log.entity.js';
 import { MaintenanceModule } from '../maintenance/index.js';
 import { QueueModule } from '../queue/index.js';
@@ -18,6 +19,9 @@ import { AdminRolesController } from './roles.controller.js';
     QueueModule,
     MaintenanceModule,
     TypeOrmModule.forFeature([MaintenanceLog]),
+    // For the audit interceptor `AdminRolesController` binds. One-directional, for
+    // the same reason as in `UsersModule`: `AuditModule` imports nothing.
+    AuditModule,
   ],
   controllers: [
     AdminController,

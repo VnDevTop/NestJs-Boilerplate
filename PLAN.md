@@ -877,7 +877,7 @@ Tasks:
       an administrator or a verified email to clear
 - [x] Add an audit log entity: actor, action, before/after diff, ip, user
       agent, request id, append-only
-- [ ] Record an audit entry on every privileged action, through an interceptor
+- [x] Record an audit entry on every privileged action, through an interceptor
       plus a TypeORM subscriber for writes that bypass a controller
 - [ ] Add an `Idempotency-Key` header guard on mutating endpoints, so a client
       retry after a timeout cannot create a duplicate

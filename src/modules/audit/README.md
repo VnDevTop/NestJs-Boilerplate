@@ -76,6 +76,20 @@ There is deliberately **no index on `changedFields`**. A jsonb containment index
 would serve a query nobody writes, at the cost of a write on every privileged
 action.
 
+## The address on the entry
+
+`request.ip` first, because Nest resolves it against the trust proxy setting and
+that resolution is the point: behind a load balancer it is the balancer unless
+`trust proxy` is set, in which case it is the client.
+
+**Not the `x-forwarded-for` header directly.** That header is client-controlled and
+unbounded, and reading it without the proxy trust setting behind it would put an
+attacker's chosen string into the `ipAddress` of every row they created.
+
+A repeated `user-agent` header arrives as an array; the first value is recorded
+rather than the joined one, so a caller cannot choose a separator and get their own
+string into the row.
+
 ## Retention
 
 `RETENTION_AUDIT_LOGS_DAYS`, default **365**. Every other target defaults to a
@@ -91,8 +105,83 @@ Size for it before raising anything else.
 systems skip. A permission that was _refused_ is evidence. A permission that was
 never asked for is not.
 
+## Which routes are recorded
+
+**Opt-in, through `@Audited()`.** A global interceptor that audited every request
+would fill the table with profile reads and sign-ins until nobody read it, and the
+entries that matter are the ones that scroll off the top.
+
+```ts
+@Audited({
+  action: 'users.delete',
+  targetType: 'user',
+  targetIdFrom: [['param', 'id']],
+  diffResponse: false,   // a 204 has nothing to diff
+})
+@Roles(Role.Admin, Role.SuperAdmin)
+@Permissions(Permission.UserDelete)
+@Delete(':id')
+remove(@Param('id') id: string) { … }
+```
+
+`targetIdFrom` is a **list**, because the three shapes are genuinely different
+routes: a delete takes its id from the path, a self-service route has no id in the
+path at all (`'user'`), and a create only learns the id from what it created
+(`'result'`). A source that yields nothing falls through to the next, and a route
+that yields nothing at all records a null target rather than failing — incomplete
+audit metadata is not worth a 500.
+
+`audit-policy.spec.ts` reads the decorators off the real handlers and asserts every
+privileged route carries one, naming its action. A route moved or renamed fails
+there instead of quietly going unaudited.
+
+### `before` is always null on an interceptor entry
+
+The interceptor sees the request and the response, never the row as it was. **A
+reconstructed before-state in a table presented as evidence is worse than none** —
+it looks like a record and it is an inference. Routes whose before-state is worth
+having are the ones where the service read the row and knows; those call
+`AuditService.record` directly with both sides.
+
+### Failures are recorded too
+
+`catchError` writes an entry for a refused request and rethrows the original error
+unchanged. A permission that was refused is evidence; a permission that was never
+asked for is not. `recordFailures: false` opts a route out.
+
+The status comes from the exception's own `getStatus`, and is **null** rather than
+guessed at 500 when there isn't one. An error that never reached the client has no
+status, and a wrong one in an audit table is a small lie that is expensive to notice
+later.
+
+### Never awaited
+
+The write goes to the database the request already used, and `record` never throws,
+so there is nothing to wait for and something to lose: the response time of every
+privileged action.
+
+## Why there is no TypeORM subscriber
+
+The plan asks for one, "for writes that bypass a controller". Two things rule it
+out, both checked against the installed TypeORM rather than assumed — the same
+finding Phase 17b reached for the cache invalidation subscriber:
+
+- **A subscriber gets no dependency injection.** `ConnectionMetadataBuilder`
+  instantiates them with `new metadata.target()`. `AuditService` needs a repository,
+  so it would be unreachable except through a module-level singleton — which is the
+  drift the module system exists to prevent.
+- **It could not identify the row anyway.** `UpdateQueryBuilder` passes `valuesSet`
+  as the event entity, so `repository.update()` delivers `{ role: 'admin' }` with no
+  id, and `DeleteQueryBuilder` passes no entity at all. Every write that matters
+  here is a query-builder write. The subscriber would fire on all of them and be
+  able to act on none.
+
+A service that performs a privileged write **without a controller calls
+`AuditService.record` directly.** That is the honest version of "writes that bypass
+a controller": an explicit call at the write site, rather than a hook that fires on
+writes it cannot describe.
+
 ## Not in this phase
 
-The entity and the writer only. The interceptor that decides what counts as a
-privileged action, the TypeORM subscriber that catches writes bypassing a
-controller, and the admin query surface are later phases in this one.
+The admin query surface — a route to read the trail — is not here yet. The entity,
+the writer, the interceptor and the coverage spec are.

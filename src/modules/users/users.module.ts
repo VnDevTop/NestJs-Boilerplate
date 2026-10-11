@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AuditModule } from '../audit/audit.module.js';
 import { NotificationEventsModule } from '../notification/notification-events.module.js';
 import { Permission, RolePermission, User } from './entities/index.js';
 import { UsersController } from './users.controller.js';
@@ -23,6 +24,9 @@ import { UsersService } from './users.service.js';
   imports: [
     TypeOrmModule.forFeature([User, Permission, RolePermission]),
     NotificationEventsModule,
+    // For the audit interceptor `UsersController` binds. `AuditModule` imports
+    // nothing but TypeORM, so this is one-directional — the direction that matters.
+    AuditModule,
   ],
   controllers: [UsersController],
   providers: [UsersService, PermissionsService],
