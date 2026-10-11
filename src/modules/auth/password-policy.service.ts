@@ -26,6 +26,20 @@ type Zxcvbn = (password: string) => ZxcvbnResult;
 
 export const ZXCVBN_SPECIFIER = 'zxcvbn';
 
+/** Injection token for the breach checker, which is absent unless configured. */
+export const BREACH_CHECKER = 'BREACH_CHECKER';
+
+/**
+ * What the policy needs from a breach checker.
+ *
+ * An interface rather than the class, so this file has no dependency on
+ * `HttpService`, the cache or the network, and the policy stays testable with a
+ * plain object. `PasswordBreachService` satisfies it as it stands.
+ */
+export interface BreachChecker {
+  isBreached(password: string): Promise<boolean>;
+}
+
 /**
  * Below this the password is refused outright.
  *
@@ -63,6 +77,8 @@ export class PasswordPolicyService {
   constructor(
     @Inject(passwordPolicyConfig.KEY)
     private readonly config: ConfigType<typeof passwordPolicyConfig>,
+    @Inject(BREACH_CHECKER)
+    private readonly breachChecker: BreachChecker | null,
   ) {
     this.zxcvbn = loadOptional<Zxcvbn>(ZXCVBN_SPECIFIER);
 
@@ -87,9 +103,12 @@ export class PasswordPolicyService {
   /**
    * Checks a password.
    *
-   * Synchronous today and asynchronous from the breach check onwards. The signature
-   * is already a promise so that adding a network call later is not a breaking
-   * change at every call site — a caller that `await`s this compiles unchanged.
+   * A promise from the start, even when the breach check is off, so that turning it
+   * on is not a breaking change at any call site.
+   *
+   * The format check runs first and alone: a password that fails the length rule is
+   * not going to pass a breach check, and asking anyway spends a network call to
+   * learn nothing.
    */
   async check(password: string): Promise<PasswordCheckResult> {
     // First, and alone: a password that fails the length rule is not going to pass
@@ -100,20 +119,33 @@ export class PasswordPolicyService {
       return format;
     }
 
+    const reasons: string[] = [];
+
+    // After the format check and before the score: a breached password is the more
+    // urgent news, and it is also the check that can be wrong in the safe
+    // direction, so it should not sit behind an optional package that may be
+    // absent.
+    if (this.config.checkBreachList && this.breachChecker !== null) {
+      if (await this.breachChecker.isBreached(password)) {
+        reasons.push(
+          'This password appears in a list of passwords found in data breaches. Please choose another.',
+        );
+      }
+    }
+
     const score = this.scoreStrength(password);
 
     if (score !== null && score < MINIMUM_ACCEPTABLE_SCORE) {
-      return {
-        ok: false,
-        reasons: [
-          score === 0
-            ? 'This password is too easy to guess. Try several unrelated words, or a longer random string.'
-            : 'This password is too easy to guess. Add length or unpredictability.',
-        ],
-      };
+      reasons.push(
+        score === 0
+          ? 'This password is too easy to guess. Try several unrelated words, or a longer random string.'
+          : 'This password is too easy to guess. Add length or unpredictability.',
+      );
     }
 
-    return { ok: true, reasons: [] };
+    // Both reasons rather than the first, because a password that is both breached
+    // and weak should not have to be fixed and resubmitted twice to find out.
+    return { ok: reasons.length === 0, reasons };
   }
 
   /**

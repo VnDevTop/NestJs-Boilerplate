@@ -197,6 +197,57 @@ _missing_ a permission, so the guard refuses rather than admits. A deploy that
 changes grants the other way, which this cache cannot cause, would be the
 dangerous one.
 
+## Password policy
+
+Configured entirely by environment; nothing is hard-coded in a DTO.
+
+```dotenv
+PASSWORD_MIN_LENGTH=8
+PASSWORD_MAX_LENGTH=128
+PASSWORD_REQUIRE_LOWERCASE=true
+PASSWORD_REQUIRE_UPPERCASE=true
+PASSWORD_REQUIRE_NUMBER=true
+PASSWORD_REQUIRE_SYMBOL=true
+PASSWORD_HISTORY_COUNT=5
+PASSWORD_CHECK_BREACH_LIST=false
+```
+
+Two defaults worth questioning rather than accepting:
+
+- **All four character classes on, at a minimum of 8, is a weak policy.** The
+  classes are individually switchable for exactly that reason. Turning them all
+  off and raising `PASSWORD_MIN_LENGTH` to 20 accepts
+  `correct horse battery staple` and rejects nothing a composition rule would have
+  pushed somebody towards. NIST has recommended against composition rules since
+  2016, mostly because they produce `Password1!`.
+- **`PASSWORD_MAX_LENGTH` is a bound on work, not on the hash.** scrypt has no
+  72-byte truncation, so a megabyte of password is a megabyte of key derivation. The
+  default of 128 is comfortable; there is no benefit to a larger one.
+
+### The breach list
+
+`PASSWORD_CHECK_BREACH_LIST=true` queries the Pwned Passwords range API. The
+password is SHA-1'd and only the **first five characters** are sent; the service
+returns every suffix sharing that prefix and the comparison happens here. The
+service never learns which password was asked about.
+
+**It fails open.** An unreachable or rate-limited API logs a warning and lets the
+signup through. The alternative makes a third party an availability dependency for
+this deployment, which is a considerably worse failure than a user signing up with
+a breached password.
+
+**A failed lookup is cached for a minute, a verdict for a month.** Both answers read
+as "not breached" to the caller, deliberately, because a check that must not deny
+service cannot distinguish them. The TTL difference is what stops a brief outage
+from becoming a day of unchecked passwords.
+
+### The optional strength score
+
+`npm install zxcvbn` adds a 0–4 strength score on top of the configured rules.
+Without it the score is skipped rather than treated as zero — otherwise a
+deployment that never installed the package would refuse every password as "too
+easy to guess". See `docs/optional-integrations.md`.
+
 ## Operator notifications
 
 Off by default, and the console channel is on inside it — so the default profile

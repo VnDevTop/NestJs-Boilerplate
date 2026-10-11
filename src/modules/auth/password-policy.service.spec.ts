@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { passwordPolicyConfig } from '../../configs/password-policy.config.js';
 
@@ -53,8 +53,16 @@ const policy = (overrides: Partial<Policy> = {}): Policy => ({
   ...overrides,
 });
 
-const build = (config: Policy = policy()) =>
-  new PasswordPolicyService({ ...config } as never);
+/**
+ * The service with a breach checker that is absent, which is the default profile:
+ * `PASSWORD_CHECK_BREACH_LIST` is off.
+ */
+const build = (
+  config: Policy = policy(),
+  breachChecker: {
+    isBreached: (password: string) => Promise<boolean>;
+  } | null = null,
+) => new PasswordPolicyService({ ...config } as never, breachChecker as never);
 
 /** A password meeting every default rule. */
 const GOOD = 'Correct-Horse-1';
@@ -164,5 +172,88 @@ describe('the optional strength estimator', () => {
     const result = await build().check('Abcdefgh1!');
 
     expect(result.reasons[0]).toContain('too easy to guess');
+  });
+});
+
+describe('the breach list', () => {
+  const breached = { isBreached: vi.fn(async () => true) };
+  const clean = { isBreached: vi.fn(async () => false) };
+
+  beforeEach(() => {
+    optional.installed = false;
+    breached.isBreached.mockClear();
+    clean.isBreached.mockClear();
+  });
+
+  const withBreachCheck = { checkBreachList: true };
+
+  it('does not call the checker while the feature is off', async () => {
+    // The default. A breach check is a network call in a signup path, so it is not
+    // something a boilerplate turns on for every clone.
+    await expect(
+      build(policy(), clean as never).check(GOOD),
+    ).resolves.toMatchObject({ ok: true });
+    expect(clean.isBreached).not.toHaveBeenCalled();
+  });
+
+  it('refuses a breached password once enabled', async () => {
+    const service = build(policy(withBreachCheck), breached as never);
+
+    await expect(service.check(GOOD)).resolves.toMatchObject({
+      ok: false,
+      reasons: [
+        'This password appears in a list of passwords found in data breaches. Please choose another.',
+      ],
+    });
+  });
+
+  it('accepts a password the corpus does not have', async () => {
+    const service = build(policy(withBreachCheck), clean as never);
+
+    await expect(service.check(GOOD)).resolves.toMatchObject({ ok: true });
+  });
+
+  it('does not ask about a password that already failed the length rule', async () => {
+    // A password that fails `minLength` cannot pass a breach check, and asking
+    // spends a network call to learn nothing.
+    const service = build(policy(withBreachCheck), breached as never);
+
+    await service.check('Ab1!');
+
+    expect(breached.isBreached).not.toHaveBeenCalled();
+  });
+
+  it('does not ask when no checker was provided, even if the flag is on', async () => {
+    // The flag can be set before the provider is wired, or the module can be built
+    // without one in a test. A missing dependency must not become a crash in a
+    // signup.
+    const service = build(policy(withBreachCheck), null);
+
+    await expect(service.check(GOOD)).resolves.toMatchObject({ ok: true });
+  });
+
+  it('reports the breach before the strength score', async () => {
+    // A breached password is the more urgent news, and the score is from an
+    // optional package that may be absent — so the check that can be wrong in the
+    // safe direction should not sit behind it.
+    optional.installed = true;
+    const service = build(policy(withBreachCheck), breached as never);
+
+    const result = await service.check('Abcdefgh1!');
+
+    expect(result.reasons[0]).toContain('data breaches');
+    expect(result.reasons).toHaveLength(2);
+  });
+
+  it('lists the breach and the score together, so a form shows both at once', async () => {
+    // Finding them one submit at a time is how somebody ends up submitting the same
+    // password five times.
+    optional.installed = true;
+    const service = build(policy(withBreachCheck), breached as never);
+
+    const result = await service.check('Abcdefgh1!');
+
+    expect(result.reasons.some((r) => r.includes('breaches'))).toBe(true);
+    expect(result.reasons.some((r) => r.includes('too easy'))).toBe(true);
   });
 });

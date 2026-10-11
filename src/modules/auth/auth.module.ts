@@ -1,3 +1,4 @@
+import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -20,13 +21,22 @@ import { RefreshTokenService } from './refresh-token.service.js';
 import { DeviceService } from './device.service.js';
 import { TwoFactorService } from './two-factor.service.js';
 import { JwtStrategy } from './strategies/index.js';
-import { passwordPolicyConfig } from '../../configs/password-policy.config.js';
+import { ConfigService } from '@nestjs/config';
+import {
+  passwordPolicyConfig,
+  type PasswordPolicyConfig,
+} from '../../configs/password-policy.config.js';
 import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
 import { MailModule } from '../mail/index.js';
 import { LoginLockoutService } from './login-lockout.service.js';
 import { QueueModule } from '../queue/index.js';
 import { NotificationEventsModule } from '../notification/notification-events.module.js';
-import { PasswordPolicyService } from './password-policy.service.js';
+import {
+  BREACH_CHECKER,
+  type BreachChecker,
+  PasswordPolicyService,
+} from './password-policy.service.js';
+import { PasswordBreachService } from './password-breach.service.js';
 
 @Module({
   imports: [
@@ -51,6 +61,10 @@ import { PasswordPolicyService } from './password-policy.service.js';
     // the config's own docblock has claimed since Phase 13 and what was not true
     // until now: the namespace existed and nothing read it.
     ConfigModule.forFeature(passwordPolicyConfig),
+    // For the breach lookup, which is the one network call the policy can make.
+    // Only here so that an application which never sets
+    // `PASSWORD_CHECK_BREACH_LIST` has no HTTP client in its graph for it.
+    HttpModule,
     TypeOrmModule.forFeature([
       RefreshToken,
       UserDevice,
@@ -64,6 +78,29 @@ import { PasswordPolicyService } from './password-policy.service.js';
   providers: [
     LoginLockoutService,
     PasswordPolicyService,
+    PasswordBreachService,
+    {
+      // Present only when the deployment asked for the check. A `null` provider is
+      // the same shape `loadOptional` returns, so the policy service reads one
+      // thing rather than branching on whether the feature is configured.
+      provide: BREACH_CHECKER,
+      inject: [ConfigService, PasswordBreachService],
+      useFactory: (
+        configService: ConfigService,
+        breach: PasswordBreachService,
+      ): BreachChecker | null => {
+        const enabled =
+          configService.getOrThrow<PasswordPolicyConfig>(
+            'passwordPolicy',
+          ).checkBreachList;
+
+        if (enabled) {
+          return breach;
+        }
+
+        return null;
+      },
+    },
     AuthService,
     RefreshTokenService,
     PasswordResetService,
