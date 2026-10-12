@@ -11,7 +11,12 @@ import {
 } from './common/filters/index.js';
 import { ResponseTransformInterceptor } from './common/interceptors/index.js';
 import { createGlobalValidationPipe } from './common/pipes/index.js';
-import { createAppLogger, setupSwagger } from './core/index.js';
+import {
+  createAppLogger,
+  SentryService,
+  setupSwagger,
+  TracingService,
+} from './core/index.js';
 
 import type { SecurityConfig } from './configs/index.js';
 import { AppModule, ObserveInstrument } from './app.module.js';
@@ -71,7 +76,14 @@ async function bootstrap() {
   }
 
   app.useGlobalPipes(createGlobalValidationPipe());
-  app.useGlobalFilters(new AllExceptionsFilter(), new HttpExceptionFilter());
+  // The reporting services come from the container rather than being constructed
+  // here, because `SentryService` initialises the SDK and that must happen once
+  // per process — a second `init` discards the first one's configuration, which is
+  // the kind of bug that reads as a broken DSN.
+  app.useGlobalFilters(
+    new AllExceptionsFilter(app.get(SentryService), app.get(TracingService)),
+    new HttpExceptionFilter(),
+  );
   app.useGlobalInterceptors(new ResponseTransformInterceptor());
 
   setupSwagger(app);

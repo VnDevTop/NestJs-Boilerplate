@@ -3,6 +3,7 @@ export * from './health/index.js';
 export * from './logger/index.js';
 export * from './metrics/index.js';
 export * from './redact/index.js';
+export * from './sentry/index.js';
 export * from './optional/index.js';
 export * from './swagger/index.js';
 export * from './tracing/index.js';

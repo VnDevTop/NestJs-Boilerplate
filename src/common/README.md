@@ -49,7 +49,9 @@ catch-all differently and neither accepts the other's.
 ## Filters
 
 `HttpExceptionFilter` shapes anything the application threw on purpose, and
-`AllExceptionsFilter` catches the rest and logs it. A 4xx is not logged: it is a
+`AllExceptionsFilter` catches the rest and logs it, and reports it to Sentry when
+`@sentry/node` and a DSN are present — with the request headers, cookies, body and
+query string stripped, because that is where credentials arrive. A 4xx is not logged: it is a
 client mistake, and logging every one buries the failures that matter.
 
 ## Interceptors
@@ -59,12 +61,12 @@ client mistake, and logging every one buries the failures that matter.
 
 ## Utilities worth knowing
 
-| Utility | Note |
-| --- | --- |
-| `utils/password.util.ts` | scrypt hashing, plus `generatePassword` for seeds |
-| `utils/encryption.util.ts` | AES-256-GCM with the auth tag verified on read |
-| `utils/recovery-code.util.ts` | Crockford base32, no I/L/O/U, so a code read aloud is not mistyped |
-| `utils/user-agent.util.ts` | dependency free best effort; swap for `ua-parser-js` if coverage matters more |
-| `utils/request-id.util.ts` | generation, sanitising, and the async context |
+| Utility                       | Note                                                                          |
+| ----------------------------- | ----------------------------------------------------------------------------- |
+| `utils/password.util.ts`      | scrypt hashing, plus `generatePassword` for seeds                             |
+| `utils/encryption.util.ts`    | AES-256-GCM with the auth tag verified on read                                |
+| `utils/recovery-code.util.ts` | Crockford base32, no I/L/O/U, so a code read aloud is not mistyped            |
+| `utils/user-agent.util.ts`    | dependency free best effort; swap for `ua-parser-js` if coverage matters more |
+| `utils/request-id.util.ts`    | generation, sanitising, and the async context                                 |
 
 Each has a test next to it where the behaviour is worth pinning.

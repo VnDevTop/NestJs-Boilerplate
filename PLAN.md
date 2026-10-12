@@ -976,7 +976,7 @@ Tasks:
 - [x] Add OpenTelemetry traces spanning HTTP, database and job execution
 - [ ] Propagate `X-Request-Id` into every log line, mail record and
       notification record
-- [ ] Add Sentry error reporting with release tagging
+- [x] Add Sentry error reporting with release tagging
 - [ ] Add alert rules: failure rate above a threshold, a non-empty dead-letter
       list, a maintenance job that has not run in 26 hours
 - [x] Redact token, secret and OTP fields in the logger

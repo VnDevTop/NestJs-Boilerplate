@@ -44,6 +44,7 @@ import {
   HealthModule,
   HttpTracingInterceptor,
   MetricsModule,
+  SentryModule,
   TracingModule,
 } from './core/index.js';
 import {
@@ -126,6 +127,15 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
      * something this boilerplate should choose for whoever clones it.
      */
     TracingModule,
+
+    /**
+     * Sentry error reporting.
+     *
+     * A leaf in the graph — it imports nothing, because the SDK is resolved
+     * through `loadOptional` — so it sits at the root and everything that wants
+     * to report an error can get it without importing it from here.
+     */
+    SentryModule,
     UsersModule,
     AuthModule,
     AdminModule,
