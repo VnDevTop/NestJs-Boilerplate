@@ -33,6 +33,16 @@ export const MAIL_TRANSPORT = 'MAIL_TRANSPORT';
 export interface SendMailResult extends SendResult {
   mailId: string;
   template: TemplateName;
+  /**
+   * Which transport actually ran, and the rendered subject.
+   *
+   * On the result rather than looked up by the caller, because `mail_logs` is
+   * written by the processor and the processor only has this object. Asking the
+   * service separately would mean a second source of truth for a fact already
+   * known here — and a log row that says "smtp" while the transport was SES.
+   */
+  transportName: string;
+  subject: string;
   /** False when the send failed or the transport was unavailable. */
   delivered: boolean;
   /**
@@ -149,7 +159,14 @@ export class MailService {
       // everything produces a healthy-looking send count forever.
       this.metrics.mailSent(template, this.transport.name);
 
-      return { ...result, mailId: message.mailId, template, delivered: true };
+      return {
+        ...result,
+        mailId: message.mailId,
+        template,
+        transportName: this.transport.name,
+        subject: message.subject,
+        delivered: true,
+      };
     } catch (error) {
       logger.error(
         `[mail:${message.mailId}] template=${template} transport=${this.transport.name} ` +
@@ -167,6 +184,8 @@ export class MailService {
         rejected: [],
         mailId: message.mailId,
         template,
+        transportName: this.transport.name,
+        subject: message.subject,
         delivered: false,
         permanent: isPermanentRejection(error),
         // Undefined rather than null when there is no status, so the field is

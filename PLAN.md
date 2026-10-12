@@ -974,7 +974,7 @@ Tasks:
       `notification_sent_total`, `job_lag_seconds`,
       `retention_rows_deleted_total`
 - [x] Add OpenTelemetry traces spanning HTTP, database and job execution
-- [ ] Propagate `X-Request-Id` into every log line, mail record and
+- [x] Propagate `X-Request-Id` into every log line, mail record and
       notification record
 - [x] Add Sentry error reporting with release tagging
 - [x] Add alert rules: failure rate above a threshold, a non-empty dead-letter

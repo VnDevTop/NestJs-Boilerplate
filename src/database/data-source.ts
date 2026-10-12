@@ -11,6 +11,7 @@ import {
   UserDevice,
 } from '../modules/auth/entities/index.js';
 import { AuditLog } from '../modules/audit/entities/index.js';
+import { MailLog } from '../modules/mail/entities/index.js';
 import { MaintenanceLog } from '../modules/maintenance/entities/index.js';
 import {
   NotificationLog,
@@ -47,6 +48,7 @@ export const ENTITIES = [
   PasswordHistoryEntry,
   AccountUnlockToken,
   AuditLog,
+  MailLog,
 ];
 
 export const migrations = ['dist/database/migrations/*.js'];

@@ -41,6 +41,14 @@ export interface DeliveryOutcome {
 /** One row's worth of `notification_logs`, before it reaches the repository. */
 export interface LogEntry {
   notificationId: string;
+  /**
+   * The request that raised this event, when there was one.
+   *
+   * Carried through from the job payload rather than read at write time, because
+   * the write happens in the worker process where the async context of the request
+   * that enqueued it no longer exists.
+   */
+  requestId?: string;
   event: NotificationEventKey;
   channel: NotificationChannelName;
   userId?: string;

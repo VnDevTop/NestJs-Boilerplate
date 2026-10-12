@@ -45,6 +45,7 @@ export class NotificationLogService implements NotificationLogWriter {
     try {
       await this.logs.insert({
         notificationId: entry.notificationId,
+        requestId: entry.requestId ?? null,
         event: entry.event,
         channel: entry.channel,
         userId: entry.userId ?? null,

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
+import { getRequestId } from '../../common/utils/index.js';
 import { dedupeKey } from '../queue/dedupe-key.js';
 import { QUEUE_NAMES } from '../queue/queue.interface.js';
 import type { JobQueue } from '../queue/queue.interface.js';
@@ -63,6 +64,11 @@ export class NotificationEventsService {
       event,
       data,
       userId: options.userId,
+      // Read from the async context rather than passed in. The emit side is a
+      // service method that knows nothing about requests, and a call site that had
+      // to thread an id through would eventually forget to — which is the same gap
+      // `requestId` already closes for log lines.
+      requestId: getRequestId(),
     };
 
     return this.queue

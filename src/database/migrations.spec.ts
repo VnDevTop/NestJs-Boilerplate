@@ -45,8 +45,19 @@ const MIGRATIONS: { file: string; tables: string[] }[] = [
  * entity declares — the entity is the larger set, and the extra columns here are the
  * ones that migration brought in.
  */
-const ALTER_MIGRATIONS: { file: string; adds: string[] }[] = [
+const ALTER_MIGRATIONS: {
+  file: string;
+  /** Column name, for the per-migration checks. */
+  adds: string[];
+  /** Table each one was added to, for folding into the CREATE TABLE comparison. */
+  tables?: Record<string, string>;
+}[] = [
   { file: '1791900000000-AddVersionColumns.ts', adds: ['version'] },
+  {
+    file: '1792100000000-AddMailLogs.ts',
+    adds: ['requestId'],
+    tables: { requestId: 'notification_logs' },
+  },
 ];
 
 function read(file: string): { up: string; down: string } {
@@ -88,13 +99,17 @@ function tablesMentioned(sql: string): string[] {
  * honest rather than merely strict.
  */
 function laterAdditions(table: string): string[] {
-  return ALTER_MIGRATIONS.filter((migration) =>
-    migration.adds.some((column) =>
-      new RegExp(`ALTER TABLE "${table}" ADD "${column}"`).test(
-        read(migration.file).up,
-      ),
-    ),
-  ).flatMap((migration) => migration.adds);
+  return ALTER_MIGRATIONS.flatMap((migration) => {
+    const declared = migration.tables ?? {};
+
+    return migration.adds.filter(
+      (column) =>
+        (declared[column] ?? table) === table &&
+        new RegExp(`ALTER TABLE "${table}" ADD "${column}"`).test(
+          read(migration.file).up,
+        ),
+    );
+  });
 }
 
 function columnsOf(table: string, up: string): string[] {
@@ -253,13 +268,30 @@ describe.each(ALTER_MIGRATIONS)('the $file migration', ({ file, adds }) => {
     }
   });
 
-  it('gives the column a NOT NULL default, so no existing row is left unusable', () => {
+  it('makes a version column NOT NULL, so no existing row is left unusable', () => {
     // A nullable version would need a null case in every comparison, and the one
     // place that would compare it is exactly the place that must not have an
-    // exception.
+    // exception. Conditional because a `requestId` is *supposed* to be nullable — a
+    // retention job's own mail has no request behind it — and not every ALTER
+    // migration here adds a version.
+    if (!adds.includes('version')) {
+      return;
+    }
+
+    expect(up).toMatch(/ADD "version" \w+ NOT NULL DEFAULT/);
+  });
+
+  it('leaves a correlation column nullable, because some sends have no request', () => {
+    // The opposite requirement, and it is a real one: a send from a scheduled job
+    // has no request id, and a NOT NULL column would make it unrecordable — which
+    // is how a table ends up with no row for the failures nobody asked about.
     for (const column of adds) {
-      expect(up, column).toMatch(
-        new RegExp(`ADD "${column}" \\w+ NOT NULL DEFAULT`),
+      if (column === 'version') {
+        continue;
+      }
+
+      expect(up, column).not.toMatch(
+        new RegExp(`ADD "${column}"[^;]*NOT NULL`),
       );
     }
   });

@@ -525,6 +525,27 @@ The logger cannot throw. A cyclic payload, a value whose `toJSON` throws and a
 closed stream all degrade to a shorter line, because a logger that breaks the
 request it was describing loses the one record that explained the fault.
 
+## Correlation
+
+One id ties a request to everything it caused: the log lines, the audit entries,
+the mail that was sent, the notification that was delivered, and the spans.
+
+| Where               | How to find it                                     |
+| ------------------- | -------------------------------------------------- |
+| log lines           | `requestId` on every entry, from the async context |
+| `mail_logs`         | `SELECT … WHERE "requestId" = '…'`                 |
+| `notification_logs` | same                                               |
+| `audit_logs`        | `requestId`                                        |
+| Sentry              | attached as a tag                                  |
+
+**The id travels in the queue payload, not looked up at delivery time.** A mail or
+a notification is delivered in the worker, possibly long after the request answered,
+and the async context that held the id is gone by then. Reading it at delivery would
+write `null` on every row — which is the worst shape for a correlation column,
+because it looks implemented.
+
+`docs/runbook.md` has the queries.
+
 ## Alerts
 
 `ops/prometheus/alerts.yml` holds three rules. Their thresholds live in
@@ -644,6 +665,27 @@ Two things worth knowing when reading a log:
 The logger cannot throw. A cyclic payload, a value whose `toJSON` throws and a
 closed stream all degrade to a shorter line, because a logger that breaks the
 request it was describing loses the one record that explained the fault.
+
+## Correlation
+
+One id ties a request to everything it caused: the log lines, the audit entries,
+the mail that was sent, the notification that was delivered, and the spans.
+
+| Where               | How to find it                                     |
+| ------------------- | -------------------------------------------------- |
+| log lines           | `requestId` on every entry, from the async context |
+| `mail_logs`         | `SELECT … WHERE "requestId" = '…'`                 |
+| `notification_logs` | same                                               |
+| `audit_logs`        | `requestId`                                        |
+| Sentry              | attached as a tag                                  |
+
+**The id travels in the queue payload, not looked up at delivery time.** A mail or
+a notification is delivered in the worker, possibly long after the request answered,
+and the async context that held the id is gone by then. Reading it at delivery would
+write `null` on every row — which is the worst shape for a correlation column,
+because it looks implemented.
+
+`docs/runbook.md` has the queries.
 
 ## Alerts
 

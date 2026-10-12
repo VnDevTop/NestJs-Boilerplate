@@ -11,6 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 
 import { JwtPayload, RequestUser } from '../../common/interfaces/index.js';
 import {
+  getRequestId,
   hashPassword,
   padResponse,
   verifyPassword,
@@ -560,8 +561,17 @@ export class AuthService {
    * can ask for another.
    */
   private enqueueMail(payload: MailJobPayload, key: string): Promise<void> {
+    // The request id travels with the job rather than being read at send time,
+    // because the send happens in the worker — possibly much later, if the queue
+    // is backed up — and by then the async context that held it is gone. A
+    // `mail_logs` row that cannot be joined to the request that produced it is a
+    // row nobody can follow back to a person.
     return this.jobQueue
-      .enqueue('mail', { name: MAIL_JOB, payload, dedupeKey: key })
+      .enqueue('mail', {
+        name: MAIL_JOB,
+        payload: { ...payload, requestId: getRequestId() },
+        dedupeKey: key,
+      })
       .catch(() => undefined);
   }
 
