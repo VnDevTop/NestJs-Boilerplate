@@ -6,6 +6,7 @@ import {
   PrimaryGeneratedColumn,
   Unique,
   UpdateDateColumn,
+  VersionColumn,
 } from 'typeorm';
 
 /**
@@ -69,4 +70,18 @@ export class NotificationPreference {
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt!: Date;
+
+  /**
+   * The optimistic lock counter, for the same reason `User` has one.
+   *
+   * Worth it here because the update path is a read followed by a save: the
+   * preferences route loads the user's existing rows and overwrites them, so two
+   * settings screens open at once — a phone and a laptop — and the second save
+   * silently reverts whatever the first changed.
+   *
+   * A phone and a laptop is not a rare user, it is the ordinary one, and the window
+   * is however long a person takes to change two toggles.
+   */
+  @VersionColumn({ type: 'integer', default: 1 })
+  version!: number;
 }

@@ -45,18 +45,28 @@ POST   /auth/refresh-token
 POST   /auth/logout
 POST   /auth/2fa/setup
 POST   /auth/2fa/verify
+POST   /auth/account/unlock
+POST   /auth/account/unlock/:token
+POST   /auth/account/erasure
 GET    /health/live
 GET    /health/ready
 ```
 
 ### Authenticated
 
+Routes marked ▲ also require a confirmed address. See
+[src/modules/auth/README.md](src/modules/auth/README.md) for which ones and why.
+
 ```text
 GET    /auth/me
+GET    /users/me/export   ▲   CSV or NDJSON, streamed
 GET    /auth/devices
 DELETE /auth/devices/:id
 POST   /auth/logout-all
-POST   /auth/2fa/disable
+POST   /auth/2fa/setup      ▲
+POST   /auth/2fa/verify     ▲
+POST   /auth/2fa/disable    ▲
+POST   /auth/refresh-token  ▲
 GET    /users/:id
 GET    /notifications/preferences
 PATCH  /notifications/preferences
@@ -69,6 +79,7 @@ POST   /users
 GET    /users
 PATCH  /users/:id
 DELETE /users/:id
+PATCH  /auth/account/:id/unlock
 ```
 
 ### Manager, via `@ManagerOnly()` on the controller

@@ -25,6 +25,8 @@ export type NotificationEventKey =
   | 'auth.device.login'
   | 'auth.2fa.enabled'
   | 'auth.2fa.disabled'
+  | 'auth.account.locked'
+  | 'auth.account.unlocked'
   | 'maintenance.retention.anomaly';
 
 export interface NotificationEvent<TData> {
@@ -87,6 +89,25 @@ export interface TwoFactorData {
   email: string;
 }
 
+/*
+ * Named `…AlertData` rather than `AccountLockedData`, which is the name the mail
+ * template for the same event uses. Both types reach `src/modules/index.ts` through
+ * their module barrels, and two exports with one name is an ambiguity TypeScript
+ * refuses to resolve — which is its way of asking whether one of them should have
+ * said what it actually is.
+ */
+export interface AccountLockAlertData {
+  email: string;
+  /** In the words the lock was recorded with, which an operator wrote. */
+  reason: string;
+}
+
+export interface AccountUnlockAlertData {
+  email: string;
+  /** "an administrator" or "the account owner"; the reader needs to know which. */
+  actor: string;
+}
+
 export interface RetentionAnomalyData {
   /** What went wrong, in the words the retention service used. */
   reason: string;
@@ -104,6 +125,8 @@ export interface NotificationEventData {
   'auth.device.login': DeviceLoginData;
   'auth.2fa.enabled': TwoFactorData;
   'auth.2fa.disabled': TwoFactorData;
+  'auth.account.locked': AccountLockAlertData;
+  'auth.account.unlocked': AccountUnlockAlertData;
   'maintenance.retention.anomaly': RetentionAnomalyData;
 }
 
@@ -198,6 +221,38 @@ export const twoFactorDisabledEvent: NotificationEvent<TwoFactorData> = {
     ].join('\n'),
 };
 
+export const accountLockedEvent: NotificationEvent<AccountLockAlertData> = {
+  key: 'auth.account.locked',
+  perUser: true,
+  headline: ({ email }) => `Account locked: ${or(email, 'unknown address')}`,
+  body: ({ email, reason }) =>
+    [
+      `Address: ${or(email, 'unknown')}`,
+      `Reason: ${or(reason, 'not recorded')}`,
+      'The account owner has been emailed a link that clears this without help.',
+    ].join('\n'),
+};
+
+/**
+ * A lock being cleared is news in the other direction, and the audience is
+ * different: an operator wants to know a support request was resolved, and the
+ * owner wants to know that somebody else opened their account. The actor is in the
+ * body rather than the headline because the headline is what an operator scans.
+ */
+export const accountUnlockedEvent: NotificationEvent<AccountUnlockAlertData> = {
+  key: 'auth.account.unlocked',
+  perUser: true,
+  headline: ({ email }) => `Account unlocked: ${or(email, 'unknown address')}`,
+  body: ({ email, actor }) =>
+    [
+      `Address: ${or(email, 'unknown')}`,
+      `Unlocked by: ${or(actor, 'unknown')}`,
+      actor.toLowerCase().includes('owner')
+        ? 'The account owner used the emailed link.'
+        : 'An administrator cleared the lock.',
+    ].join('\n'),
+};
+
 export const retentionAnomalyEvent: NotificationEvent<RetentionAnomalyData> = {
   key: 'maintenance.retention.anomaly',
   perUser: false,
@@ -222,6 +277,8 @@ const registry: {
   'auth.device.login': deviceLoginEvent,
   'auth.2fa.enabled': twoFactorEnabledEvent,
   'auth.2fa.disabled': twoFactorDisabledEvent,
+  'auth.account.locked': accountLockedEvent,
+  'auth.account.unlocked': accountUnlockedEvent,
   'maintenance.retention.anomaly': retentionAnomalyEvent,
 };
 

@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 
@@ -41,8 +46,12 @@ import {
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { RefreshTokenService } from './refresh-token.service.js';
 import { DeviceService } from './device.service.js';
+import { AccountLockService } from './account-lock.service.js';
 import { LoginLockedException } from './exceptions/login-locked.exception.js';
 import { LoginLockoutService } from './login-lockout.service.js';
+import { PasswordPolicyService } from './password-policy.service.js';
+import { PasswordHistoryService } from './password-history.service.js';
+import { PASSWORD_CHANGE_REASON } from './entities/index.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { PasswordResetService } from './password-reset.service.js';
 import { User } from '../users/entities/index.js';
@@ -93,6 +102,9 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly loginLockout: LoginLockoutService,
     private readonly notifications: NotificationEventsService,
+    private readonly passwordPolicy: PasswordPolicyService,
+    private readonly passwordHistory: PasswordHistoryService,
+    private readonly accountLock: AccountLockService,
   ) {}
 
   private get appConfig(): AppConfig {
@@ -103,6 +115,12 @@ export class AuthService {
     registerDto: RegisterDto,
     metadata: DeviceMetadata,
   ): Promise<AuthToken> {
+    // Before the hash, not after. Hashing is deliberately slow, so a policy check
+    // that ran afterwards would have spent the work and then thrown it away — and a
+    // signup that reaches the database before refusing a password is a signup that
+    // has already charged somebody scrypt for the privilege of being told no.
+    await this.assertPasswordAcceptable(registerDto.password);
+
     const passwordHash = await hashPassword(registerDto.password);
 
     const user = await this.usersService.create({
@@ -111,6 +129,16 @@ export class AuthService {
       firstName: registerDto.firstName,
       lastName: registerDto.lastName,
     });
+
+    // The very first entry, written after the row exists and outside a transaction,
+    // because `create` is not one. The ordering is the point: a history row whose
+    // user does not exist is an orphan the cascade cannot clean up, whereas a
+    // missing history row costs a user the ability to reuse this one password.
+    await this.passwordHistory.record(
+      user.id,
+      passwordHash,
+      PASSWORD_CHANGE_REASON.Register,
+    );
 
     const { token, device, sessionId } = await this.issueSession(
       user.id,
@@ -177,6 +205,12 @@ export class AuthService {
    */
   private async recordLoginFailure(email: string): Promise<void> {
     const state = await this.loginLockout.recordFailure(email);
+
+    // Every failure, not only the one that starts a temporary block. The permanent
+    // lock counts the same failures and crosses at a much higher number, so a call
+    // made only on `firstBlock` would stop after the first five and the lock would
+    // never fire.
+    await this.accountLock.lockOnRepeatedFailures(email, state.failures);
 
     if (!state.firstBlock) {
       return;
@@ -247,7 +281,15 @@ export class AuthService {
 
     const user = await this.usersService.findByEmail(loginDto.email);
 
-    if (!user || !user.isActive) {
+    // A locked account is in this branch rather than a check of its own, because
+    // the answer has to be the one an unregistered address gets. A separate 403
+    // would tell anybody burning twenty attempts which addresses exist, and the
+    // owner has the mail that explains it anyway.
+    if (!user || !user.isActive || user.lockedAt !== null) {
+      // Counted even for a locked account, and that is deliberate rather than an
+      // oversight: the temporary block still applies, and an attacker hammering a
+      // locked account should not find the temporary limits quietly switched off
+      // underneath them.
       await this.recordLoginFailure(loginDto.email);
 
       throw new UnauthorizedException('Invalid email or password');
@@ -536,6 +578,11 @@ export class AuthService {
   async resetPassword(
     resetPasswordDto: ResetPasswordDto,
   ): Promise<GenericMessageDto> {
+    // Before `consume`, so a refused password never spends the token. The token is
+    // single use and spending it on a rejected attempt would leave the user who
+    // mistyped their new password needing the whole reset flow again.
+    await this.assertPasswordAcceptable(resetPasswordDto.newPassword);
+
     await this.passwordResetService.consume(
       resetPasswordDto.token,
       resetPasswordDto.newPassword,
@@ -545,6 +592,27 @@ export class AuthService {
     generic.message = 'Your password has been changed. Sign in again.';
 
     return generic;
+  }
+
+  /**
+   * Refuses a password the policy will not accept.
+   *
+   * One call site for the policy and one place that turns its answer into an HTTP
+   * error, so `register` and `reset-password` cannot drift into checking different
+   * subsets of the same rules.
+   *
+   * Every reason is in the message rather than only the first. A user who typed a
+   * password failing three rules is shown three, because finding them one submit at
+   * a time is how a reset form gets abandoned halfway.
+   */
+  private async assertPasswordAcceptable(password: string): Promise<void> {
+    const result = await this.passwordPolicy.check(password);
+
+    if (result.ok) {
+      return;
+    }
+
+    throw new BadRequestException(result.reasons.join(' '));
   }
 
   /**
@@ -559,7 +627,9 @@ export class AuthService {
     );
     const user = await this.usersService.findById(userId);
 
-    if (!user || !user.isActive) {
+    // Same reason as the password path: a lock is a lock, and finishing a
+    // two-factor sign-in is another way in.
+    if (!user || !user.isActive || user.lockedAt !== null) {
       throw new UnauthorizedException('Invalid two-factor challenge');
     }
 
@@ -636,7 +706,11 @@ export class AuthService {
     );
     const user = await this.usersService.findById(payload.sub);
 
-    if (!user || !user.isActive) {
+    // A locked account cannot mint new access tokens either. Without this the lock
+    // would be undone by a client holding a refresh token: every call here would
+    // be refused by the strategy, and a client that reacts by refreshing would be
+    // handed a fresh token and try again, forever.
+    if (!user || !user.isActive || user.lockedAt !== null) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 

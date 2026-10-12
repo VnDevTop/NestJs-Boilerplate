@@ -123,6 +123,23 @@ function harness(options: { userExists: boolean; userActive?: boolean }) {
     {
       notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
     } as never,
+    // The policy accepts everything here, because what these tests are about is
+    // what happens once a password is accepted.
+    {
+      check: vi.fn(async () => ({ ok: true, reasons: [] })),
+    } as never,
+    // The history writer. A reset records the new hash in its own transaction,
+    // which this spec asserts separately.
+    {
+      record: vi.fn(async () => undefined),
+      wasUsedBefore: vi.fn(async () => false),
+    } as never,
+    // The permanent lockout. These tests are about what happens around sign-in,
+    // not about the second lockout, so the fake records the call and does nothing.
+    // `lockOnRepeatedFailures` is exercised on its own in account-lock.service.spec.
+    {
+      lockOnRepeatedFailures: vi.fn(async () => undefined),
+    } as never,
   );
 
   return {

@@ -6,6 +6,8 @@ export * from './auth-token-response.dto.js';
 export * from './login.dto.js';
 export * from './logout.dto.js';
 export * from './refresh-token.dto.js';
+export * from './request-erasure.dto.js';
+export * from './request-unlock.dto.js';
 export * from './register.dto.js';
 export * from './two-factor-challenge-response.dto.js';
 export * from './two-factor-code.dto.js';

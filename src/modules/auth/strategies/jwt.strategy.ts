@@ -41,6 +41,24 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Invalid access token');
     }
 
+    // A permanently locked account stops here, and this is the check that makes
+    // the word "permanent" mean anything.
+    //
+    // Locking also bumps the sessions version, so every token minted before the
+    // lock is already refused by the comparison below. This line is not redundant
+    // with that: the version check has an explicit exception for tokens predating
+    // the claim, and a lock must have no such exception — a lock that left one
+    // fifteen minute window open would be an outage with extra steps, and the
+    // window is exactly when an attacker who already holds a token is using it.
+    //
+    // 401 rather than 403 on purpose. The caller did present a credential, and the
+    // distinction between "your token is no good" and "your account is locked"
+    // tells an attacker which of the two they are dealing with; the owner learns
+    // the reason from the mail that came with the lock.
+    if (user.lockedAt !== null) {
+      throw new UnauthorizedException('Invalid access token');
+    }
+
     // The one check that makes logout-everywhere immediate.
     //
     // A token with no `sv` predates the claim, and is accepted only while the
@@ -99,6 +117,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // 17b; the guard is written against the request user, so it does not care
       // where the names came from.
       permissions: await this.permissionsService.forRole(user.role),
+      // From the row, not the token: confirming an address must take effect on the
+      // next request rather than when a fifteen minute token expires.
+      isEmailVerified: user.isEmailVerified,
     };
   }
 

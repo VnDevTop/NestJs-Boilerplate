@@ -1,5 +1,7 @@
 import {
   accountLockedTemplate,
+  accountPermanentlyLockedTemplate,
+  accountUnlockedTemplate,
   newDeviceLoginTemplate,
   notificationTemplate,
   passwordChangedTemplate,
@@ -7,6 +9,8 @@ import {
   verifyEmailTemplate,
   welcomeTemplate,
   type AccountLockedData,
+  type AccountPermanentlyLockedData,
+  type AccountUnlockedData,
   type NewDeviceLoginData,
   type NotificationData,
   type PasswordChangedData,
@@ -44,6 +48,9 @@ export interface TemplateDataByName {
   'password-changed': PasswordChangedData;
   'new-device-login': NewDeviceLoginData;
   'account-locked': AccountLockedData;
+  /** Phase 19. The one above is a temporary block; this is a permanent one. */
+  'account-permanently-locked': AccountPermanentlyLockedData;
+  'account-unlocked': AccountUnlockedData;
   /**
    * The operator-alert template from Phase 18. It is here rather than in the
    * notification module because it is a mail: same layout, same escaping, same
@@ -61,6 +68,8 @@ const registry: {
   'password-changed': passwordChangedTemplate,
   'new-device-login': newDeviceLoginTemplate,
   'account-locked': accountLockedTemplate,
+  'account-permanently-locked': accountPermanentlyLockedTemplate,
+  'account-unlocked': accountUnlockedTemplate,
   notification: notificationTemplate,
 };
 

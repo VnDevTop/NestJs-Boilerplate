@@ -1,13 +1,19 @@
+import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AccountLockController } from './account-lock.controller.js';
+import { AccountLockService } from './account-lock.service.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import {
+  AccountUnlockToken,
   EmailVerificationToken,
+  PasswordHistoryEntry,
   PasswordResetToken,
   RefreshToken,
   TwoFactorSecret,
@@ -19,11 +25,26 @@ import { RefreshTokenService } from './refresh-token.service.js';
 import { DeviceService } from './device.service.js';
 import { TwoFactorService } from './two-factor.service.js';
 import { JwtStrategy } from './strategies/index.js';
+import { ConfigService } from '@nestjs/config';
+import { accountSecurityConfig } from '../../configs/account-security.config.js';
+import {
+  passwordPolicyConfig,
+  type PasswordPolicyConfig,
+} from '../../configs/password-policy.config.js';
 import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
 import { MailModule } from '../mail/index.js';
 import { LoginLockoutService } from './login-lockout.service.js';
 import { QueueModule } from '../queue/index.js';
 import { NotificationEventsModule } from '../notification/notification-events.module.js';
+import {
+  BREACH_CHECKER,
+  type BreachChecker,
+  PASSWORD_HISTORY_READER,
+  type PasswordHistoryCheck,
+  PasswordPolicyService,
+} from './password-policy.service.js';
+import { PasswordBreachService } from './password-breach.service.js';
+import { PasswordHistoryService } from './password-history.service.js';
 
 @Module({
   imports: [
@@ -44,18 +65,67 @@ import { NotificationEventsModule } from '../notification/notification-events.mo
     // two-factor change all raise one. Above the queue, like the mail enqueue, so
     // nothing here depends on a channel being reachable.
     NotificationEventsModule,
+    // The policy is defined next to the endpoints that enforce it, which is what
+    // the config's own docblock has claimed since Phase 13 and what was not true
+    // until now: the namespace existed and nothing read it.
+    ConfigModule.forFeature(passwordPolicyConfig),
+    // For the permanent lockout. Same reasoning as the policy above: the rule is
+    // defined where it is enforced.
+    ConfigModule.forFeature(accountSecurityConfig),
+    // For the breach lookup, which is the one network call the policy can make.
+    // Only here so that an application which never sets
+    // `PASSWORD_CHECK_BREACH_LIST` has no HTTP client in its graph for it.
+    HttpModule,
     TypeOrmModule.forFeature([
+      AccountUnlockToken,
       RefreshToken,
       UserDevice,
       TwoFactorSecret,
       PasswordResetToken,
       EmailVerificationToken,
+      PasswordHistoryEntry,
     ]),
     JwtModule.registerAsync(jwtAccessTokenConfig.asProvider()),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, AccountLockController],
   providers: [
     LoginLockoutService,
+    AccountLockService,
+    PasswordPolicyService,
+    PasswordBreachService,
+    PasswordHistoryService,
+    {
+      // Present only when the deployment asked for the check. A `null` provider is
+      // the same shape `loadOptional` returns, so the policy service reads one
+      // thing rather than branching on whether the feature is configured.
+      provide: BREACH_CHECKER,
+      inject: [ConfigService, PasswordBreachService],
+      useFactory: (
+        configService: ConfigService,
+        breach: PasswordBreachService,
+      ): BreachChecker | null => {
+        const enabled =
+          configService.getOrThrow<PasswordPolicyConfig>(
+            'passwordPolicy',
+          ).checkBreachList;
+
+        if (enabled) {
+          return breach;
+        }
+
+        return null;
+      },
+    },
+    {
+      // The history reader is the same shape as the breach checker: present or
+      // absent. Here it is always present — the service answers "no" itself when
+      // `PASSWORD_HISTORY_COUNT` is zero — so the policy does not need to know what
+      // the count is in order to decide whether to ask.
+      provide: PASSWORD_HISTORY_READER,
+      inject: [PasswordHistoryService],
+      useFactory: (history: PasswordHistoryService): PasswordHistoryCheck =>
+        history,
+    },
     AuthService,
     RefreshTokenService,
     PasswordResetService,

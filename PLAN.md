@@ -858,7 +858,7 @@ Expected outcome:
 
 ## Phase 19: Account Security Features
 
-Status: Pending
+Status: Done
 
 Goal:
 
@@ -866,26 +866,26 @@ Close the account-lifecycle gaps that real deployments get asked about.
 
 Tasks:
 
-- [ ] Add an email verification gate, blocking sensitive actions until the
+- [x] Add an email verification gate, blocking sensitive actions until the
       address is verified
-- [ ] Add a password policy in zod, with an optional `zxcvbn` strength score
-- [ ] Check new passwords against a breach list using the k-anonymity API, or
+- [x] Add a password policy in zod, with an optional `zxcvbn` strength score
+- [x] Check new passwords against a breach list using the k-anonymity API, or
       an offline list
-- [ ] Keep the last N password hashes and reject reuse
-- [ ] Add a permanent account lockout with an unlock flow and a notification.
+- [x] Keep the last N password hashes and reject reuse
+- [x] Add a permanent account lockout with an unlock flow and a notification.
       Phase 17a already blocks login temporarily; this is the version that needs
       an administrator or a verified email to clear
-- [ ] Add an audit log entity: actor, action, before/after diff, ip, user
+- [x] Add an audit log entity: actor, action, before/after diff, ip, user
       agent, request id, append-only
-- [ ] Record an audit entry on every privileged action, through an interceptor
+- [x] Record an audit entry on every privileged action, through an interceptor
       plus a TypeORM subscriber for writes that bypass a controller
-- [ ] Add an `Idempotency-Key` header guard on mutating endpoints, so a client
+- [x] Add an `Idempotency-Key` header guard on mutating endpoints, so a client
       retry after a timeout cannot create a duplicate
-- [ ] Add `@VersionColumn()` to the mutable entities for optimistic concurrency
-- [ ] Add `user.requestDeletion()`: soft delete, queue a data export, hard
+- [x] Add `@VersionColumn()` to the mutable entities for optimistic concurrency
+- [x] Add `user.requestDeletion()`: soft delete, queue a data export, hard
       delete at the end of the retention window, a right-to-erasure flow built
       on Phase 16
-- [ ] Add a data export endpoint, CSV and JSON, streamed for large result sets
+- [x] Add a data export endpoint, CSV and JSON, streamed for large result sets
 
 Expected outcome:
 
@@ -898,6 +898,61 @@ Expected commit:
 ```text
 feat: add account security, audit log and idempotency
 ```
+
+Delivered as eleven commits rather than one, each independently revertable. The
+plan named a single commit; the phase was large enough that one commit would have
+made bisecting a regression a matter of reading the whole diff.
+
+```text
+feat: enforce a configurable password policy
+feat: reject a password found in a breach
+feat: reject a reused password
+feat: gate sensitive actions on a verified address
+feat: add a permanent account lockout
+feat: add the audit log entity and writer
+feat: audit every privileged action
+feat: make mutating routes idempotent
+feat: add optimistic concurrency
+feat: add the right to erasure
+feat: export a user's data
+```
+
+Decisions worth carrying forward, because each one is a refusal of something:
+
+- **A permanent lockout only ever applies to a confirmed address, and that is a
+  code invariant rather than a setting.** An unverified account could never receive
+  the unlock link, so locking one would be permanent with no owner able to clear it.
+  A flag for this is one careless default away from locking every account in a
+  deployment.
+- **A locked account answers with the same 401 as an unregistered one.** A dedicated
+  message is a free oracle for anybody willing to burn twenty attempts, and the
+  owner has the mail. The notification is how the owner finds out, not the
+  response.
+- **The audit writer never throws.** An audit write that failed the action it was
+  recording would mean an outage in the log becomes an outage in the product. The
+  gap is logged at `error`; the trade is real and is that this trail can have
+  holes.
+- **`before` is null on every interceptor-written audit entry.** The interceptor
+  sees the request and the response, never the row as it was, and a reconstructed
+  before-state in a table presented as evidence looks like a record while being an
+  inference.
+- **No TypeORM subscriber**, for the two reasons Phase 17b reached for the same
+  hook: no dependency injection, and a query-builder write arrives without an id.
+  A service doing a privileged write outside a controller calls the writer
+  directly.
+- **Idempotency uses redis directly, not the cache.** The cache fails open by
+  reporting an unreachable store as a miss, and a miss on an idempotency check
+  means "this request is new" — the exact duplicate it prevents.
+- **An export never selects a credential.** The exclusion is structural rather than
+  a filter at the output stage, because a column that is not selected cannot be
+  rendered.
+
+What is deliberately not here, so it is not mistaken for an oversight:
+
+- **An admin route to read somebody else's audit trail.** The table exists and is
+  written; the query surface is a separate decision about who may see it.
+- **A generic webhook channel with HMAC signing.** Dropped rather than half-built;
+  Phase 22 is where a signature scheme belongs.
 
 ---
 

@@ -28,6 +28,12 @@ export const OPTIONAL_PACKAGES = {
     envFlag: 'MAIL_TRANSPORT=sendgrid',
     install: 'npm install @sendgrid/mail',
   },
+  zxcvbn: {
+    feature: 'Password strength scoring',
+    specifier: 'zxcvbn',
+    envFlag: 'none, the password policy works without it',
+    install: 'npm install zxcvbn',
+  },
   bullmq: {
     feature: 'BullMQ job queue',
     specifier: '@nestjs/bullmq',

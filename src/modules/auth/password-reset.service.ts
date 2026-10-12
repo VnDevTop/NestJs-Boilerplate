@@ -14,8 +14,12 @@ import { PASSWORD_RESET_TOKEN_TTL_MINUTES } from '../../common/constants/index.j
 import { hashPassword, hashToken } from '../../common/utils/index.js';
 import { User } from '../users/entities/index.js';
 import { UsersService } from '../users/users.service.js';
-import { PasswordResetToken } from './entities/index.js';
+import {
+  PASSWORD_CHANGE_REASON,
+  PasswordResetToken,
+} from './entities/index.js';
 import { RefreshTokenRevokedReason } from './enums/index.js';
+import { PasswordHistoryService } from './password-history.service.js';
 import { RefreshTokenService } from './refresh-token.service.js';
 
 const logger = new Logger('PasswordResetService');
@@ -42,6 +46,7 @@ export class PasswordResetService {
     private readonly dataSource: DataSource,
     private readonly refreshTokenService: RefreshTokenService,
     private readonly usersService: UsersService,
+    private readonly passwordHistory: PasswordHistoryService,
   ) {}
 
   private get store(): EntityManager {
@@ -151,9 +156,31 @@ export class PasswordResetService {
           );
         }
 
+        // The reuse check lives here rather than in the caller, because this is the
+        // first point where the user is known: it is the token row that names them.
+        // Throwing rolls the transaction back, so a rejected password leaves the
+        // token unspent and the user able to try again — the same property the
+        // format check gets by running before `consume`.
+        if (await this.passwordHistory.wasUsedBefore(user.id, newPassword)) {
+          throw new BadRequestException(
+            'This password has been used before. Choose one you have not used recently.',
+          );
+        }
+
         user.password = await hashPassword(newPassword);
 
         const saved = await manager.save(user);
+
+        // In this transaction, not after it. A history written outside could
+        // disagree with the account: a rolled-back reset would leave the old
+        // password rejected as "used before" while the account still has it, which
+        // locks a user out of credentials they know are correct.
+        await this.passwordHistory.record(
+          user.id,
+          saved.password,
+          PASSWORD_CHANGE_REASON.Reset,
+          manager,
+        );
 
         // Marked spent in the same transaction as the password change, so a crash
         // cannot leave a live token beside a password the sender did not choose.

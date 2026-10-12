@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { authUserKey } from '../../core/cache/index.js';
 import type { JwtPayload } from '../../common/interfaces/index.js';
+import { User } from '../users/entities/index.js';
 import { UsersService } from '../users/users.service.js';
 import { JwtStrategy } from './strategies/jwt.strategy.js';
 
@@ -32,6 +33,10 @@ type Row = {
   isActive: boolean;
   isManager: boolean;
   sessionsVersion: number;
+  isEmailVerified: boolean;
+  lockedAt: Date | null;
+  deletedAt: Date | null;
+  requestDeletion(reason: string): void;
 };
 
 /** Mutable, so a test can change the row the way an operator would. */
@@ -44,6 +49,13 @@ function harness(seed: Partial<Row> = {}) {
     isActive: true,
     isManager: false,
     sessionsVersion: 0,
+    isEmailVerified: true,
+    lockedAt: null,
+    deletedAt: null,
+    // The real method. The erasure path calls it, and a fixture that hand-rolled a
+    // `deletedAt` assignment would pass while the entity stopped being the place
+    // the rule lives.
+    requestDeletion: User.prototype.requestDeletion,
     ...seed,
   };
 
@@ -103,6 +115,16 @@ function harness(seed: Partial<Row> = {}) {
     }),
     save: vi.fn(async (value: Partial<Row>) => {
       Object.assign(row, value);
+
+      // The erasure path now soft-deletes through `save` rather than
+      // `repository.softDelete`, so the exclusion below has to follow the row
+      // rather than being set by the method that no longer runs. Mirrored rather
+      // than read off `row` because the fake answers `null` for a deleted row by
+      // this flag, and the two are meant to be the same fact.
+      if (row.deletedAt !== null) {
+        deletedAt = row.deletedAt;
+      }
+
       return row;
     }),
     merge: vi.fn((current: Row, dto: Partial<Row>) => ({ ...current, ...dto })),
@@ -120,6 +142,9 @@ function harness(seed: Partial<Row> = {}) {
     {
       notify: vi.fn(async () => ({ notificationId: 'n1', queued: true })),
     } as never,
+    // The erasure path removes notification preferences. Not reached by these
+    // tests, but the constructor is.
+    { forget: vi.fn(async () => undefined) } as never,
   );
 
   /** Device id to its session version, standing in for the cached map. */
@@ -204,6 +229,16 @@ describe('an authenticated request served from cache', () => {
     await h.strategy.validate(token({ sv: 0 }));
 
     expect(h.queries[0]).not.toContain('password');
+  });
+
+  it('carries the verification flag, so a gate can read it without a query', async () => {
+    // Every other field is a claim; this one is read from the row. Asserted here
+    // because the strategy is the only thing that hands it to a guard.
+    const h = harness({ isEmailVerified: false });
+
+    await expect(h.strategy.validate(token({ sv: 0 }))).resolves.toMatchObject({
+      isEmailVerified: false,
+    });
   });
 
   it('keys the entry on the user, not on the token', async () => {

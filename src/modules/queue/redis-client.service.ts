@@ -168,6 +168,55 @@ export class RedisClientService implements OnModuleDestroy {
     });
   }
 
+  /**
+   * `GET key`.
+   *
+   * Added alongside `setIfAbsent` for the idempotency store, and the reason it is a
+   * method here rather than a raw `getClient().get()` at the call site is the whole
+   * point of this class: `setIfAbsent` applies the configured key prefix and a raw
+   * call does not, so a store built from one primitive and read with the other
+   * writes under one key and looks under another. The prefix rule belongs in one
+   * place, and this is that place.
+   */
+  async get(key: string): Promise<string | null> {
+    return this.run(async (client) => client.get(this.key(key)));
+  }
+
+  /**
+   * `SET key value EX ttl`, overwriting.
+   *
+   * The counterpart to `setIfAbsent` for a caller that is replacing a value it
+   * already owns — which is what the idempotency store does when a claimed key
+   * turns into a recorded answer.
+   */
+  async set(
+    key: string,
+    value: string,
+    ttlSeconds: number,
+  ): Promise<boolean | null> {
+    return this.run(async (client) => {
+      const result = await client.set(this.key(key), value, {
+        EX: Math.max(1, Math.ceil(ttlSeconds)),
+      });
+
+      return result === 'OK';
+    });
+  }
+
+  /**
+   * `DEL key`, for a claim the caller no longer wants to hold.
+   *
+   * `false` when redis could not be asked, rather than throwing — same contract as
+   * `setIfAbsent`: a caller that has to catch will eventually forget to.
+   */
+  async delete(key: string): Promise<boolean | null> {
+    return this.run(async (client) => {
+      const removed = await client.del(this.key(key));
+
+      return removed > 0;
+    });
+  }
+
   /** Releases a key, for a job that failed permanently and should not be retried. */
   async release(key: string): Promise<boolean> {
     const released = await this.run(async (client) => {

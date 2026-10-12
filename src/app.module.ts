@@ -23,6 +23,7 @@ import {
 } from './configs/index.js';
 import {
   AdminModule,
+  AuditModule,
   AuthModule,
   MaintenanceSchedulerModule,
   NotificationEventsModule,
@@ -30,9 +31,11 @@ import {
   UsersModule,
 } from './modules/index.js';
 import {
+  IdempotencyGuard,
   JwtAuthGuard,
   ManagerGuard,
   PermissionsGuard,
+  RequireVerifiedEmailGuard,
   RolesGuard,
 } from './common/guards/index.js';
 import { CacheModule, HealthModule } from './core/index.js';
@@ -105,6 +108,16 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     AuthModule,
     AdminModule,
 
+    /**
+     * The audit trail.
+     *
+     * Here rather than inside one of the modules that writes to it, because it is
+     * imported by all of them and a module that imported its own audit writer back
+     * would be a cycle. It imports nothing but TypeORM, so sitting at the root costs
+     * nothing.
+     */
+    AuditModule,
+
     // Enqueues the nightly retention job. Imported here rather than inside
     // AuthModule, which already pulls in the queue for mail: the scheduler has to
     // sit above the queue in the import graph, and AuthModule does not.
@@ -138,6 +151,23 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     {
       provide: APP_GUARD,
       useClass: PermissionsGuard,
+    },
+    {
+      // After the permissions guard, so a caller without the permission is told
+      // that rather than being asked to verify an address first. A gate that runs
+      // earlier turns "you are not allowed this" into "confirm your email", which
+      // is advice that does not help.
+      provide: APP_GUARD,
+      useClass: RequireVerifiedEmailGuard,
+    },
+    {
+      // Last in the chain. A duplicate key is only meaningful once the caller is
+      // known and allowed: claiming a key for a request that was going to be
+      // refused would leave a key in redis that the real caller then collides with,
+      // and answering 409 to an unauthenticated request would leak that the key is
+      // in use.
+      provide: APP_GUARD,
+      useClass: IdempotencyGuard,
     },
     {
       // Registered last so a blocked request is counted before anything else

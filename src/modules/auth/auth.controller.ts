@@ -29,6 +29,7 @@ import {
 } from '@nestjs/swagger';
 
 import { ThrottleByEmailGuard } from '../../common/guards/index.js';
+import { Idempotent } from '../../common/guards/idempotency.decorator.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
 import {
   DEVICE_NAME_HEADER,
@@ -39,6 +40,7 @@ import {
   CurrentUser,
   DeviceName,
   Public,
+  RequireVerifiedEmail,
 } from '../../common/decorators/index.js';
 import type { RequestUser } from '../../common/interfaces/index.js';
 import { UserResponseDto } from '../users/dto/index.js';
@@ -81,6 +83,11 @@ export class AuthController {
   // Registration is cheap to call and creates rows, so it gets its own
   // tighter budget than the global one.
   @Throttle({ default: { limit: 10, ttl: 300000 } })
+  // Registration is the clearest case in the application. A client that loses the
+  // response to a register has a token it never saw and an account it cannot sign
+  // into; retrying gets it a conflict, because the address now exists. The replayed
+  // answer hands back the same tokens instead.
+  @Idempotent()
   @Public()
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })
@@ -156,6 +163,10 @@ export class AuthController {
     );
   }
 
+  // The two-factor routes are the ones that change how an account authenticates, so
+  // they require a confirmed address. Turning on a second factor and then losing
+  // access to the address is a lockout nobody can undo from the login screen.
+  @RequireVerifiedEmail()
   @Post('2fa/setup')
   @ApiBearerAuth('access-token')
   @ApiOperation({
@@ -171,6 +182,7 @@ export class AuthController {
   }
 
   @Throttle({ default: { limit: 5, ttl: 300000 } })
+  @RequireVerifiedEmail()
   @Post('2fa/verify')
   @ApiBearerAuth('access-token')
   @ApiOperation({
@@ -187,6 +199,7 @@ export class AuthController {
     return this.authService.twoFactorVerify(currentUser, twoFactorCodeDto);
   }
 
+  @RequireVerifiedEmail()
   @Post('2fa/disable')
   @ApiBearerAuth('access-token')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -308,6 +321,10 @@ export class AuthController {
   }
 
   @RateLimit('refresh')
+  // A refresh mints a new access token from a refresh token, so it is the one route
+  // where an unconfirmed address would let an account nobody owns be kept alive
+  // indefinitely.
+  @RequireVerifiedEmail()
   @Post('refresh-token')
   @ApiOperation({
     summary: 'Exchange a refresh token for a new token pair',

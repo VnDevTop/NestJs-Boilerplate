@@ -3,9 +3,15 @@ import { IsString, MaxLength, MinLength } from 'class-validator';
 
 /**
  * The bounds here are the widest this boilerplate allows, not a policy
- * recommendation. `password-policy.config.ts` carries the policy a deployment
- * sets, and Phase 19 replaces this decorator pair with a schema built from it,
- * so the rule lives in one place instead of two.
+ * recommendation.
+ *
+ * Deliberately the *widest*, and looser than the policy that is actually applied:
+ * `PasswordPolicyService` checks the configured minimum, the character classes and
+ * the optional strength score, and this pair of decorators only stops a megabyte of
+ * password reaching the validator. Pinning `@MinLength` to the configured value is
+ * not possible here — decorators are evaluated when the class is defined, before
+ * `ConfigModule` has read anything — so tightening these would freeze a number at
+ * import time and leave the real rule invisible in the Swagger schema.
  */
 export class ResetPasswordDto {
   @ApiProperty({

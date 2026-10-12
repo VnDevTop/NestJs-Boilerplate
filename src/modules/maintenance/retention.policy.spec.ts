@@ -28,6 +28,8 @@ describe('retention policy contents', () => {
     // table yet. If one were added here, every run would error at 3am on a table
     // that was never created.
     expect(RETENTION_TARGETS.map((t) => t.table).sort()).toEqual([
+      'account_unlock_tokens',
+      'audit_logs',
       'email_verification_tokens',
       'notification_logs',
       'password_reset_tokens',
@@ -38,14 +40,22 @@ describe('retention policy contents', () => {
   });
 
   it('keeps the deferred tables visible instead of forgetting them', () => {
-    // `notification-logs` left this list in Phase 18, when its entity arrived. It is
-    // named in the assertion rather than derived, so an entry that quietly reappears
-    // is a failure rather than a no-op.
+    // `notification-logs` left this list in Phase 18, when its entity arrived, and
+    // `audit-logs` in Phase 19. They are named in the assertion rather than derived,
+    // so an entry that quietly reappears is a failure rather than a no-op.
     expect(DEFERRED_TARGETS.map((t) => t.id)).toEqual([
       'mail-logs',
       'login-attempts',
-      'audit-logs',
     ]);
+  });
+
+  it('keeps the audit log a year, because a month of it is not a trail', () => {
+    // The one target whose deletions destroy evidence rather than clearing clutter,
+    // and the largest table the job will hold. Asserted separately because the
+    // other targets all default to a week and a reader skimming them would assume
+    // this one matches.
+    expect(target('audit-logs').ageKey).toBe('auditLogs');
+    expect(DEFAULT_TEST_AGES.auditLogs).toBe(365);
   });
 
   it('cleans the notification log on its own age, since Phase 18 created the table', () => {

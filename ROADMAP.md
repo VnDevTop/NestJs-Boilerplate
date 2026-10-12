@@ -14,32 +14,42 @@ and what it costs, not just what it is.
 The boilerplate is complete through production hardening. This is a working
 starting point rather than a scaffold to fill in.
 
-| Area            | What works                                                                                       |
-| --------------- | ------------------------------------------------------------------------------------------------ |
-| Sessions        | Rotating refresh tokens, locked so concurrent refreshes have one winner; replay treated as theft |
-| Devices         | Fingerprinted by user agent, revocation cascades to tokens                                       |
-| Two-factor      | Optional TOTP, secret encrypted at rest, single use steps, one time recovery codes               |
-| Authorisation   | `@Roles()`, `@ManagerOnly()`, and `@Permissions()` against a real permission table               |
-| Sessions        | Listable and individually revocable; logout everywhere is immediate, not a token-expiry wait     |
-| Configuration   | Namespaced and typed, whole environment validated before anything connects                       |
-| Cache           | Redis or Valkey with request coalescing, stale while revalidate, and an auth path                |
-| Rate limiting   | Counted in Redis, so it holds across replicas; two buckets per credential route, plus a lockout  |
-| Mail            | Swappable transport, queued so a slow provider cannot fail a signup; verification and reset      |
-| Background jobs | Provider-level queue with an in-process fallback, retries, deduplication and a dead-letter list  |
-| Data retention  | Nightly batched cleanup with a dry run, run history and an admin route                           |
-| Notifications   | Telegram, Slack, Discord, operator mail and the log, one interface, per-user opt-out             |
-| Observability   | Request id, JSON production logs, liveness and readiness kept apart                              |
-| Operations      | Reviewed migrations, idempotent seed, two stage image, compose stack, CI                         |
+| Area            | What works                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Sessions        | Rotating refresh tokens, locked so concurrent refreshes have one winner; replay treated as theft                               |
+| Devices         | Fingerprinted by user agent, revocation cascades to tokens                                                                     |
+| Two-factor      | Optional TOTP, secret encrypted at rest, single use steps, one time recovery codes                                             |
+| Authorisation   | `@Roles()`, `@ManagerOnly()`, and `@Permissions()` against a real permission table                                             |
+| Sessions        | Listable and individually revocable; logout everywhere is immediate, not a token-expiry wait                                   |
+| Configuration   | Namespaced and typed, whole environment validated before anything connects                                                     |
+| Cache           | Redis or Valkey with request coalescing, stale while revalidate, and an auth path                                              |
+| Rate limiting   | Counted in Redis, so it holds across replicas; two buckets per credential route, plus a lockout                                |
+| Mail            | Swappable transport, queued so a slow provider cannot fail a signup; verification and reset                                    |
+| Background jobs | Provider-level queue with an in-process fallback, retries, deduplication and a dead-letter list                                |
+| Data retention  | Nightly batched cleanup with a dry run, run history and an admin route                                                         |
+| Notifications   | Telegram, Slack, Discord, operator mail and the log, one interface, per-user opt-out                                           |
+| Passwords       | Configurable policy in zod, an optional `zxcvbn` score, a breach check by k-anonymity, and the last N hashes rejecting reuse   |
+| Lockouts        | Two of them: a temporary Redis block, and a permanent one an owner or an operator can clear                                    |
+| Verification    | A confirmed address, enforced before the routes that change how an account authenticates                                       |
+| Audit           | An append-only trail with actor, target, before/after diff, ip, agent and request id, and a redactor that no credential passes |
+| Idempotency     | An `Idempotency-Key` header on mutating routes, replaying the original answer to a retry                                       |
+| Concurrency     | A `@VersionColumn()` on the rows a request reads before it writes, so a lost update is a 409                                   |
+| Privacy         | Erasure with a grace window, and a streamed export of everything held about an account                                         |
+| Observability   | Request id, JSON production logs, liveness and readiness kept apart                                                            |
+| Operations      | Reviewed migrations, idempotent seed, two stage image, compose stack, CI                                                       |
 
 ## Open decisions
 
 Not features. Each is a decision that has not been made, and the cost of leaving
 it unmade is the point.
 
-| Decision                                           | Why it matters                                                         |
-| -------------------------------------------------- | ---------------------------------------------------------------------- |
-| Restrict `GET /users/:id` to the owner or an admin | Any authenticated user can read another user's profile, email included |
-| Paginate the listing routes                        | `GET /users` and the admin dashboard return every matching row         |
+| Decision                                            | Why it matters                                                                                                                    |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Restrict `GET /users/:id` to the owner or an admin  | Any authenticated user can read another user's profile, email included                                                            |
+| Paginate the listing routes                         | `GET /users` and the admin dashboard return every matching row                                                                    |
+| Who may read the audit trail                        | It is written for every privileged action, and there is no route that reads it back                                               |
+| Replace the account-lockout thresholds in config    | A permanent lockout is a denial-of-service surface; only confirmed accounts can be locked, and that is code rather than a setting |
+| Whether the audit writer should ever fail a request | It never does, so the trail can have holes. Failing closed trades that for an application that cannot write anything              |
 
 ---
 
@@ -166,7 +176,49 @@ Two things from this section that did not survive contact with the code:
   payloads would need per-destination configuration to format anything, which is
   the configuration this design removes.
 
-### 5. Background jobs — built, Phase 15
+### 5. Account security — built, Phase 19
+
+The phase whose features real deployments get asked about, and the one with the
+most refusals in it. Each item says what it left out, because that is where the
+design is.
+
+- **A password policy in zod**, with an optional `zxcvbn` score. The DTOs keep
+  their widest decorators on purpose: a decorator cannot read runtime config, and
+  the rule lives in one object rather than as a number repeated in two DTOs.
+- **A breach check by k-anonymity**, so the password never leaves the server —
+  only the first five characters of its SHA-1 do. It fails open on purpose; the
+  alternative makes a third party an availability dependency for your signup.
+- **The last N hashes, rejecting reuse.** Five scrypt derivations per check is
+  the price, and it is the reason the default is five rather than twenty.
+- **A verification gate** on the routes that change how an account
+  authenticates. Sign-out is deliberately ungated: a user who suspects a
+  compromise and cannot sign out is worse off than one whose address is
+  unconfirmed.
+- **Two lockouts.** A temporary Redis block, and a permanent one — which is a
+  denial-of-service surface before it is a defence, so only a _confirmed_
+  address can be locked and that is code rather than a setting. A locked
+  account answers with the same 401 as an unregistered one; the owner finds
+  out from the mail, which is the only channel that reaches the person who
+  can act on it.
+- **An audit trail** with actor, target, before/after diff, ip, agent and
+  request id. Every diff is walked and credential-bearing keys are replaced, so
+  a year of "who changed what" is not also a year of every password hash. The
+  writer never throws: an outage in the log must not become an outage in the
+  product.
+- **`Idempotency-Key`** on mutating routes, replaying the original answer to a
+  retry. Required rather than generated — generating one would promise a
+  guarantee the caller is not making.
+- **A `@VersionColumn()`** on the rows a request reads before it writes, so two
+  administrators editing the same profile produce a 409 rather than a silent
+  lost update where both see 200.
+- **Erasure with a grace window**, and a streamed export of everything held
+  about an account that selects no credential at all.
+
+What is not here: an admin route to read somebody else's audit trail, and a
+generic signed webhook. The first is a decision about who may see the trail, and
+the second is Phase 22's.
+
+### 6. Background jobs — built, Phase 15
 
 Both plans above needed one, and it is worth having on its own.
 
@@ -179,7 +231,7 @@ Both plans above needed one, and it is worth having on its own.
 - The handler re-checks its own precondition, because state can change between
   the enqueue and the run.
 
-### 6. The rest, in rough order
+### 7. The rest, in rough order
 
 Each earns its place in a real project. None is a template's job to build.
 

@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { hashToken } from '../../common/utils/index.js';
 import { RefreshTokenRevokedReason } from './enums/index.js';
-import { PasswordResetToken } from './entities/index.js';
+import {
+  PASSWORD_CHANGE_REASON,
+  PasswordResetToken,
+} from './entities/index.js';
 import { User } from '../users/entities/index.js';
 import { PasswordResetService } from './password-reset.service.js';
 
@@ -64,11 +67,20 @@ function build(options: Parameters<typeof fakeManager>[0] = {}) {
     invalidateAuthCache: vi.fn().mockResolvedValue(undefined),
   };
 
+  // The history service answers "no" for everything here: what these tests are
+  // about is what happens to the token and the sessions once a password is
+  // accepted, and a refusal is covered by its own spec.
+  const passwordHistory = {
+    record: vi.fn().mockResolvedValue(undefined),
+    wasUsedBefore: vi.fn().mockResolvedValue(false),
+  };
+
   const service = new PasswordResetService(
     { manager } as never,
     { transaction } as never,
     refreshTokenService as never,
     usersService as never,
+    passwordHistory as never,
   );
 
   return {
@@ -77,6 +89,7 @@ function build(options: Parameters<typeof fakeManager>[0] = {}) {
     transaction,
     refreshTokenService,
     usersService,
+    passwordHistory,
     user,
   };
 }
@@ -198,6 +211,56 @@ describe('PasswordResetService.consume', () => {
     // against a row claiming the sessions were killed.
     expect(transaction).toHaveBeenCalled();
     expect(manager.increment).toHaveBeenCalled();
+  });
+
+  it('records the new hash in the same transaction as the change', async () => {
+    // A history written outside would disagree with the account: a rolled-back
+    // reset would reject the *old* password as "used before" while the account
+    // still has it, which locks a user out of credentials they know are correct.
+    const { service, passwordHistory } = build();
+
+    await service.consume('the-token', 'a-new-password');
+
+    expect(passwordHistory.record).toHaveBeenCalledWith(
+      'user-1',
+      expect.any(String),
+      PASSWORD_CHANGE_REASON.Reset,
+      expect.anything(),
+    );
+  });
+
+  it('records the hash that was stored, not the password that was typed', async () => {
+    // The obvious mistake, and one the assertion above would not catch.
+    const { service, passwordHistory } = build();
+
+    await service.consume('the-token', 'a-new-password');
+
+    expect(passwordHistory.record.mock.calls[0][1]).not.toBe('a-new-password');
+  });
+
+  it('rejects a password the user has used before, before spending the token', async () => {
+    const { service, passwordHistory, manager } = build();
+    passwordHistory.wasUsedBefore.mockResolvedValue(true);
+
+    await expect(
+      service.consume('the-token', 'a-new-password'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(manager.save).not.toHaveBeenCalled();
+    expect(passwordHistory.record).not.toHaveBeenCalled();
+  });
+
+  it('checks the history against the user the token names, not the caller', async () => {
+    // The reset token is the only thing that establishes who is resetting, so a
+    // check against anybody else would be checking the wrong history.
+    const { service, passwordHistory } = build();
+
+    await service.consume('the-token', 'a-new-password');
+
+    expect(passwordHistory.wasUsedBefore).toHaveBeenCalledWith(
+      'user-1',
+      'a-new-password',
+    );
   });
 
   it('rejects an unknown token without changing anything', async () => {

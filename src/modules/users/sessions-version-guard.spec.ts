@@ -66,6 +66,22 @@ const ALLOWED: Record<string, RegExp> = {
 };
 
 /**
+ * Files that name the column only to read it.
+ *
+ * The detection below is textual — a file that mentions the column is treated as
+ * one that writes it — which is blunt enough to catch the read side too. A data
+ * export selects `sessionsVersion` because knowing it is part of the account's
+ * data, and it never writes it, so listing it as a writer would be a false
+ * positive that has to be answered by weakening the guard for every future reader.
+ *
+ * The exclusion is explicit rather than detected, because "does this file write
+ * the column" is not a question a regex can answer without also matching every
+ * read. Naming the readers is a decision somebody has to make, which is the
+ * property worth keeping.
+ */
+const SELECTS_ONLY = new Set(['src/modules/users/export/export.service.ts']);
+
+/**
  * Every file naming the column, ignoring the migrations that created it.
  *
  * The literal is what identifies a write, because it is the only form both an
@@ -74,17 +90,20 @@ const ALLOWED: Record<string, RegExp> = {
  */
 function writers(): string[] {
   return walk(SRC)
-    .filter((file) => {
-      const source = readFileSync(file, 'utf8');
+    .filter((file_) => {
+      const source = readFileSync(file_, 'utf8');
+
+      const file = relative(SRC, file_);
 
       return (
         (source.includes("'sessionsVersion'") ||
           source.includes('"sessionsVersion"')) &&
         !source.includes('ALTER TABLE') &&
-        !source.includes('DROP COLUMN')
+        !source.includes('DROP COLUMN') &&
+        !SELECTS_ONLY.has(file)
       );
     })
-    .map((file) => relative(SRC, file))
+    .map((file_) => relative(SRC, file_))
     .sort();
 }
 

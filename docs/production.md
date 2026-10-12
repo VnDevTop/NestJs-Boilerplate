@@ -197,6 +197,120 @@ _missing_ a permission, so the guard refuses rather than admits. A deploy that
 changes grants the other way, which this cache cannot cause, would be the
 dangerous one.
 
+## Password policy
+
+Configured entirely by environment; nothing is hard-coded in a DTO.
+
+```dotenv
+PASSWORD_MIN_LENGTH=8
+PASSWORD_MAX_LENGTH=128
+PASSWORD_REQUIRE_LOWERCASE=true
+PASSWORD_REQUIRE_UPPERCASE=true
+PASSWORD_REQUIRE_NUMBER=true
+PASSWORD_REQUIRE_SYMBOL=true
+PASSWORD_HISTORY_COUNT=5
+PASSWORD_CHECK_BREACH_LIST=false
+```
+
+Two defaults worth questioning rather than accepting:
+
+- **All four character classes on, at a minimum of 8, is a weak policy.** The
+  classes are individually switchable for exactly that reason. Turning them all
+  off and raising `PASSWORD_MIN_LENGTH` to 20 accepts
+  `correct horse battery staple` and rejects nothing a composition rule would have
+  pushed somebody towards. NIST has recommended against composition rules since
+  2016, mostly because they produce `Password1!`.
+- **`PASSWORD_MAX_LENGTH` is a bound on work, not on the hash.** scrypt has no
+  72-byte truncation, so a megabyte of password is a megabyte of key derivation. The
+  default of 128 is comfortable; there is no benefit to a larger one.
+
+### The breach list
+
+`PASSWORD_CHECK_BREACH_LIST=true` queries the Pwned Passwords range API. The
+password is SHA-1'd and only the **first five characters** are sent; the service
+returns every suffix sharing that prefix and the comparison happens here. The
+service never learns which password was asked about.
+
+**It fails open.** An unreachable or rate-limited API logs a warning and lets the
+signup through. The alternative makes a third party an availability dependency for
+this deployment, which is a considerably worse failure than a user signing up with
+a breached password.
+
+**A failed lookup is cached for a minute, a verdict for a month.** Both answers read
+as "not breached" to the caller, deliberately, because a check that must not deny
+service cannot distinguish them. The TTL difference is what stops a brief outage
+from becoming a day of unchecked passwords.
+
+### The password history
+
+`PASSWORD_HISTORY_COUNT` (5 by default) keeps the last N hashes per user and
+refuses a password that matches any of them. Only the scrypt hash is stored, in the
+same `salt:key` form as `users.password`.
+
+**A check is five scrypt derivations.** There is no faster lookup available — a
+password is a password, and the only way to know whether it matches is to derive
+each candidate. That is the price of the feature, and the reason the default is five
+rather than twenty. Raising it costs a password change proportionally.
+
+**The window is trimmed on every write, not by a nightly job.** The table's size is
+always exactly N per user, which is also why it needs no retention rule: the only
+thing that removes a row is a newer password pushing it out.
+
+**Setting it to 0 disables the feature completely, including the write.** Storing
+credentials for a policy that will never check them is pure risk.
+
+At a reset, the reuse check runs inside the transaction and throws, so a rejected
+password leaves the token unspent and the user able to try again.
+
+### The permanent lockout
+
+```dotenv
+ACCOUNT_PERMANENT_LOCK_THRESHOLD=20
+ACCOUNT_PERMANENT_LOCK_WINDOW_HOURS=24
+ACCOUNT_UNLOCK_TOKEN_TTL_HOURS=24
+```
+
+A second lockout, past the temporary one above. This one writes `users.lockedAt`
+and stays until somebody clears it. They are different features, not one bigger
+than the other: the temporary block slows an attack off in Redis, this ends a
+sustained one in the database.
+
+**Set the threshold above `LOGIN_MAX_FAILED_ATTEMPTS`, and know that a value at or
+below it is treated as disabled.** At the same number the permanent lock fires on
+the attempt that also starts a temporary block, and the temporary block lifts on
+its own — an account locked and unlocked minutes apart.
+
+**This is a denial-of-service surface, and the only thing bounding it is the
+recovery path.** Somebody with a list of addresses can lock every account for
+twenty requests each. They cannot keep them locked, because:
+
+- only a **confirmed address** can be locked — an unverified one could never
+  receive the unlock link, so locking it would be permanent with no owner able to
+  clear it. This is a code invariant, not a setting;
+- the owner clears it with an emailed link, which reaches the person _under_
+  attack;
+- an operator clears it with `PATCH /auth/account/:id/unlock` (`UserWrite`).
+
+What survives all three is a nuisance, on an account that can recover itself. That
+is the trade: an account nobody can lock is an account nobody can defend.
+
+**Raise `ACCOUNT_PERMANENT_LOCK_WINDOW_HOURS` above 1 if you want the window to mean
+anything.** The failure count in Redis carries an hour ttl, so a default of 24 is
+measuring "did the worst of these happen today" rather than "in the last 24
+hours" — which is the intended reading, but worth being clear about.
+
+**Clearing a lock resets the Redis failure count too**, which is not optional: the
+count is at its maximum at the moment of the lock, so skipping it means the owner
+clicks their own link, is told they are unlocked, and is then refused with a 429
+for the rest of a temporary block they never knew about.
+
+### The optional strength score
+
+`npm install zxcvbn` adds a 0–4 strength score on top of the configured rules.
+Without it the score is skipped rather than treated as zero — otherwise a
+deployment that never installed the package would refuse every password as "too
+easy to guess". See `docs/optional-integrations.md`.
+
 ## Operator notifications
 
 Off by default, and the console channel is on inside it — so the default profile
@@ -241,6 +355,190 @@ LIMIT 50;
 Rows are removed at `RETENTION_NOTIFICATION_LOGS_DAYS`, 30 by default. That table
 holds operator addresses and, for the sign-in events, the attempted address — so the
 window is a data-retention decision rather than a housekeeping one.
+
+## The audit trail
+
+`audit_logs` records who did what to which row, from which address, under which
+request id, with a before/after diff.
+
+```sql
+SELECT "createdAt", "actorEmail", "action", "targetType", "targetId", "outcome"
+FROM audit_logs
+WHERE "actorId" = '…'
+ORDER BY "createdAt" DESC
+LIMIT 50;
+```
+
+**A password never reaches a row.** An audit diff is built from whatever object
+the action was performed on, and that object is usually a `User` — which carries a
+scrypt hash. `AuditService` walks every diff on the way in and replaces the value
+of any key in its redaction list with `[redacted]`, at any nesting depth. The key
+stays, so "the password changed" is still readable.
+
+**The writer never throws.** An audit write that failed the action it was recording
+would mean an outage in the log turns into an outage in the product. The gap is
+logged at `error` instead. This is a deliberate trade: the trail can have holes,
+and it is the trail that is available during the incident rather than the one that
+proves what happened six months later.
+
+**No foreign keys on the actor or the target.** The right-to-erasure flow removes
+the row an audit entry is about; a key would block that erasure or cascade the
+evidence away with it.
+
+**`RETENTION_AUDIT_LOGS_DAYS` defaults to 365**, where every other retention
+window is a week. An audit trail kept for a month is not an audit trail, and this
+is the largest table the nightly job will hold. Size for it before raising it.
+
+**Only some routes are recorded.** `@Audited()` is opt-in, because a trail that
+records every request is one nobody reads — profile reads and sign-ins would bury
+the privileged writes. The routes that carry it are the ones that change something
+or grant access: creating, editing and deleting a user, and replacing a role's
+permissions. Adding a new privileged route without the decorator is caught by
+`audit-policy.spec.ts`, which reads the decorators off the real handlers.
+
+**A refused request is recorded too**, with the status the exception carried. A
+permission that was refused is evidence; one that was never asked for is not.
+
+**`before` is null on every interceptor-written entry.** The interceptor sees the
+request and the response, never the row as it was, and a reconstructed before-state
+in a table presented as evidence looks like a record while being an inference.
+Routes whose before-state matters call `AuditService.record` directly.
+
+**The address comes from `request.ip`**, resolved against the trust proxy setting,
+never from `x-forwarded-for` directly — that header is client-controlled and
+unbounded, and reading it without the proxy trust setting behind it would put an
+attacker's chosen string into the `ipAddress` of every row they created.
+
+See [src/modules/audit/README.md](../src/modules/audit/README.md) for the
+indexes and the reasoning.
+
+## Optimistic locking
+
+`users` and `notification_preferences` carry a `@VersionColumn()`.
+
+```text
+Two administrators open the same profile.
+Admin A saves a role change.       -> version 3 -> 4
+Admin B saves a name change.       -> 409, reload
+```
+
+**Without it, Admin B's save silently writes the stale role back and both requests
+return 200.** That is the failure this prevents, and the reason it matters is that
+it is invisible: nobody sees an error, the audit log says the role changed twice,
+and the demotion is gone.
+
+`UsersService.update` catches `OptimisticLockVersionMismatchError` and answers
+**409**, not 500 — it is a conflict between two requests, not a fault, and a client
+that reads 500 retries the save.
+
+**Only those two entities.** Every other table here is written with `insert`,
+`delete` or a whole-set replace inside a transaction, so nothing loads a row to edit
+it field by field and there is no window for a version to close. A counter on those
+would be bumped on writes that never race, and would give a false impression that
+the entity is protected.
+
+**Optimistic, not pessimistic.** No row lock is taken; the conflict is detected at
+the write. The read-modify-write window here is a person filling in a form, and
+holding a lock across that would serialise every editor of every row behind whoever
+opened theirs first.
+
+Note that query-builder writes (`repository.update`, `.increment`) bypass the
+version check — which is why `lockAccount` uses `save`.
+
+## Idempotency
+
+Mutating routes marked `@Idempotent()` require an `Idempotency-Key` header and
+replay the original answer to a retry that reuses it.
+
+```http
+POST /api/v1/auth/register
+Idempotency-Key: 9f1c2b8e-…
+```
+
+**The header is required, not optional.** A route marked with this and called
+without it is a 400. Generating a key on the client's behalf would silently promise
+a guarantee the caller is not making — the guarantee only works if the _same_ key
+comes back on the retry.
+
+**A key already in flight is a 409, not a wait.** Holding a connection open for work
+the client cannot cancel means it times out and retries anyway, which is the
+situation this exists to survive. The retry is safe: same key, so it gets the
+recorded answer.
+
+**A non-2xx answer releases the key rather than recording it.** A 400 for a
+validation failure is worth retrying once the client fixes the body; recording it
+would replay the rejection for 24 hours to a client that had already corrected what
+was wrong.
+
+**Redis down means the request proceeds.** Every mutating request is processed
+without the protection — degraded, not broken. Failing closed would trade a partial
+loss of a convenience guarantee for a total loss of the product.
+
+Responses over 64 KB are replayed as a status with no body, so a client cannot put
+an unbounded value into a keyspace shared with the queue.
+
+Two windows: **60 seconds** to catch a duplicate arriving while the first is still
+running, and **24 hours** to serve a retry from a client that was offline.
+
+## Erasure
+
+`POST /api/v1/auth/account/erasure` soft-deletes the caller's account and starts
+the `RETENTION_SOFT_DELETED_USERS_DAYS` clock (30 by default).
+
+**A confirmed address is required.** An erasure is not reversible by the person who
+asked for it once the grace period ends, so a request from an unverified account is
+a request from somebody who cannot prove the inbox is theirs.
+
+**A second request does not restart the clock**, so an account cannot be held in a
+half-erased state by asking daily.
+
+**Notification preferences are removed immediately; the user row is not.** A
+channel choice is not part of the person, and restoring an account should not
+restore "email me about this" for an address that was just erased. There is
+deliberately no foreign key from `notification_preferences` to `users` — a cascade
+would erase a preference at the moment an operator might be about to restore.
+
+The address in `mail_logs.recipient` is removed by that table's own 30-day window,
+not by this flow.
+
+## Data export
+
+`GET /api/v1/users/me/export?format=csv|json` returns everything held about the
+caller, streamed.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  'https://api.example.com/api/v1/users/me/export?format=csv' -o account.csv
+```
+
+**Streamed, not collected.** The response pipes TypeORM's cursor, so an account
+with a decade of sessions works and the ones with the most data — which are the ones
+asking — are not the ones that fall over.
+
+**JSON is newline-delimited, not a JSON document.** Each line is independently
+parseable with a `__type` naming the section. An array has to be complete before
+its first byte can be written; a caller who reaches for `JSON.parse` on a large
+export gets an error rather than an out-of-memory crash.
+
+**No credentials, and the exclusion is structural.** `users.password`, the two-factor
+secret and its ciphertext triple, the recovery codes, every refresh token's `jti` and
+hash, and `password_history.passwordHash` are never **selected**. A column that is
+not selected cannot be rendered, so there is nothing to forget at the output stage.
+`expiresAt`, `revokedAt` and the device ip address _are_ included — knowing when a
+session existed and where it came from is the part a person is entitled to.
+
+**CSV injection is defused.** A `userAgent` is chosen by a stranger, so a value
+beginning `=`, `+`, `-` or `@` is prefixed with a tab before quoting. The order
+matters: prefix-then-quote leaves the tab _inside_ the quotes, because a quoted CSV
+field that opens with `=` is still executed by Excel.
+
+**A confirmed address is required**, for the same reason the erasure route needs one:
+the export contains ip addresses and user agents, and an unverified account cannot
+prove the inbox is theirs.
+
+**There is no administrator route.** Not a permission, not a path parameter — the
+endpoint reads the caller's own id and has no way to be pointed at another one. A
+support agent who needs a user's data asks the user for their export.
 
 ## Health checks
 

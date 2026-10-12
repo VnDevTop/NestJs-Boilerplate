@@ -63,9 +63,22 @@ else.
 - Two limits on the credential routes, one per client address and one per
   submitted address, because neither alone stops both an attacker rotating hosts
   and an attacker guessing one account.
-- A temporary lockout after five failed sign-ins: one minute, then a minute more
-  per further failure, capped at fifteen. Temporary rather than permanent, because a
-  permanent lockout is a denial of service anyone can inflict on a victim.
+- Two account lockouts. A temporary Redis block after five failed sign-ins — a
+  minute, then a minute more per failure, capped at fifteen — and a permanent one
+  after twenty that only an operator or the owner of a confirmed address can clear.
+  Only confirmed addresses can be locked permanently, because an unverified account
+  could never receive the link that unlocks it.
+- A password policy configured entirely by environment, an optional `zxcvbn` score,
+  a breach check that sends only five characters of a SHA-1 to a k-anonymity API,
+  and the last N hashes rejecting reuse.
+- An append-only audit trail of every privileged action: actor, target, before/after
+  diff, ip, user agent and request id, with a redactor that no credential passes.
+- An `Idempotency-Key` header on mutating routes, so a client retrying after a
+  timeout gets the original answer rather than a second account.
+- Optimistic concurrency on the rows a request reads before it writes, so two
+  administrators editing one profile produce a 409 instead of a silent lost update.
+- Erasure with a thirty day grace window, and a streamed export of everything held
+  about an account that selects no credential at all.
 - Nightly data retention, batching deletes so cleanup costs latency rather than a
   long lock, with a dry run to rehearse against production data first.
 - Request id on every response, and JSON logs in production that carry it.
@@ -198,10 +211,18 @@ Recorded rather than left to be discovered. See
   attempts against addresses nobody registered. That is what keeps a 429 from
   revealing which addresses exist. The cost is that anybody can lock an address
   out by guessing it wrong five times.
-- Auth state is read from the database on every request, not from the cache, so a
-  deactivated account or a changed role takes effect immediately. That costs one
-  query per request and is the right trade for this field; Phase 17b moves it to
-  Redis with an invalidation subscriber in front of it.
+- Auth state comes from Redis with a short TTL, and every write that moves an
+  authentication answer drops the entry explicitly. A change made outside the
+  application is therefore invisible until the TTL expires; there is no subscriber
+  watching for it, because a TypeORM subscriber gets no dependency injection and
+  cannot identify the row a query-builder write touched.
+- The audit trail can have holes. `AuditService.record` never throws, so an outage in
+  the log costs a logged gap rather than a failed request. That is a deliberate
+  trade: an outage in the log must not become an outage in the product.
+- A permanent lockout is a denial-of-service surface before it is a defence.
+  Somebody with a list of addresses can lock twenty accounts for twenty requests
+  each. What bounds it is the recovery path — only a confirmed address can be
+  locked, and that account's owner receives a link that clears it without help.
 
 ## Contributing
 

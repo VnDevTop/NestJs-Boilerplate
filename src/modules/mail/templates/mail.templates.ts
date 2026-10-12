@@ -128,6 +128,86 @@ export const newDeviceLoginTemplate: MailTemplate<NewDeviceLoginData> = {
   },
 };
 
+export interface AccountPermanentlyLockedData {
+  reason: string;
+  /** Where the owner goes to have the lock cleared without an operator. */
+  unlockUrl: string;
+  expiresInHours: number;
+  /**
+   * How many failures it took, so the owner can see it was not their keystroke.
+   *
+   * Null when the lock is older than redis's memory of it. The number is never
+   * guessed at that point, so the sentence falls back to "too many" rather than to
+   * a count that could be wrong.
+   */
+  failures: number | null;
+  appName: string;
+}
+
+/**
+ * The permanent lockout, Phase 19.
+ *
+ * A separate template from `account-locked` because the two are different facts
+ * with different recoveries. That one is a temporary block with a clock on it and
+ * nothing to click; this one needs an action, so it carries the link. Sharing a
+ * template would mean one of the two carried a button that did nothing useful.
+ *
+ * The button text says who clicked it. The reader of this message is either the
+ * person who locked themselves out or somebody who has their inbox — and only the
+ * second can use it. A mail that says "your account is locked" and gives a link
+ * teaches people that these mails are sent to attackers too.
+ */
+export const accountPermanentlyLockedTemplate: MailTemplate<AccountPermanentlyLockedData> =
+  {
+    name: 'account-permanently-locked',
+    subject: ({ appName }) => `Your ${appName} account has been locked`,
+    render: (data) => {
+      const link = actionLink(data.unlockUrl, 'Unlock my account');
+      const count = data.failures;
+      const headline =
+        count === null
+          ? 'Your account has been locked after too many failed sign-in attempts.'
+          : `Your account has been locked after ${count} failed sign-in attempts.`;
+      const advice =
+        count === null
+          ? 'If these attempts were not yours, change your password once you are back in — somebody may have been guessing it.'
+          : `If you did not try to sign in ${count} times, change your password once you are back in — somebody may have been guessing it.`;
+
+      return layout({
+        appName: data.appName,
+        text: `${headline} Every session has been signed out.\n\nReason: ${data.reason}\n\n${link.text}\n\nThis link expires in ${data.expiresInHours} hours and works once. ${advice}`,
+        html: `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;">${escapeHtml(headline)} Every session has been signed out.</p>
+<p style="margin:0 0 4px;font-size:14px;color:#616e7c;">Reason</p>
+<p style="margin:0 0 20px;font-size:15px;line-height:1.6;">${escapeHtml(data.reason)}</p>
+${link.html}
+<p style="margin:24px 0 0;font-size:13px;color:#52606d;">This link expires in ${escapeHtml(String(data.expiresInHours))} hours and works once. Nobody else can use it, because it is sent only to the confirmed address on the account. ${escapeHtml(advice)}</p>`,
+      });
+    },
+  };
+
+export interface AccountUnlockedData {
+  /** "an administrator" or "you", so the sentence about who did it reads right. */
+  actor: string;
+  supportUrl: string;
+  appName: string;
+}
+
+export const accountUnlockedTemplate: MailTemplate<AccountUnlockedData> = {
+  name: 'account-unlocked',
+  subject: ({ appName }) => `Your ${appName} account is unlocked again`,
+  render: (data) => {
+    const link = actionLink(data.supportUrl, 'Contact support');
+
+    return layout({
+      appName: data.appName,
+      text: `Your account has been unlocked by ${data.actor}.\n\nYou can sign in again. If you were not the one who signed in, change your password and review your active sessions.\n\n${link.text}`,
+      html: `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;">Your account has been unlocked by ${escapeHtml(data.actor)}.</p>
+<p style="margin:0 0 16px;font-size:15px;line-height:1.6;">You can sign in again. If you were not the one who signed in, change your password and review your active sessions.</p>
+${link.html}`,
+    });
+  },
+};
+
 /**
  * The operator-alert template, added by Phase 18.
  *

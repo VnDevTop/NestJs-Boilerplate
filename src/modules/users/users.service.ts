@@ -1,10 +1,11 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { OptimisticLockVersionMismatchError, Repository } from 'typeorm';
 
 import {
   authDeviceSessionsKey,
@@ -15,6 +16,7 @@ import type { CacheConfig } from '../../configs/index.js';
 import { ConfigService } from '@nestjs/config';
 
 import { NotificationEventsService } from '../notification/notification-events.service.js';
+import { NotificationPreferencesService } from '../notification/notification-preferences.service.js';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto/index.js';
 import { User } from './entities/index.js';
 
@@ -38,6 +40,30 @@ export interface AuthClaims {
   isManager: boolean;
   isActive: boolean;
   sessionsVersion: number;
+  /**
+   * Read live rather than carried in the token.
+   *
+   * Everything else here is a claim, because those change only when a session is
+   * revoked. This one changes when somebody clicks a link, and a token minted
+   * before the click would keep saying "unverified" for the rest of its life — long
+   * enough that a gate built on it reads as broken. The column is already in the
+   * cached projection, so it costs nothing extra.
+   */
+  isEmailVerified: boolean;
+  /**
+   * When the account was locked permanently, or null.
+   *
+   * A timestamp rather than a boolean, because the same reasons that put
+   * `isEmailVerified` here apply and one is stronger: a lock is a fact an
+   * operator needs to see the date of. A boolean would have to be paired with
+   * another column read from the row to be worth anything.
+   *
+   * The strategy refuses a locked account outright, which is the only thing that
+   * makes a permanent lock permanent. Without it, every session that existed
+   * before the lock would carry on working until its access token ran out, and
+   * the lockout would be an inconvenience rather than a lockout.
+   */
+  lockedAt: string | null;
 }
 
 /**
@@ -53,16 +79,21 @@ const AUTH_CLAIM_COLUMNS = {
   isManager: true,
   isActive: true,
   sessionsVersion: true,
+  isEmailVerified: true,
+  lockedAt: true,
 } as const;
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
     private readonly cache: CacheService,
     private readonly configService: ConfigService,
     private readonly notifications: NotificationEventsService,
+    private readonly preferences: NotificationPreferencesService,
   ) {}
 
   private get authTtl(): number {
@@ -161,6 +192,11 @@ export class UsersService {
           // `undefined` would refuse every token from a database the migration
           // has not touched.
           sessionsVersion: user.sessionsVersion ?? 0,
+          isEmailVerified: user.isEmailVerified,
+          // Serialised rather than kept as a `Date`, because the cached value is
+          // JSON and a `Date` becomes a string on the way in and a string on the
+          // way out. The strategy only tests it against null.
+          lockedAt: user.lockedAt ? user.lockedAt.toISOString() : null,
         };
       },
       { ttl: this.authTtl },
@@ -224,6 +260,19 @@ export class UsersService {
     return UserResponseDto.fromEntity(user);
   }
 
+  /**
+   * Edits a user, refusing if somebody else got there first.
+   *
+   * The 409 is the whole feature. Without it the second save would simply overwrite
+   * the first, and both callers would see a 200 — which is a lost update that looks
+   * like success to everybody involved. `version` on the entity makes TypeORM's
+   * `save` match on the version it read, so a row changed underneath affects zero
+   * rows and raises `OptimisticLockVersionMismatchError` here.
+   *
+   * Caught rather than allowed out as a 500: it is a conflict between two requests,
+   * not a fault, and a caller that reads 409 knows to reload rather than to page
+   * somebody.
+   */
   async update(
     id: string,
     updateUserDto: UpdateUserDto,
@@ -243,7 +292,21 @@ export class UsersService {
     }
 
     const updatedUser = this.usersRepository.merge(user, updateUserDto);
-    const savedUser = await this.usersRepository.save(updatedUser);
+
+    let savedUser: User;
+
+    try {
+      savedUser = await this.usersRepository.save(updatedUser);
+    } catch (error) {
+      if (error instanceof OptimisticLockVersionMismatchError) {
+        throw new ConflictException(
+          'This user was changed by somebody else while you were editing. ' +
+            'Reload and try again.',
+        );
+      }
+
+      throw error;
+    }
 
     // Unconditional rather than only when a claim field moved. The cached entry
     // holds none of the fields this endpoint actually edits, so the common case
@@ -252,6 +315,176 @@ export class UsersService {
     await this.invalidateAuthCache(id);
 
     return UserResponseDto.fromEntity(savedUser);
+  }
+
+  /**
+   * Locks an account permanently and tells the operators.
+   *
+   * **The sessions version moves with it**, which is the part that makes this a
+   * lockout rather than a flag. Every access token already issued carries the
+   * version it was minted under, so a bump refuses all of them at once. Without
+   * it an account could stay usable for the life of its longest-lived refresh
+   * chain, which is the attack the lockout exists to stop.
+   *
+   * The bump goes through `runThenInvalidateAuthCache` rather than a bare save so
+   * the cache is dropped *after* the commit. The reverse order leaves a window in
+   * which a request reads the old version through a fresh cache entry and that
+   * entry then outlives the lock by a full TTL — a lockout with a fifteen minute
+   * hole in it, which is the sort of bug that reads as "the lock is flaky".
+   *
+   * Returns the user as it now stands, so a caller can render a notification from
+   * the same read that performed the change rather than from a second query that
+   * could disagree with it.
+   */
+  async lockAccount(id: string, reason: string): Promise<User> {
+    const user = await this.findById(id);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Truthy rather than `!== null`, for the same reason as `requestDeletion`: an
+    // `undefined` lock is not a lock, and treating it as one would make every
+    // account look permanently locked to a caller holding a partial row.
+    if (user.lockedAt) {
+      // Idempotent rather than an error: two concurrent failures can both cross the
+      // threshold, and the second must not overwrite the reason and the timestamp the
+      // operator is about to read.
+      return user;
+    }
+
+    const locked = await this.runThenInvalidateAuthCache(id, () =>
+      this.usersRepository.save(
+        this.usersRepository.merge(user, {
+          lockedAt: new Date(),
+          lockReason: reason,
+          sessionsVersion: user.sessionsVersion + 1,
+        }),
+      ),
+    );
+
+    await this.notifications.notify(
+      'auth.account.locked',
+      { email: locked.email, reason },
+      { userId: locked.id },
+    );
+
+    return locked;
+  }
+
+  /**
+   * Clears a permanent lock, whichever hand did the locking.
+   *
+   * `actor` is a free string rather than an id because the two callers are an
+   * administrator and the owner of the inbox, and the reader wants to know which
+   * of those two happened rather than to join against a table to find out. An
+   * audit entry for the administrative case is Phase 19's next task; this is the
+   * notification, which is what the person locked out reads.
+   */
+  async unlockAccount(id: string, actor: string): Promise<User> {
+    const user = await this.findById(id);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.lockedAt) {
+      // Also idempotent. An unlock link can be clicked twice by an anxious user,
+      // and a second write that bumped the sessions version again would sign the
+      // person out of the session they had just recovered.
+      return user;
+    }
+
+    const unlocked = await this.usersRepository.save(
+      this.usersRepository.merge(user, {
+        lockedAt: null,
+        lockReason: null,
+      }),
+    );
+
+    await this.invalidateAuthCache(id);
+
+    await this.notifications.notify(
+      'auth.account.unlocked',
+      { email: unlocked.email, actor },
+      { userId: unlocked.id },
+    );
+
+    return unlocked;
+  }
+
+  /**
+   * The right to erasure: soft delete, with the reason, and stop authenticating.
+   *
+   * **Soft, not hard.** The row stays for the retention window — thirty days by
+   * default — so a deletion made in anger, or by somebody who got an account
+   * closed on them, can be reversed by an operator. Erasing immediately would make
+   * the feature irreversible, which is the wrong property for an endpoint anybody
+   * can call.
+   *
+   * The reason goes through the entity's own `requestDeletion`, so `deletedAt` and
+   * `deletionReason` are set together and nothing else can set one without the
+   * other. The timestamp is what the retention job measures the thirty days from.
+   *
+   * `runThenInvalidateAuthCache`, not a bare `softDelete`, for the same reason the
+   * lock uses it: a soft delete leaves `isActive` alone, so nothing downstream would
+   * notice an erased account until its cached claims expired.
+   */
+  async requestDeletion(
+    id: string,
+    reason: string,
+    actor: string,
+  ): Promise<User> {
+    const user = await this.findById(id);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Truthy rather than `!== null`. Both are falsy for an un-erased account, but
+    // `undefined` is neither `null` nor a Date, and a row that has never been
+    // mapped — a partial select, an entity built by hand — would otherwise read as
+    // already deleted and the request would silently do nothing.
+    if (user.deletedAt) {
+      // Idempotent, and deliberately silent. An erasure request that is retried —
+      // by a client that lost the response, or by a person clicking twice — must
+      // not restart the thirty-day clock, or a user could hold their account in a
+      // half-erased state indefinitely by requesting once a day.
+      return user;
+    }
+
+    user.requestDeletion(reason);
+
+    const erased = await this.runThenInvalidateAuthCache(id, () =>
+      this.usersRepository.save(user),
+    );
+
+    // Notification preferences go now rather than with the retention job, so the
+    // erasure is complete on the day it is asked for while the user row is still
+    // recoverable for thirty days. A channel choice is not part of the person, and
+    // restoring an account should not restore "email me about this" for an address
+    // that was just erased.
+    try {
+      await this.preferences.forget(id);
+    } catch (error) {
+      // Logged rather than thrown: the account is already marked, so failing here
+      // would leave a caller believing the erasure did not happen, and retrying it
+      // would not un-mark the row. These rows are configuration with no security
+      // value; the audit trail and the notification are the parts that matter.
+      this.logger.error(
+        `Could not remove notification preferences for the erased account ${id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    await this.notifications.notify(
+      'user.deleted',
+      { email: erased.email, actor },
+      { userId: id },
+    );
+
+    return erased;
   }
 
   /**
@@ -268,23 +501,13 @@ export class UsersService {
    * did it — an id resolves to a name in the audit log that Phase 19 adds.
    */
   async softDelete(id: string, actor = 'unknown'): Promise<void> {
-    const user = await this.findById(id);
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    await this.usersRepository.softDelete(id);
-
-    // A soft-deleted account must stop authenticating now, not when its cached
-    // claims expire. `JwtStrategy` reads `isActive`, which a soft delete does not
-    // touch, so nothing downstream would otherwise notice.
-    await this.invalidateAuthCache(id);
-
-    await this.notifications.notify(
-      'user.deleted',
-      { email: user.email, actor },
-      { userId: id },
-    );
+    // No lookup here. `requestDeletion` does its own — the id, not the row — and a
+    // second one would consume a second row from a repository that pages, which in
+    // a real database costs a query and in a test harness reads as a user that does
+    // not exist.
+    //
+    // The reason defaults to something that says who did it, because this is the
+    // administrative path and the row has to explain itself after the hard delete.
+    await this.requestDeletion(id, 'deleted by an administrator', actor);
   }
 }

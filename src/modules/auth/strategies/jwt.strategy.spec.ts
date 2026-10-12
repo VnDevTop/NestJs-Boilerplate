@@ -19,6 +19,11 @@ const user = (overrides: Partial<User> = {}): User =>
     isManager: false,
     role: 'user',
     sessionsVersion: 0,
+    // Explicit, because the strategy tests it against null and an `undefined`
+    // fixture fails that test exactly like a locked account does. Every assertion
+    // in this file would then be asserting the lockout rather than what it was
+    // written for.
+    lockedAt: null,
     ...overrides,
   }) as User;
 
@@ -136,6 +141,47 @@ describe('JwtStrategy sessionsVersion', () => {
       await expect(h.strategy.validate(payload({ sv: 0 }))).rejects.toThrow(
         UnauthorizedException,
       );
+    });
+  });
+
+  describe('a permanently locked account', () => {
+    it('is refused even though the version claim matches', async () => {
+      // The version comparison would catch this on its own, one day, once the token
+      // was reissued. This is the check that holds from the moment of the lock.
+      h = harness({
+        user: user({
+          lockedAt: new Date('2026-03-01T00:00:00Z'),
+          sessionsVersion: 0,
+        }),
+      });
+
+      await expect(h.strategy.validate(payload({ sv: 0 }))).rejects.toThrow(
+        'Invalid access token',
+      );
+    });
+
+    it('is refused with the same 401 an invalid token gets', async () => {
+      // "your token is no good" and "your account is locked" tells an attacker
+      // which of the two they are holding, and the owner has the mail that explains
+      // it. Splitting the two responses would buy nothing.
+      h = harness({
+        user: user({ lockedAt: new Date('2026-03-01T00:00:00Z') }),
+      });
+
+      await expect(h.strategy.validate(payload({ sv: 0 }))).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+
+    it('is refused before the permission lookup, which costs a query', async () => {
+      // A locked account is refused on the first claim that says so. Resolving
+      // permissions first would spend a cached read on a request that is going to
+      // be rejected anyway.
+      h = harness({ user: user({ lockedAt: new Date() }) });
+
+      await expect(h.strategy.validate(payload({ sv: 0 }))).rejects.toThrow();
+
+      expect(h.forRole).not.toHaveBeenCalled();
     });
   });
 
