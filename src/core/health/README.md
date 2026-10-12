@@ -4,7 +4,7 @@ Liveness, readiness and the shutdown flag that connects them.
 
 ```text
 GET /api/v1/health/live     liveness, touches nothing external
-GET /api/v1/health/ready    database, cache, mail transport, queue backlog
+GET /api/v1/health/ready    database, cache, mail, queue, maintenance
 GET /api/v1/health          the same as ready
 ```
 
@@ -139,3 +139,46 @@ cannot tell them apart pages somebody for the wrong one.
 about what this application can absorb, not a property of the deployment. A
 deployment that needs a different one should be told, not handed a knob that
 quietly disables the alert.
+
+## The maintenance check
+
+```json
+{
+  "maintenance": {
+    "status": "degraded",
+    "finishedAt": "2026-03-01T03:19:02.000Z",
+    "ageHours": 27,
+    "deleted": 0,
+    "timedOut": false,
+    "dryRun": false,
+    "failedTargets": [],
+    "late": true,
+    "reason": "no run has finished in 27 hours"
+  }
+}
+```
+
+**This is the only signal that a missed retention job exists.** Nothing fails,
+nothing errors, and every request answers — the tables the policy prunes just keep
+growing until one of them is large enough that something else breaks, and by then
+the cause is days old with nothing recorded it.
+
+**26 hours** is the plan's threshold and it is chosen: the job runs at 03:17
+daily, so that is one full cycle missed plus most of the next. Shorter would fire
+on a run that was merely late because the scheduler was restarting; longer would
+let a nightly job stay broken over a weekend.
+
+**It reports the _last_ run, not the last successful one.** A failed run is still
+the most recent thing that happened, and it is the more useful answer — the
+question is usually "did it run", and a run that failed while deleting nothing is
+worse to hide than to show.
+
+**`dryRun` is in the payload** because a green run that deleted nothing is not the
+same as a green run that had nothing to delete. An operator reading `deleted: 0`
+on the job whose whole purpose is deleting needs to tell those apart.
+
+**`reason` is omitted when there is nothing wrong.** A key that is always
+populated is a key that stops being read.
+
+**It never blocks readiness**, and neither does anything else here. A housekeeping
+failure is not a reason to pull every instance out of rotation.

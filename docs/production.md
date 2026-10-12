@@ -522,6 +522,11 @@ Worth knowing about each:
   being written to a buffer that dies with the process.
 - **queue** — backlog per queue, the driver in use, and the dead-letter count.
   An unreadable backlog is `degraded` rather than a reassuring zero.
+- **maintenance** — the last retention run, how long ago it finished, and
+  whether it succeeded. **This is the only signal that a missed retention job
+  exists**: nothing fails when the job does not run, the tables just keep growing
+  until something else breaks. Degrades past 26 hours, which is one full daily
+  cycle missed plus most of the next.
 
 `QUEUE_ENABLED=false` is worth reading as an answer in itself: the in-process
 driver has no shared backlog, so every pending job dies with the process.

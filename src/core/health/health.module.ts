@@ -14,7 +14,9 @@ import {
 import { Public } from '../../common/decorators/index.js';
 import { MailModule } from '../../modules/mail/index.js';
 import { QueueModule } from '../../modules/queue/index.js';
+import { MaintenanceModule } from '../../modules/maintenance/maintenance.module.js';
 import { CacheHealthIndicator } from './cache.health.js';
+import { MaintenanceHealthIndicator } from './maintenance.health.js';
 import { MailHealthIndicator } from './mail.health.js';
 import { QueueHealthIndicator } from './queue.health.js';
 import { ShutdownService } from './shutdown.service.js';
@@ -33,6 +35,7 @@ export class HealthController {
     private readonly cache: CacheHealthIndicator,
     private readonly mail: MailHealthIndicator,
     private readonly queue: QueueHealthIndicator,
+    private readonly maintenance: MaintenanceHealthIndicator,
     private readonly shutdown: ShutdownService,
   ) {}
 
@@ -55,6 +58,7 @@ export class HealthController {
       () => this.cache.isHealthy(),
       () => this.mail.isHealthy(),
       () => this.queue.isHealthy(),
+      () => this.maintenance.isHealthy(),
     ]);
   }
 
@@ -67,6 +71,7 @@ export class HealthController {
       () => this.cache.isHealthy(),
       () => this.mail.isHealthy(),
       () => this.queue.isHealthy(),
+      () => this.maintenance.isHealthy(),
     ]);
   }
 }
@@ -76,12 +81,13 @@ export class HealthController {
   // the backlog is read through; `MailModule` for the transport. Both are one
   // direction only — neither imports the health module — so nothing here can close
   // a cycle through the indicator.
-  imports: [TerminusModule, MailModule, QueueModule],
+  imports: [TerminusModule, MailModule, QueueModule, MaintenanceModule],
   controllers: [HealthController],
   providers: [
     CacheHealthIndicator,
     MailHealthIndicator,
     QueueHealthIndicator,
+    MaintenanceHealthIndicator,
     ShutdownService,
   ],
   exports: [ShutdownService],
