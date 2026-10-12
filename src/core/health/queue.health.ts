@@ -8,6 +8,7 @@ import {
   type QueueDepth,
   type QueueName,
 } from '../../modules/queue/queue.interface.js';
+import { MetricsService } from '../metrics/index.js';
 import { DeadLetterService } from '../../modules/queue/dead-letter.service.js';
 import { RedisClientService } from '../../modules/queue/redis-client.service.js';
 
@@ -60,6 +61,7 @@ export class QueueHealthIndicator {
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
     private readonly deadLetter: DeadLetterService,
     private readonly redis: RedisClientService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async isHealthy(): Promise<HealthIndicatorResult> {
@@ -79,6 +81,19 @@ export class QueueHealthIndicator {
 
     const failedJobs = await this.deadLetter.size();
     const reachable = await this.redisReachable();
+
+    // The gauges the alert rules read. Set here rather than at the point the count
+    // is produced, because the dead-letter list lives in redis and nothing else in
+    // the process looks at it between runs — a gauge only somebody refreshes is a
+    // gauge that reads zero when nobody has called this for a while, and a
+    // Prometheus scrape does not call this.
+    this.metrics.deadLettered(failedJobs);
+
+    for (const [name, depth] of Object.entries(depths)) {
+      if (depth !== null) {
+        this.metrics.queueBacklog(name, depth.waiting);
+      }
+    }
 
     // An unknown backlog is `degraded` even when the numbers look fine, because a
     // dashboard reporting zero waiting jobs while the store is unreachable looks

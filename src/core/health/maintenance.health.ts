@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { HealthIndicatorResult } from '@nestjs/terminus';
 
+import { MetricsService } from '../metrics/index.js';
 import { RetentionService } from '../../modules/maintenance/retention.service.js';
 import type { MaintenanceLog } from '../../modules/maintenance/entities/index.js';
 
@@ -39,7 +40,10 @@ export const MAINTENANCE_ALERT_AFTER_HOURS = 26;
 export class MaintenanceHealthIndicator {
   private readonly logger = new Logger(MaintenanceHealthIndicator.name);
 
-  constructor(private readonly maintenance: RetentionService) {}
+  constructor(
+    private readonly maintenance: RetentionService,
+    private readonly metrics: MetricsService,
+  ) {}
 
   async isHealthy(): Promise<HealthIndicatorResult> {
     try {
@@ -61,6 +65,11 @@ export class MaintenanceHealthIndicator {
 
       const ageHours = (Date.now() - last.finishedAt.getTime()) / 3_600_000;
       const late = ageHours > MAINTENANCE_ALERT_AFTER_HOURS;
+
+      // The gauge `MaintenanceOverdue` reads. The alert cannot work off this
+      // endpoint — Prometheus does not poll health endpoints — so the number has to
+      // reach a metric somewhere, and this is the only place it is computed.
+      this.metrics.maintenanceAgeHours(ageHours);
 
       // The payload is assembled as an object and the reason is only added when
       // there is one, rather than assigned `undefined`. A key that is present but

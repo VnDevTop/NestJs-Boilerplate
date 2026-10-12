@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { QueueHealthIndicator } from './queue.health.js';
+import { MetricsService } from '../metrics/index.js';
 import { QUEUE_NAMES } from '../../modules/queue/queue.interface.js';
 
 /**
@@ -54,6 +55,9 @@ function harness(
     { driver, depth } as never,
     { size } as never,
     { getClient } as never,
+    // A real service: the backlog and dead-letter gauges it sets are no-ops
+    // without `prom-client`, which is the state this suite runs in.
+    new MetricsService(),
   );
 
   return { indicator, depth, size, getClient };

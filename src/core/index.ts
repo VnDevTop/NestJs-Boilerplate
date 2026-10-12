@@ -1,3 +1,4 @@
+export * from './alerts/index.js';
 export * from './cache/index.js';
 export * from './health/index.js';
 export * from './logger/index.js';

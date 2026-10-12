@@ -4,6 +4,7 @@ import {
   MAINTENANCE_ALERT_AFTER_HOURS,
   MaintenanceHealthIndicator,
 } from './maintenance.health.js';
+import { MetricsService } from '../metrics/index.js';
 import type { MaintenanceLog } from '../../modules/maintenance/entities/index.js';
 
 /**
@@ -47,7 +48,12 @@ function harness(last: MaintenanceLog | null | Error) {
   });
 
   return {
-    indicator: new MaintenanceHealthIndicator({ latest } as never),
+    // A real service: the gauge it sets is a no-op without `prom-client`, and
+    // this is the state the suite runs in.
+    indicator: new MaintenanceHealthIndicator(
+      { latest } as never,
+      new MetricsService(),
+    ),
     latest,
   };
 }
