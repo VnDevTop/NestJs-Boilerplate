@@ -5,3 +5,4 @@ export * from './metrics/index.js';
 export * from './redact/index.js';
 export * from './optional/index.js';
 export * from './swagger/index.js';
+export * from './tracing/index.js';

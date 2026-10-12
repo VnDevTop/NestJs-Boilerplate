@@ -3,6 +3,7 @@ import type { Writable } from 'node:stream';
 
 import { getRequestId } from '../../common/utils/index.js';
 import { redactForLog, redactText } from '../redact/index.js';
+import { TracingService } from '../tracing/index.js';
 
 export interface AppLoggerOptions {
   levels: LogLevel[];
@@ -14,6 +15,7 @@ interface LogEntry {
   context?: string;
   message: unknown;
   requestId?: string;
+  traceId?: string;
 }
 
 /**
@@ -31,6 +33,17 @@ interface LogEntry {
  */
 export class AppLogger extends ConsoleLogger {
   private readonly settings: AppLoggerOptions;
+
+  /**
+   * A process-wide tracing service, read for every line.
+   *
+   * Not injected: the logger is constructed before the Nest container exists —
+   * `createAppLogger` is called from `main.ts` — so there is nothing to inject
+   * from. A module-level instance is right here precisely because tracing state is
+   * ambient rather than owned: the whole point is that a log line deep inside a
+   * service can find the trace it belongs to without being handed anything.
+   */
+  private readonly tracing = new TracingService();
 
   constructor(settings: AppLoggerOptions, context?: string) {
     const base = { logLevels: settings.levels, json: false };
@@ -154,12 +167,17 @@ export class AppLogger extends ConsoleLogger {
   private toEntry(entry: LogEntry): Record<string, unknown> {
     const context = entry.context ? { context: entry.context } : {};
     const requestId = entry.requestId ? { requestId: entry.requestId } : {};
+    // Omitted rather than empty. `traceId: ''` on every line of a deployment with
+    // no tracing installed is a field a log pipeline has to learn to skip, and one
+    // that is always empty is one nobody looks at.
+    const traceId = entry.traceId ? { traceId: entry.traceId } : {};
 
     return {
       timestamp: new Date().toISOString(),
       level: entry.level,
       ...context,
       ...requestId,
+      ...traceId,
       // Redacted on the way in, and an `Error` is handled specially rather than
       // passed to `redactForLog` as an object: once flattened, its `message` and
       // `stack` are strings, and the key-based pass does not see inside a string.

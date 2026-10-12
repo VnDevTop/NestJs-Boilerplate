@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, type NestModule } from '@nestjs/common';
 import { APP_GUARD, HttpAdapterHost } from '@nestjs/core';
 import { ConditionalModule, ConfigModule } from '@nestjs/config';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { createObserveModule } from '@nestjs/observe';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -38,7 +39,13 @@ import {
   RequireVerifiedEmailGuard,
   RolesGuard,
 } from './common/guards/index.js';
-import { CacheModule, HealthModule, MetricsModule } from './core/index.js';
+import {
+  CacheModule,
+  HealthModule,
+  HttpTracingInterceptor,
+  MetricsModule,
+  TracingModule,
+} from './core/index.js';
 import {
   catchAllRoute,
   RequestIdMiddleware,
@@ -108,6 +115,17 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     // route. Imported at the root because every module that records a metric
     // injects the service from here rather than from each other.
     MetricsModule,
+
+    /**
+     * OpenTelemetry spans.
+     *
+     * `@opentelemetry/api` and nothing else — no SDK, no exporter. Install one and
+     * the spans start appearing with no change here; leave it out and every method
+     * is a no-op. That is what makes the integration honest: what is missing is a
+     * collector to send them to, and that is a deployment's business rather than
+     * something this boilerplate should choose for whoever clones it.
+     */
+    TracingModule,
     UsersModule,
     AuthModule,
     AdminModule,
@@ -163,6 +181,14 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       // is advice that does not help.
       provide: APP_GUARD,
       useClass: RequireVerifiedEmailGuard,
+    },
+    {
+      // First, so everything below it is inside the request's span. Guard order is
+      // the order they run in, and a trace that starts after the authentication
+      // work has already happened is a trace missing its slowest and most
+      // interesting part.
+      provide: APP_INTERCEPTOR,
+      useClass: HttpTracingInterceptor,
     },
     {
       // Last in the chain. A duplicate key is only meaningful once the caller is

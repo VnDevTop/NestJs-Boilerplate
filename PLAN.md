@@ -973,7 +973,7 @@ Tasks:
 - [x] Add Prometheus metrics: `mail_sent_total`, `mail_failures_total`,
       `notification_sent_total`, `job_lag_seconds`,
       `retention_rows_deleted_total`
-- [ ] Add OpenTelemetry traces spanning HTTP, database and job execution
+- [x] Add OpenTelemetry traces spanning HTTP, database and job execution
 - [ ] Propagate `X-Request-Id` into every log line, mail record and
       notification record
 - [ ] Add Sentry error reporting with release tagging
