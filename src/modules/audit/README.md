@@ -15,7 +15,10 @@ typically less protected than the one it duplicates. And it fails open — nothi
 about the table looks wrong until somebody exports it.
 
 So `AuditService` walks every `before` and `after` on the way in and replaces the
-value of any key in `REDACTED_KEYS` with `[redacted]`, at any nesting depth.
+value of any key in `REDACTED_KEYS` with `[redacted]`, at any nesting depth. That
+list lives in `src/core/redact/` and is shared with the logger — two copies of a
+credential list is two lists to forget to update, and the copy nobody updates is
+the one that is not being read.
 
 The key **stays**. "The password changed" is useful to an operator; "this field
 exists" is not a disclosure. The same list covers the other bearer credentials

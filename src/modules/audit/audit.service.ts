@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryDeepPartialEntity, Repository } from 'typeorm';
 
 import { AuditLog, type AuditSnapshot } from './entities/index.js';
+import { redactValue } from '../../core/redact/index.js';
 
 /**
  * Who did it. Snapshotted, not joined — see the entity.
@@ -31,89 +32,6 @@ export interface AuditEntry {
   outcome: 'success' | 'failure';
   statusCode?: number | null;
   error?: string | null;
-}
-
-/**
- * Fields that never reach an audit row, at any nesting depth.
- *
- * **This is the most important thing in the module.** An audit diff is built from
- * whatever object the action was performed on, and that object is usually a `User`
- * entity — which carries a password hash. Writing one into a table that is read by
- * operators, exported to a SIEM, and kept for a year turns a table of "who changed
- * what" into a table of "every credential this system has ever had", in a store
- * that is typically less protected than the database it duplicates.
- *
- * The rule is by name rather than by "looks like a secret", because the shapes
- * change and the names do not. Anything matching is dropped entirely rather than
- * masked: a masked `password: '***'` is still a row saying "this person's password
- * changed", which is useful, but it is also a row inviting somebody to find a way
- * to make the mask fail.
- *
- * `token`, `secret` and `otp` are here for the same reason in the other
- * directions: a reset token, a two-factor secret and a recovery code are all
- * bearer credentials, and all three live on objects an action might be performed
- * on.
- */
-const REDACTED_KEYS = new Set([
-  'password',
-  'newPassword',
-  'currentPassword',
-  'confirmPassword',
-  'token',
-  'tokenHash',
-  'refreshToken',
-  'accessToken',
-  'challengeToken',
-  'resetToken',
-  'verificationToken',
-  'secret',
-  'twoFactorSecret',
-  'otp',
-  'code',
-  'recoveryCodes',
-  'authorization',
-  'cookie',
-  'sessionSecret',
-]);
-
-/** What a redacted value is replaced with. */
-const REDACTED = '[redacted]';
-
-/**
- * Recursively drops the sensitive keys from a value about to be stored.
- *
- * Depth-limited, because the input is attacker-controlled in the general case: a
- * body is a diff source for some actions, and a body can nest ten thousand levels
- * deep. Unbounded recursion on that is a stack overflow inside the error handler.
- *
- * Arrays are walked rather than replaced, because a diff of a list of permissions
- * is exactly the kind of thing an audit entry exists for.
- */
-export function redactForAudit(
-  value: unknown,
-  depth = 0,
-): AuditSnapshot | unknown {
-  if (depth > 12) {
-    return '[too deep]';
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactForAudit(entry, depth + 1));
-  }
-
-  if (value === null || typeof value !== 'object') {
-    return value;
-  }
-
-  const out: AuditSnapshot = {};
-
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    out[key] = REDACTED_KEYS.has(key)
-      ? REDACTED
-      : redactForAudit(entry, depth + 1);
-  }
-
-  return out;
 }
 
 /**
@@ -183,11 +101,11 @@ export class AuditService {
         before:
           entry.before === undefined
             ? null
-            : (redactForAudit(entry.before) as AuditSnapshot | null),
+            : (redactValue(entry.before) as AuditSnapshot | null),
         after:
           entry.after === undefined
             ? null
-            : (redactForAudit(entry.after) as AuditSnapshot | null),
+            : (redactValue(entry.after) as AuditSnapshot | null),
         changedFields:
           entry.before !== undefined || entry.after !== undefined
             ? changedFields(entry.before, entry.after)

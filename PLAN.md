@@ -979,7 +979,7 @@ Tasks:
 - [ ] Add Sentry error reporting with release tagging
 - [ ] Add alert rules: failure rate above a threshold, a non-empty dead-letter
       list, a maintenance job that has not run in 26 hours
-- [ ] Redact token, secret and OTP fields in the logger
+- [x] Redact token, secret and OTP fields in the logger
 - [ ] Add a runbook in `docs/`: provider outage, Redis loss, queue backlog, and
       tracing a missing email through `mail_logs`
 - [ ] Add a Grafana dashboard for auth failure rate, job lag and mail delivery

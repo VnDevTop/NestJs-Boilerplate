@@ -501,6 +501,30 @@ would erase a preference at the moment an operator might be about to restore.
 The address in `mail_logs.recipient` is removed by that table's own 30-day window,
 not by this flow.
 
+## Log redaction
+
+Every log line is scrubbed on the way out. See
+[src/core/redact/README.md](../src/core/redact/README.md) for the full rule.
+
+- **By field name**, at any depth, for a structured payload — a request body, an
+  audit diff. `password`, every flavour of `token`, `secret`, `otp`,
+  `recoveryCodes`, `authorization`, `cookie`, `apiKey`, `signature`.
+- **By pattern, inside a sentence.** Most log lines are strings, and a token in a
+  message has no key above it: `Bearer …`, `?token=…`, `token: …`, `Set-Cookie: …`.
+
+Two things worth knowing when reading a log:
+
+- **A redacted value shows as `[redacted]`, and the key stays.** A key that
+  disappears makes "the password changed" indistinguishable from "this payload
+  never had a password".
+- **`code` is redacted even though it is usually a country code**, because in this
+  application it is where the six digit one-time password arrives. `code: 'EN'` is
+  an accepted casualty of that trade.
+
+The logger cannot throw. A cyclic payload, a value whose `toJSON` throws and a
+closed stream all degrade to a shorter line, because a logger that breaks the
+request it was describing loses the one record that explained the fault.
+
 ## Health checks
 
 `/api/v1/health/ready` reports the database, the cache, the mail transport and
@@ -569,6 +593,30 @@ prove the inbox is theirs.
 **There is no administrator route.** Not a permission, not a path parameter — the
 endpoint reads the caller's own id and has no way to be pointed at another one. A
 support agent who needs a user's data asks the user for their export.
+
+## Log redaction
+
+Every log line is scrubbed on the way out. See
+[src/core/redact/README.md](../src/core/redact/README.md) for the full rule.
+
+- **By field name**, at any depth, for a structured payload — a request body, an
+  audit diff. `password`, every flavour of `token`, `secret`, `otp`,
+  `recoveryCodes`, `authorization`, `cookie`, `apiKey`, `signature`.
+- **By pattern, inside a sentence.** Most log lines are strings, and a token in a
+  message has no key above it: `Bearer …`, `?token=…`, `token: …`, `Set-Cookie: …`.
+
+Two things worth knowing when reading a log:
+
+- **A redacted value shows as `[redacted]`, and the key stays.** A key that
+  disappears makes "the password changed" indistinguishable from "this payload
+  never had a password".
+- **`code` is redacted even though it is usually a country code**, because in this
+  application it is where the six digit one-time password arrives. `code: 'EN'` is
+  an accepted casualty of that trade.
+
+The logger cannot throw. A cyclic payload, a value whose `toJSON` throws and a
+closed stream all degrade to a shorter line, because a logger that breaks the
+request it was describing loses the one record that explained the fault.
 
 ## Health checks
 
