@@ -2,7 +2,13 @@ import { Logger, type OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { QueueConfig } from '../../configs/queue.config.js';
-import type { Job, JobQueue, JobResult, QueueName } from './queue.interface.js';
+import type {
+  Job,
+  JobQueue,
+  JobResult,
+  QueueDepth,
+  QueueName,
+} from './queue.interface.js';
 import type { DeadLetterService } from './dead-letter.service.js';
 import { backoffDelay } from './retry.policy.js';
 import {
@@ -238,11 +244,24 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
     });
   }
 
-  /** How many jobs are queued or running, for the health check. */
-  depth(): { waiting: number; active: number } {
+  /**
+   * This dispatcher's own backlog, which it knows exactly.
+   *
+   * Per queue rather than in total, because the config gives each one its own
+   * concurrency limit and an operator asking about mail does not want to hear that
+   * maintenance is busy.
+   *
+   * `failed` is always zero and that is honest rather than convenient: the
+   * in-process path has no store to keep a failure in, so a dead-letter entry is
+   * the only record that a job ever failed. A job that failed did not leave
+   * anything behind to count.
+   */
+  async depth(queue: QueueName): Promise<QueueDepth> {
     return {
-      waiting: this.waiting.length,
-      active: [...this.active.values()].reduce((sum, value) => sum + value, 0),
+      waiting: this.waiting.filter((entry) => entry.queue === queue).length,
+      active: this.active.get(queue) ?? 0,
+      failed: 0,
+      delayed: 0,
     };
   }
 

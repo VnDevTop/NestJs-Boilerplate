@@ -501,6 +501,31 @@ would erase a preference at the moment an operator might be about to restore.
 The address in `mail_logs.recipient` is removed by that table's own 30-day window,
 not by this flow.
 
+## Health checks
+
+`/api/v1/health/ready` reports the database, the cache, the mail transport and
+the queue backlog.
+
+**Nothing except the database is ever `down`.** `down` makes Terminus return 503,
+which an orchestrator answers by pulling every instance out of rotation. A mail
+provider outage, a full queue or a dead redis each degrade a system that is still
+answering requests, and reporting them as `down` turns each into a full outage of
+the API. They report `degraded`, which lands in `info`, returns 200, and is
+visible to an operator without anything being restarted.
+
+Worth knowing about each:
+
+- **cache** — a write-then-read round trip, because cache-manager turns a failing
+  store into a miss and a plain read cannot tell "unreachable" from "empty".
+- **mail** — reports the configured transport and never sends a probe email. A
+  `memory` transport in production reports `degraded` on its own: every mail is
+  being written to a buffer that dies with the process.
+- **queue** — backlog per queue, the driver in use, and the dead-letter count.
+  An unreadable backlog is `degraded` rather than a reassuring zero.
+
+`QUEUE_ENABLED=false` is worth reading as an answer in itself: the in-process
+driver has no shared backlog, so every pending job dies with the process.
+
 ## Data export
 
 `GET /api/v1/users/me/export?format=csv|json` returns everything held about the

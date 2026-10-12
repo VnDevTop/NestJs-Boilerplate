@@ -12,7 +12,11 @@ import {
 } from '@nestjs/terminus';
 
 import { Public } from '../../common/decorators/index.js';
+import { MailModule } from '../../modules/mail/index.js';
+import { QueueModule } from '../../modules/queue/index.js';
 import { CacheHealthIndicator } from './cache.health.js';
+import { MailHealthIndicator } from './mail.health.js';
+import { QueueHealthIndicator } from './queue.health.js';
 import { ShutdownService } from './shutdown.service.js';
 
 /**
@@ -27,6 +31,8 @@ export class HealthController {
     private readonly health: HealthCheckService,
     private readonly database: TypeOrmHealthIndicator,
     private readonly cache: CacheHealthIndicator,
+    private readonly mail: MailHealthIndicator,
+    private readonly queue: QueueHealthIndicator,
     private readonly shutdown: ShutdownService,
   ) {}
 
@@ -47,6 +53,8 @@ export class HealthController {
     return this.health.check([
       () => this.database.pingCheck('database'),
       () => this.cache.isHealthy(),
+      () => this.mail.isHealthy(),
+      () => this.queue.isHealthy(),
     ]);
   }
 
@@ -57,14 +65,25 @@ export class HealthController {
     return this.health.check([
       () => this.database.pingCheck('database'),
       () => this.cache.isHealthy(),
+      () => this.mail.isHealthy(),
+      () => this.queue.isHealthy(),
     ]);
   }
 }
 
 @Module({
-  imports: [TerminusModule],
+  // `QueueModule` for the dispatcher, the dead-letter list and the redis client
+  // the backlog is read through; `MailModule` for the transport. Both are one
+  // direction only — neither imports the health module — so nothing here can close
+  // a cycle through the indicator.
+  imports: [TerminusModule, MailModule, QueueModule],
   controllers: [HealthController],
-  providers: [CacheHealthIndicator, ShutdownService],
+  providers: [
+    CacheHealthIndicator,
+    MailHealthIndicator,
+    QueueHealthIndicator,
+    ShutdownService,
+  ],
   exports: [ShutdownService],
 })
 export class HealthModule {}

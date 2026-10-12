@@ -199,7 +199,7 @@ describe('InProcessDispatcher concurrency', () => {
       await dispatcher.enqueue('mail', job);
     }
 
-    const depth = dispatcher.depth();
+    const depth = await dispatcher.depth('mail');
 
     expect(depth.waiting + depth.active).toBeGreaterThan(0);
   });

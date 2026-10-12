@@ -39,8 +39,15 @@ export interface NodemailerMessage {
   }[];
 }
 
-/** The subset of `SMTPTransport` this transport calls. */
+/**
+ * The subset of `SMTPTransport` this transport calls.
+ *
+ * `verify` is nodemailer's own readiness call: it opens a connection, speaks
+ * EHLO and closes, without sending anything or consuming a quota. That is exactly
+ * what a health check needs and exactly what a synthetic send is not.
+ */
 export interface NodemailerTransport {
+  verify?(): Promise<boolean>;
   sendMail(message: NodemailerMessage): Promise<{
     messageId: string;
     accepted: string[];

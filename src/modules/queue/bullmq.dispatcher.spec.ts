@@ -45,6 +45,9 @@ function fakeBullmq() {
   }[] = [];
   const closed: string[] = [];
 
+  /** Per-queue counts, so a test can say what the backlog looks like. */
+  const counts: Record<string, Record<string, number>> = {};
+
   const module = {
     Queue: class {
       constructor(
@@ -64,6 +67,11 @@ function fakeBullmq() {
 
       async close() {
         closed.push(`queue:${this.name}`);
+      }
+
+      /** Counts per state, overridable per test through `counts`. */
+      async getJobCounts(..._types: string[]) {
+        return counts[this.name] ?? {};
       }
     },
     Worker: class {
@@ -88,14 +96,14 @@ function fakeBullmq() {
     },
   };
 
-  return { module, queues, workers, closed };
+  return { module, queues, workers, closed, counts };
 }
 
 function build(
   behaviour: () => Promise<JobResult> = async () => ({ ok: true }),
   bullmq: BullMqDispatcherOptions['bullmq'] = undefined,
 ) {
-  const { module, queues, workers, closed } = fakeBullmq();
+  const { module, queues, workers, closed, counts } = fakeBullmq();
   const process = vi.fn(behaviour);
 
   const dispatcher = new BullMqDispatcher(
@@ -104,7 +112,7 @@ function build(
     bullmq === undefined ? (module as never) : bullmq,
   );
 
-  return { dispatcher, process, queues, workers, closed };
+  return { dispatcher, process, queues, workers, closed, counts };
 }
 
 describe('BullMqDispatcher availability', () => {
@@ -218,6 +226,70 @@ describe('BullMqDispatcher.enqueue', () => {
     await expect(dispatcher.enqueue('mail', job)).rejects.toThrow(
       /npm install bullmq/,
     );
+  });
+});
+
+describe('BullMqDispatcher.depth', () => {
+  it('reports the counts per state, which is what the backlog alert reads', async () => {
+    const { dispatcher, counts } = build();
+
+    counts['mail'] = {
+      waiting: 12,
+      active: 2,
+      failed: 3,
+      delayed: 1,
+    };
+
+    await expect(dispatcher.depth('mail')).resolves.toEqual({
+      waiting: 12,
+      active: 2,
+      failed: 3,
+      delayed: 1,
+    });
+  });
+
+  it('defaults a state the backend did not count to zero', async () => {
+    // `getJobCounts` returns only the states it was asked for, so an absent key is
+    // an empty list rather than a missing measurement.
+    const { dispatcher, counts } = build();
+
+    counts['mail'] = { waiting: 5 };
+
+    await expect(dispatcher.depth('mail')).resolves.toMatchObject({
+      waiting: 5,
+      active: 0,
+    });
+  });
+
+  it('answers null rather than zeroes when redis cannot be asked', async () => {
+    // The dangerous answer is zeros. A dashboard reporting no waiting jobs while
+    // the store is unreachable looks healthier than an application with no jobs.
+    const broken = {
+      Queue: class {
+        constructor() {}
+        async getJobCounts() {
+          throw new Error('ECONNREFUSED');
+        }
+      },
+      Worker: class {
+        constructor() {}
+        on() {
+          return this;
+        }
+      },
+    };
+
+    const { dispatcher } = build(async () => ({ ok: true }), broken as never);
+
+    await expect(dispatcher.depth('mail')).resolves.toBeNull();
+  });
+
+  it('answers null when bullmq itself is absent, which is the same situation', async () => {
+    // Opening the queue is what fails when the package is missing, so this covers
+    // both "redis is down" and "not installed" with one answer.
+    const { dispatcher } = build(async () => ({ ok: true }), null);
+
+    await expect(dispatcher.depth('mail')).resolves.toBeNull();
   });
 });
 

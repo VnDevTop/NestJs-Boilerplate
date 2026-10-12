@@ -3,7 +3,13 @@ import { ConfigService } from '@nestjs/config';
 
 import { loadOptional } from '../../core/optional/optional.util.js';
 import type { QueueConfig } from '../../configs/queue.config.js';
-import type { Job, JobQueue, JobResult, QueueName } from './queue.interface.js';
+import type {
+  Job,
+  JobQueue,
+  JobResult,
+  QueueDepth,
+  QueueName,
+} from './queue.interface.js';
 import type { ProcessorRegistry } from './in-process.dispatcher.js';
 
 /**
@@ -21,6 +27,15 @@ interface BullQueueLike {
     options: Record<string, unknown>,
   ): Promise<{ id?: string }>;
   close(): Promise<void>;
+  /**
+   * Counts per job state, e.g. `{ waiting: 4, active: 1 }`.
+   *
+   * Declared here rather than imported from bullmq, because a type-only
+   * `typeof import('bullmq')` would be resolved when the app is built and a
+   * deployment without the package would fail to start rather than run the
+   * in-process path. Same reason as the constructor below.
+   */
+  getJobCounts(...types: string[]): Promise<Record<string, number>>;
 }
 
 interface BullWorkerLike {
@@ -92,6 +107,42 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
         : job.name.startsWith('digest')
           ? 'digest'
           : 'mail';
+  }
+
+  /**
+   * Current counts for one queue, or `null` when Redis cannot be asked.
+   *
+   * `null` rather than zeroes: an unreachable store means the backlog is
+   * unknown, and a dashboard that reported zero waiting jobs during a Redis
+   * outage would look healthier than an application with no jobs at all.
+   */
+  async depth(queue: QueueName): Promise<QueueDepth | null> {
+    try {
+      const counts = await this.queue(queue).getJobCounts(
+        'waiting',
+        'active',
+        'failed',
+        'delayed',
+      );
+
+      return {
+        waiting: counts['waiting'] ?? 0,
+        active: counts['active'] ?? 0,
+        failed: counts['failed'] ?? 0,
+        delayed: counts['delayed'] ?? 0,
+      };
+    } catch (error) {
+      // Opening the queue is what fails when the package is absent, so this covers
+      // both "redis is down" and "bullmq is not installed" — the same answer, and
+      // the right one for both.
+      logger.warn(
+        `Could not read the backlog for ${queue}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      return null;
+    }
   }
 
   /**
