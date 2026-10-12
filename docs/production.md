@@ -666,54 +666,6 @@ The logger cannot throw. A cyclic payload, a value whose `toJSON` throws and a
 closed stream all degrade to a shorter line, because a logger that breaks the
 request it was describing loses the one record that explained the fault.
 
-## Correlation
-
-One id ties a request to everything it caused: the log lines, the audit entries,
-the mail that was sent, the notification that was delivered, and the spans.
-
-| Where               | How to find it                                     |
-| ------------------- | -------------------------------------------------- |
-| log lines           | `requestId` on every entry, from the async context |
-| `mail_logs`         | `SELECT … WHERE "requestId" = '…'`                 |
-| `notification_logs` | same                                               |
-| `audit_logs`        | `requestId`                                        |
-| Sentry              | attached as a tag                                  |
-
-**The id travels in the queue payload, not looked up at delivery time.** A mail or
-a notification is delivered in the worker, possibly long after the request answered,
-and the async context that held the id is gone by then. Reading it at delivery would
-write `null` on every row — which is the worst shape for a correlation column,
-because it looks implemented.
-
-`docs/runbook.md` has the queries.
-
-## Alerts
-
-`ops/prometheus/alerts.yml` holds three rules. Their thresholds live in
-`src/core/alerts/alert.policy.ts`, and `alert.policy.spec.ts` parses the YAML and
-fails when the two disagree — because a drifted alert is worse than no alert in one
-specific way: it stays green while the thing it watches is on fire, and people stop
-believing the alerts that do fire.
-
-| Alert                | Fires on                                  | Waits | Runbook                                                                   |
-| -------------------- | ----------------------------------------- | ----- | ------------------------------------------------------------------------- |
-| `MailFailing`        | >10% of mail failing over 5 minutes       | `5m`  | [mail is failing](runbook.md#mail-is-failing)                             |
-| `JobsDeadLettered`   | one job exhausted its retries             | `1h`  | [jobs are dead-lettering](runbook.md#jobs-are-dead-lettering)             |
-| `MaintenanceOverdue` | the retention job has not run in 26 hours | `5m`  | [the retention job has not run](runbook.md#the-retention-job-has-not-run) |
-
-**Every rule has a wait, not just a threshold.** A restart, a cron landing on the
-hour, a deploy doubling traffic for ninety seconds — a rule that fires on those is
-a rule people learn to ignore.
-
-**The mail ratio divides failures by all sends**, not by a fixed number, so a quiet
-deployment is not alerted and a busy one is not diluted. The denominator is
-clamped, so a deployment that has sent nothing stays quiet instead of dividing by
-zero on the way up.
-
-`dead_lettered_total` and `maintenance_age_hours` are set by the health checks,
-because Prometheus does not poll `/health` — a gauge only a health endpoint
-refreshes reads zero when nobody has called it.
-
 ## Health checks
 
 ```text
