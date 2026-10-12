@@ -34,6 +34,12 @@ export const OPTIONAL_PACKAGES = {
     envFlag: 'none, the password policy works without it',
     install: 'npm install zxcvbn',
   },
+  promClient: {
+    feature: 'Prometheus metrics',
+    specifier: 'prom-client',
+    envFlag: 'none, /metrics returns 404 without it',
+    install: 'npm install prom-client',
+  },
   bullmq: {
     feature: 'BullMQ job queue',
     specifier: '@nestjs/bullmq',

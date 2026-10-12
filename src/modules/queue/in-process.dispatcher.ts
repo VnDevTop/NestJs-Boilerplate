@@ -1,6 +1,7 @@
 import { Logger, type OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { MetricsService } from '../../core/metrics/index.js';
 import type { QueueConfig } from '../../configs/queue.config.js';
 import type {
   Job,
@@ -21,6 +22,14 @@ interface PendingJob {
   queue: QueueName;
   job: Job;
   attempt: number;
+  /**
+   * When this was accepted, in epoch ms.
+   *
+   * Stamped here rather than by the metric so the lag is measured over the real
+   * wait including the drain loop's own scheduling delay, which is most of what a
+   * `job_lag_seconds` alert is watching.
+   */
+  enqueuedAt: number;
 }
 
 /**
@@ -49,6 +58,7 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
     private readonly configService: ConfigService,
     private readonly processors: ProcessorRegistry,
     private readonly deadLetter?: DeadLetterService,
+    private readonly metrics: MetricsService = new MetricsService(),
   ) {}
 
   private get config(): QueueConfig {
@@ -80,7 +90,7 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
       return;
     }
 
-    this.waiting.push({ queue, job, attempt: 1 });
+    this.waiting.push({ queue, job, attempt: 1, enqueuedAt: Date.now() });
 
     void this.drain(queue);
   }
@@ -143,6 +153,15 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
    */
   private async run(entry: PendingJob): Promise<void> {
     let result: JobResult;
+
+    // Measured before the processor runs, not after: the question this answers is
+    // how long the job *waited*, and a slow processor would otherwise be counted
+    // as queue lag.
+    this.metrics.jobLag(
+      entry.queue,
+      entry.job.name,
+      (Date.now() - entry.enqueuedAt) / 1000,
+    );
 
     try {
       result = await this.processors.process(entry.job);

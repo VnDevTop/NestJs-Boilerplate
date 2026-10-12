@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { MetricsService } from '../../core/metrics/index.js';
 import type { AppConfig } from '../../configs/app.config.js';
 import type { MailConfig } from '../../configs/mail.config.js';
 import {
@@ -69,6 +70,7 @@ export interface SendTemplateOptions {
 export class MailService {
   constructor(
     @Inject(MAIL_TRANSPORT) private readonly transport: MailTransport,
+    private readonly metrics: MetricsService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -142,11 +144,22 @@ export class MailService {
           `rejected=${result.rejected.length}`,
       );
 
+      // Counted on the way out rather than where the job was enqueued, because
+      // "enqueued" is not a number anybody can alert on — a provider that refuses
+      // everything produces a healthy-looking send count forever.
+      this.metrics.mailSent(template, this.transport.name);
+
       return { ...result, mailId: message.mailId, template, delivered: true };
     } catch (error) {
       logger.error(
         `[mail:${message.mailId}] template=${template} transport=${this.transport.name} ` +
           `failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+
+      this.metrics.mailFailed(
+        template,
+        this.transport.name,
+        isPermanentRejection(error),
       );
 
       return {

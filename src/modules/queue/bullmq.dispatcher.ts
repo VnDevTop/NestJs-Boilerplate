@@ -2,6 +2,7 @@ import { Logger, type OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { loadOptional } from '../../core/optional/optional.util.js';
+import { MetricsService } from '../../core/metrics/index.js';
 import type { QueueConfig } from '../../configs/queue.config.js';
 import type {
   Job,
@@ -36,6 +37,24 @@ interface BullQueueLike {
    * in-process path. Same reason as the constructor below.
    */
   getJobCounts(...types: string[]): Promise<Record<string, number>>;
+}
+
+/**
+ * The job shape the worker handler reads.
+ *
+ * `timestamp` and `processedOn` are bullmq's own, in epoch milliseconds. Using
+ * them rather than stamping our own is what makes `job_lag_seconds` comparable
+ * across a deployment that switches drivers: the number means "how long sat in
+ * redis" in one case and "how long sat in the heap" in the other, and both are
+ * the same question.
+ */
+interface BullWorkerJob {
+  name: string;
+  data: unknown;
+  /** When the job was added, in epoch ms. */
+  timestamp?: number;
+  /** When a worker picked it up, in epoch ms. Set on the first attempt only. */
+  processedOn?: number;
 }
 
 interface BullWorkerLike {
@@ -86,6 +105,7 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
     private readonly bullmq: BullModuleLike | null = loadOptional<BullModuleLike>(
       BULLMQ_SPECIFIER,
     ),
+    private readonly metrics: MetricsService = new MetricsService(),
   ) {}
 
   private get config(): QueueConfig {
@@ -176,7 +196,11 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
 
     const worker = new this.bullmq.Worker(
       created,
-      async (job) => this.run(job.name, job.data),
+      async (job: BullWorkerJob) => {
+        this.observeLag(queue, job);
+
+        return this.run(job.name, job.data);
+      },
       {
         connection: { url: this.config.url },
         concurrency: this.limitFor(queue),
@@ -196,6 +220,28 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
     this.workers.push(worker);
 
     return created;
+  }
+
+  /**
+   * Records how long a job waited before a worker picked it up.
+   *
+   * From bullmq's own `processedOn` and `timestamp` rather than a stamp of ours,
+   * so the number is the real queue delay including everything that happened in
+   * redis. A no-op when either timestamp is missing — a redelivery has
+   * `processedOn` from its first attempt and comparing it to a fresh timestamp
+   * would produce a large negative, which is why the service clamps at zero as
+   * well.
+   */
+  private observeLag(queue: QueueName, job: BullWorkerJob): void {
+    if (job.processedOn === undefined || job.timestamp === undefined) {
+      return;
+    }
+
+    this.metrics.jobLag(
+      queue,
+      job.name,
+      (job.processedOn - job.timestamp) / 1000,
+    );
   }
 
   private limitFor(queue: QueueName): number {

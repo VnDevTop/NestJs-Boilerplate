@@ -38,7 +38,7 @@ import {
   RequireVerifiedEmailGuard,
   RolesGuard,
 } from './common/guards/index.js';
-import { CacheModule, HealthModule } from './core/index.js';
+import { CacheModule, HealthModule, MetricsModule } from './core/index.js';
 import {
   catchAllRoute,
   RequestIdMiddleware,
@@ -104,6 +104,10 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
     CacheModule,
     HealthModule,
+    // Owns nothing but the optional prom-client registry, and the `/metrics`
+    // route. Imported at the root because every module that records a metric
+    // injects the service from here rather than from each other.
+    MetricsModule,
     UsersModule,
     AuthModule,
     AdminModule,

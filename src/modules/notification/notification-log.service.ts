@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 
+import { MetricsService } from '../../core/metrics/index.js';
 import { NotificationLog } from './entities/index.js';
 import type { NotificationLogWriter } from './notification.service.js';
 import type { LogEntry } from './types/index.js';
@@ -31,9 +32,16 @@ export class NotificationLogService implements NotificationLogWriter {
   constructor(
     @InjectRepository(NotificationLog)
     private readonly logs: Repository<NotificationLog>,
+    private readonly metrics: MetricsService,
   ) {}
 
   async record(entry: LogEntry): Promise<void> {
+    // Counted before the insert, so a row that fails to write does not silently
+    // lose the measurement too. The row and the counter answer different
+    // questions — "what happened" and "how often" — and only one of them is
+    // allowed to be missing.
+    this.metrics.notificationSent(entry.event, entry.channel, entry.delivered);
+
     try {
       await this.logs.insert({
         notificationId: entry.notificationId,

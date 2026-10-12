@@ -970,7 +970,7 @@ Tasks:
 - [x] Extend `/health` with mail transport, queue connectivity and backlog
       depth, all reporting degraded rather than down
 - [x] Expose the last successful maintenance run in the health payload
-- [ ] Add Prometheus metrics: `mail_sent_total`, `mail_failures_total`,
+- [x] Add Prometheus metrics: `mail_sent_total`, `mail_failures_total`,
       `notification_sent_total`, `job_lag_seconds`,
       `retention_rows_deleted_total`
 - [ ] Add OpenTelemetry traces spanning HTTP, database and job execution
