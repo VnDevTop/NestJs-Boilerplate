@@ -89,3 +89,37 @@ it is what makes `clear()` exist, and what makes the metrics deterministic.
 `prom-client` has no reset-everything on the registry — each metric resets itself —
 so the created metrics are kept in a list rather than the registry being poked at
 through an untyped cast. Poking and hoping is code that silently does nothing.
+
+## The Grafana dashboard
+
+`ops/grafana/dashboard.json`. Import it, pick the Prometheus data source, and it
+works — the data source is a template variable rather than a hard-coded uid, so it
+does not depend on how your Grafana is provisioned.
+
+Four rows: authentication, mail, queue, and the three stat panels that answer
+"is anything wrong right now" without needing a time range.
+
+**The failure ratio expressions carry `clamp_min`**, so a deployment with no traffic
+sits at zero rather than dividing by zero on the way up from it.
+
+**The mail panel's threshold is 0.1**, the number `MailFailing` fires on. A dashboard
+that turns red at 5% while the alert fires at 10% trains people to ignore the panel,
+which is the same harm as a drifted threshold.
+
+`dashboard.spec.ts` reads the JSON and checks every expression against the metrics
+`MetricsService` actually registers — the list is read out of the service source
+rather than kept separately, because a second list is exactly the thing that
+drifts. A panel referencing a metric nothing emits is a panel full of empty space,
+and an empty panel looks identical to "nothing is happening".
+
+## `auth_login_attempts_total` exists because a rate needs a denominator
+
+One counter with an `outcome` label, not two counters. Two counters mean a ratio
+computed over two ranges that silently disagree, which is a panel that looks fine
+and is wrong.
+
+It counts every attempt, including the ones against addresses nobody registered —
+that difference is the whole point. An attacker spraying a list of addresses shows
+up here as a rising failure count against a flat success count, and it is **the only
+signal that survives a redis outage**: the rate limiter and the login lockout both
+fail open, and this does not.

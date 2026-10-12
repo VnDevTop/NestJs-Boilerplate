@@ -958,7 +958,7 @@ What is deliberately not here, so it is not mistaken for an oversight:
 
 ## Phase 20: Operational Hardening
 
-Status: Pending
+Status: Done
 
 Goal:
 
@@ -982,7 +982,7 @@ Tasks:
 - [x] Redact token, secret and OTP fields in the logger
 - [ ] Add a runbook in `docs/`: provider outage, Redis loss, queue backlog, and
       tracing a missing email through `mail_logs`
-- [ ] Add a Grafana dashboard for auth failure rate, job lag and mail delivery
+- [x] Add a Grafana dashboard for auth failure rate, job lag and mail delivery
 
 Expected outcome:
 
@@ -994,6 +994,62 @@ Expected commit:
 ```text
 feat: add observability and operations for the new subsystems
 ```
+
+Delivered as ten commits, each independently revertable:
+
+```text
+feat: extend health with mail, queue and backlog
+feat: report the last maintenance run in health
+feat: redact secrets from the logger
+feat: add prometheus metrics
+feat: add open telemetry tracing
+feat: add sentry error reporting
+feat: add alert rules
+feat: propagate the request id into mail and notification records
+docs: add an operations runbook
+docs: add a grafana dashboard
+```
+
+Decisions worth carrying forward, because each is a refusal of something:
+
+- **Nothing new in `/health` is ever `down`.** `down` makes Terminus return 503 and
+  an orchestrator pulls every instance out of rotation, so a mail provider outage, a
+  full queue or a dead redis would each turn a system that is still answering
+  requests into an outage of the API itself. Only the database may go red.
+- **The health check sends no mail and reads no backlog it cannot read.** A probe
+  mail lands in a real inbox and a provider rate limit would eventually refuse it;
+  a zero waiting-jobs reading taken while redis is down looks healthier than an
+  application with no jobs at all.
+- **`@opentelemetry/api` and nothing else.** No SDK, no exporter, no collector —
+  those would choose the deployment's tracing stack for whoever clones this. Install
+  one and the spans start appearing; leave it out and every method is a no-op at
+  the same speed. The `@nestjs/observe` integration already in the repository is an
+  alternative, not a partner.
+- **Sentry's `beforeSend` strips headers, cookies, body and query string.** Those
+  are where a password, a reset token and a two-factor code are. An error reporting
+  service holding a sign-up body is a credential store with a far larger blast
+  radius than the database.
+- **Alert thresholds live in TypeScript and the YAML is checked against them.** A
+  Prometheus rule file is hand-maintained YAML with no compiler near it, and a
+  drifted alert stays green while the thing it watches is on fire — which is how a
+  monitoring system gets turned off.
+- **`mail_logs` was created rather than the correlation work narrowed to fit.** It
+  did not exist; a request id stamped onto a table nobody queries is a column, and
+  one on the table somebody queries when a user says they got nothing is the
+  feature.
+- **`auth_login_attempts_total` exists because a failure rate needs a denominator.**
+  One counter with a label rather than two, so the halves are always over the same
+  window. It is also the only sign-in signal that survives a redis outage, because
+  the rate limiter and the lockout both fail open.
+
+What is deliberately not here, so it is not mistaken for an oversight:
+
+- **An admin route to read the audit trail.** The table is written by Phase 19 and
+  nothing reads it back; that is a decision about who may see it, not a gap.
+- **A generic signed webhook channel**, dropped rather than half-built in the wrong
+  phase.
+- **Distributed-trace retention.** Storing spans is the collector's business, and a
+  template that kept its own would be a second place to answer "where is that trace".
 
 ---
 

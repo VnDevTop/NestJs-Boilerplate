@@ -98,6 +98,7 @@ export class MetricsService {
     mailFailures: PromCounter | null;
     notificationSent: PromCounter | null;
     retentionRowsDeleted: PromCounter | null;
+    loginAttempts: PromCounter | null;
   };
 
   private readonly gauges: {
@@ -136,6 +137,7 @@ export class MetricsService {
         mailFailures: null,
         notificationSent: null,
         retentionRowsDeleted: null,
+        loginAttempts: null,
       };
       this.gauges = {
         queueBacklog: null,
@@ -172,6 +174,11 @@ export class MetricsService {
         'retention_rows_deleted_total',
         'Rows the retention job deleted, by target',
         ['target'],
+      ),
+      loginAttempts: this.counter(
+        'auth_login_attempts_total',
+        'Sign-in attempts, by whether they succeeded',
+        ['outcome'],
       ),
     };
 
@@ -277,6 +284,22 @@ export class MetricsService {
       channel,
       delivered: String(delivered),
     });
+  }
+
+  /**
+   * One sign-in attempt, successful or not.
+   *
+   * **One counter with an `outcome` label rather than two.** A failure *rate* needs
+   * both halves, and two counters mean a dashboard panel that silently shows a
+   * count of failures against a different time range than its own denominator.
+   *
+   * This is the panel behind "is somebody guessing at our passwords", and it is
+   * also the only signal that a **brute force is running** — the rate limiter and
+   * the lockout both fail open when redis is unreachable, so during a redis outage
+   * this counter is the only thing still counting.
+   */
+  loginAttempt(outcome: 'success' | 'failure'): void {
+    this.counters.loginAttempts?.inc({ outcome });
   }
 
   retentionRowsDeleted(target: string, rows: number): void {

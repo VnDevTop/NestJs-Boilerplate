@@ -573,6 +573,23 @@ zero on the way up.
 because Prometheus does not poll `/health` — a gauge only a health endpoint
 refreshes reads zero when nobody has called it.
 
+## Grafana
+
+`ops/grafana/dashboard.json` imports directly — the data source is a template
+variable, so it does not depend on how your Grafana is provisioned.
+
+Four rows: **authentication** (failure rate and ratio), **mail** (delivery by
+transport, failure ratio), **queue** (p95 job lag and per-queue backlog), and the
+stat panels for dead-lettered jobs, the maintenance age and what retention deleted.
+
+`src/core/metrics/dashboard.spec.ts` checks every panel expression against the
+metrics `MetricsService` actually registers, so a panel cannot quietly reference a
+metric that stopped existing — an empty panel looks identical to "nothing is
+happening", which is the one conclusion a dashboard must not support by accident.
+
+See [src/core/metrics/README.md](../src/core/metrics/README.md) for the panels and
+why each one is there.
+
 ## Health checks
 
 `/api/v1/health/ready` reports the database, the cache, the mail transport and
@@ -665,6 +682,23 @@ Two things worth knowing when reading a log:
 The logger cannot throw. A cyclic payload, a value whose `toJSON` throws and a
 closed stream all degrade to a shorter line, because a logger that breaks the
 request it was describing loses the one record that explained the fault.
+
+## Grafana
+
+`ops/grafana/dashboard.json` imports directly — the data source is a template
+variable, so it does not depend on how your Grafana is provisioned.
+
+Four rows: **authentication** (failure rate and ratio), **mail** (delivery by
+transport, failure ratio), **queue** (p95 job lag and per-queue backlog), and the
+stat panels for dead-lettered jobs, the maintenance age and what retention deleted.
+
+`src/core/metrics/dashboard.spec.ts` checks every panel expression against the
+metrics `MetricsService` actually registers, so a panel cannot quietly reference a
+metric that stopped existing — an empty panel looks identical to "nothing is
+happening", which is the one conclusion a dashboard must not support by accident.
+
+See [src/core/metrics/README.md](../src/core/metrics/README.md) for the panels and
+why each one is there.
 
 ## Health checks
 

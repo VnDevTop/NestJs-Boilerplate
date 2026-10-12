@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 
 import { JwtPayload, RequestUser } from '../../common/interfaces/index.js';
+import { MetricsService } from '../../core/metrics/index.js';
 import {
   getRequestId,
   hashPassword,
@@ -106,6 +107,10 @@ export class AuthService {
     private readonly passwordPolicy: PasswordPolicyService,
     private readonly passwordHistory: PasswordHistoryService,
     private readonly accountLock: AccountLockService,
+    // Default-constructed so every existing harness that builds `AuthService` with
+    // fourteen collaborators still builds. With `prom-client` absent it is a no-op,
+    // which is the state this runs in.
+    private readonly metrics: MetricsService = new MetricsService(),
   ) {}
 
   private get appConfig(): AppConfig {
@@ -205,6 +210,14 @@ export class AuthService {
    * which is what `RETENTION_NOTIFICATION_LOGS_DAYS` bounds.
    */
   private async recordLoginFailure(email: string): Promise<void> {
+    // Counted here rather than inside the lockout service, because this runs on
+    // every failure including the ones for addresses nobody registered — and that
+    // difference is the whole point. An attacker spraying a list of addresses shows
+    // up here as a rising failure count against a flat success count, which is the
+    // one signal that survives a redis outage: the rate limiter and the lockout both
+    // fail open, and this does not.
+    this.metrics.loginAttempt('failure');
+
     const state = await this.loginLockout.recordFailure(email);
 
     // Every failure, not only the one that starts a temporary block. The permanent
@@ -306,6 +319,10 @@ export class AuthService {
 
       throw new UnauthorizedException('Invalid email or password');
     }
+
+    // Counted before anything else can fail, so the pair of them is a ratio over
+    // completed sign-ins rather than one over an uneven subset.
+    this.metrics.loginAttempt('success');
 
     // Cleared before anything else can fail, so a transient error later in the
     // sign-in does not leave a count that will block the next honest attempt.
