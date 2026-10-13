@@ -1,30 +1,38 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
-import request from 'supertest';
-import { AppModule } from './../src/app.module.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { INestApplication } from '@nestjs/common';
 
-describe('AppController (e2e)', () => {
-  // No generic parameter: supertest's App type is not exported from the package
-  // root, and getHttpServer() is what request() actually takes.
+import { API_ROOT, boot, e2eEnabled, http } from './e2e/harness.js';
+
+/**
+ * The smoke test: the application boots against real containers and answers on
+ * the route prefix a client actually uses.
+ *
+ * It replaces the stock `Hello World` assertion, which passed against a broken
+ * prefix as long as the root path happened to work. Nothing here creates rows, so
+ * it is safe to run before the suites that do.
+ */
+describe.skipIf(!e2eEnabled())('application (e2e)', () => {
   let app: INestApplication;
 
-  beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleFixture.createNestApplication();
-    await app.init();
+  beforeAll(async () => {
+    ({ app } = await boot());
   });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer())
-      .get('/')
-      .expect(200)
-      .expect('Hello World!');
+  afterAll(async () => {
+    await app?.close();
   });
 
-  afterEach(async () => {
-    await app.close();
+  it('answers the versioned root', async () => {
+    await http(app).get(API_ROOT).expect(200);
+  });
+
+  it('reports health on the versioned prefix', async () => {
+    const response = await http(app).get(`${API_ROOT}/health`).expect(200);
+
+    expect(response.body.status).toMatch(/ok|degraded/);
+  });
+
+  it('refuses an unknown path with a 404 rather than hanging', async () => {
+    await http(app).get(`${API_ROOT}/definitely-not-a-route`).expect(404);
   });
 });

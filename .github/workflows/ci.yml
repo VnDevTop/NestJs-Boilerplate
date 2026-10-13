@@ -38,6 +38,32 @@ jobs:
       - name: Build
         run: npm run build
 
+  e2e:
+    runs-on: ubuntu-latest
+    needs: verify
+
+    # The suite starts its own postgres and redis through testcontainers, which
+    # talks to the runner's docker daemon directly. A service container would be a
+    # second way to get the same two processes and one more thing to keep in step
+    # with `test/e2e/global-setup.ts`.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: End to end
+        # No `E2E_NO_CONTAINERS`, and no continue-on-error: a suite that cannot
+        # reach its containers is a failure, not a skip. Without the flag the
+        # specs would skip themselves and this job would report success on
+        # nothing, which is the failure mode the flag exists to prevent.
+        run: npm run test:e2e
+
   docker:
     runs-on: ubuntu-latest
     needs: verify

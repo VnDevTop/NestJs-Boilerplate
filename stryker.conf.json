@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "npm",
+  "reporters": ["html", "clear-text", "progress"],
+  "testRunner": "vitest",
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/modules/auth/**/*.ts",
+    "!src/modules/auth/**/*.spec.ts",
+    "!src/modules/auth/**/dto.ts",
+    "!src/modules/auth/**/entities/**",
+    "!src/modules/auth/**/strategies/**",
+    "src/modules/maintenance/retention.policy.ts",
+    "src/modules/maintenance/retention.service.ts"
+  ],
+  "timeoutMS": 20000,
+  "timeoutFactor": 2,
+  "concurrency": 4,
+  "htmlReporter": { "fileName": "reports/mutation/index.html" },
+  "clearTextReporter": {
+    "allowColor": true,
+    "maxTestsToLog": 3,
+    "reportTestsForCompletedMutants": true
+  },
+  "_notes": {
+    "scope": "auth and retention only. These are the two paths where a mutation is silently wrong: a flipped comparison in the lockout or in an age cutoff deletes or locks out something real, and a weakened check there produces no exception, no failing test and no log line.",
+    "skipTypeChecks": "The typescript checker is left off. `npm run typecheck` already runs in CI on every commit, and the mutants that survive are the ones an assertion failed to notice rather than the ones the compiler would have caught. The budget is better spent on assertion quality.",
+    "ci": "Not on the pull request workflow. A full mutation run over the auth module takes minutes, which is the wrong price for every commit. It belongs on a schedule or a manual dispatch, where a surviving mutant can be triaged as a missing test rather than blocking somebody's branch."
+  }
+}

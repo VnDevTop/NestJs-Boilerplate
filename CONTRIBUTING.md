@@ -93,17 +93,39 @@ adding to before you start.
 ## Tests
 
 ```bash
-npm test
+npm test           # unit and integration, nothing external running
 npm run test:watch
+npm run test:e2e   # end to end, starts its own postgres and redis
 ```
 
-Tests sit next to what they test, named `*.spec.ts`. They should use an in-memory
-store rather than a real dependency, so `npm test` needs nothing running.
+Unit tests sit next to what they test, named `*.spec.ts`. They should use an
+in-memory store rather than a real dependency, so `npm test` needs nothing running.
 
 A change to behaviour comes with a test that fails without it. For anything where
 the "obvious" implementation is wrong, measure first and put the numbers in the
 code: the cache, the throttler and the request id all have comments explaining
 what was actually observed.
+
+### When a unit test is not enough
+
+Some properties can only be tested against the real thing, because what they are
+about _is_ the real thing:
+
+| Property                                          | Why a mock proves nothing                                    |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| an optional package that is not installed         | every mock resolves a transport that is present              |
+| invalidation, and a write in the same transaction | a mock store cannot be refilled by a concurrent read         |
+| a batched delete, and what a rehearsal deletes    | the claim is that no row moved                               |
+| migration ordering                                | the migration list is derived from the directory, on purpose |
+
+Those live in `test/e2e/*.e2e-spec.ts` and run with `npm run test:e2e`. They
+skip when there is no Docker daemon, and CI deliberately runs them without that
+opt-out so a suite which could not start its containers fails instead of
+reporting success on nothing.
+
+Do not import `AppModule` at the top of an e2e file: the configuration reads
+`process.env` as the module graph loads, so a static import boots the app against
+your own `.env`. Use `boot()` from `test/e2e/harness.ts`.
 
 ## Documentation
 

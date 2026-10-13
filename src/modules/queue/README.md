@@ -147,3 +147,31 @@ A store that writes through one primitive and reads through the other writes und
 one key and looks under another — and looks like a key that was never claimed, on
 every request, forever. `get`, `set` and `delete` were added to that class for
 exactly this reason.
+
+## Tests
+
+The queue's own tests run against the real `bullmq` package, because an adapter
+that has never run is one that is broken.
+
+The deduplication key is the exception. `dedupe.guard.spec.ts` drives a fake
+redis whose `SET NX` and `DEL` answers the test chooses, because the behaviour
+worth testing is the release path — a key held across a retryable failure makes
+bullmq record success and the mail never go out — and that is a property of the
+guard's calls, not of a server's implementation.
+
+What the suite asserts past that point is the _call_ — the queue options, the
+per-queue concurrency, that a worker is opened only for a queue something was
+actually enqueued on. A spec that started a real worker would be a second
+integration suite in a file that runs on every commit, and its failures would be
+about redis latency rather than about this adapter.
+
+The one thing that genuinely needs the installed package is `isAvailable()`, and
+it is the case the whole abstraction exists for. `test/e2e/optional-dependencies.e2e-spec.ts`
+covers it end to end: the application boots with `QUEUE_ENABLED=true` and a
+driver it cannot use, and `JOB_QUEUE` resolves to the in-process dispatcher.
+
+The in-process driver is covered with no redis at all, which is the shape of a
+deployment with `QUEUE_ENABLED=false`. Both paths go through the same processor
+function, and `test/e2e/optional-dependencies.e2e-spec.ts` boots the application
+with the queue switched on and no driver available, to check the module picks the
+fallback instead of refusing to boot.

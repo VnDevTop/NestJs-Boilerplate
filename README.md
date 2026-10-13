@@ -93,6 +93,27 @@ else.
   against the constants they are generated from so the two cannot drift, and a
   [runbook](docs/runbook.md) for each one.
 
+**Transactional mail, off the request path**
+
+- A welcome email, an address verification, a password reset, a password change,
+  a new-device sign-in and both kinds of lockout, as nine templates that take
+  exactly the fields they render. No template receives a user entity.
+- A pluggable transport — memory, SMTP, SES, SendGrid — and every provider package
+  is optional. A deployment with none installed still boots and still logs which
+  transport actually ran, rather than reporting success for mail it dropped.
+- Mail is queued, deduplicated on delivery, and retried on timeouts and 5xx but
+  not on a provider 4xx. Exhausted jobs go to a dead-letter list in Redis.
+- Every attempt is recorded in `mail_logs` with its request id, so "I got nothing"
+  is answerable with a query.
+
+**Alerts that reach you**
+
+- Telegram, Slack and Discord channels over raw HTTPS — no package for any of them —
+  plus operator mail and a console channel for development.
+- Per-user opt-out per event and per channel, and a `notification_logs` row for every
+  channel including the ones that refused, so a skipped alert is visible.
+- A failing webhook never fails the request that triggered it.
+
 ## Stack
 
 |            |                                                                   |
@@ -145,13 +166,53 @@ npm run build                # compile
 npm run start:prod           # run the compiled build
 npm run lint                 # oxlint
 npm run typecheck            # tsc --noEmit
-npm test                     # vitest
-npm run check                # all four, in the order CI runs them
+npm test                     # unit and integration, vitest
+npm run test:e2e             # end to end against real postgres and redis in containers
+npm run test:cov             # unit suite with a coverage report
+npm run test:mutate          # mutation testing, scoped to auth and retention
+npm run test:smoke           # k6 smoke test against a running instance
+npm run test:all             # unit suite, then the end-to-end suite
+npm run check                # lint, typecheck, test and build, in the order CI runs them
 npm run migration:generate   # write a migration from entity changes
 npm run migration:run
 npm run migration:revert
 npm run seed
 ```
+
+## Tests
+
+Four layers, each answering a question the one above it cannot.
+
+| Command               | Runs against       | Answers                                             |
+| --------------------- | ------------------ | --------------------------------------------------- |
+| `npm test`            | nothing external   | does each decision hold, in isolation               |
+| `npm run test:e2e`    | real containers    | does the wired application hold, end to end         |
+| `npm run test:mutate` | mutated sources    | does the test suite notice when the logic changes   |
+| `npm run test:smoke`  | a running instance | does a deployed one answer the calls a client makes |
+
+The end-to-end suite starts its own Postgres and Redis with `testcontainers`, runs
+every migration against them, and hands the urls to each spec. It needs a Docker
+daemon; without one it skips, and CI deliberately runs it without the opt-out flag
+so a suite that cannot reach its containers fails rather than reporting success on
+nothing. Point it at an existing stack with `E2E_DATABASE_URL` and `E2E_REDIS_URL`
+instead of paying for two more containers.
+
+```bash
+npm run test:e2e                              # starts its own containers
+E2E_NO_CONTAINERS=1 npm run test:e2e          # skips, on a machine with no docker
+E2E_DATABASE_URL=postgres://... npm run test:e2e
+```
+
+Three of these suites exist because of a specific quiet failure:
+
+- `optional-dependencies.e2e-spec.ts` boots the app with `MAIL_TRANSPORT=ses` and
+  no `@aws-sdk/client-sesv2` installed. Every unit test resolves a transport that
+  is present, so nothing else would catch a missing fallback.
+- `cache-invalidation.e2e-spec.ts` changes a grant and re-reads on the next
+  request. No assertion in it waits out a TTL, because a test that waits for an
+  entry to lapse passes just as well when the invalidation is deleted.
+- `retention-dry-run.e2e-spec.ts` runs the rehearsal against a real database with
+  a row planted past the cutoff, and asserts the row is still there.
 
 ## Project structure
 
@@ -182,6 +243,7 @@ looking. The `docs/` folder is also published as a site at
 | [docs/](docs/)                                                 | the guides, also published as a site                      |
 | [docs/production.md](docs/production.md)                       | rate limiting, headers, CORS, logging, health, Docker, CI |
 | [docs/optional-integrations.md](docs/optional-integrations.md) | how an optional dependency stays out of the install       |
+| [docs/runbook.md](docs/runbook.md)                             | what to do when mail, redis or the queue misbehave        |
 | [src/configs](src/configs/README.md)                           | configuration namespaces and environment validation       |
 | [src/database](src/database/README.md)                         | migrations, seeds, the standalone data source             |
 | [src/common](src/common/README.md)                             | guards, decorators, middleware, utilities                 |
@@ -193,6 +255,9 @@ looking. The `docs/` folder is also published as a site at
 | [src/modules/auth](src/modules/auth/README.md)                 | sessions, rotation, devices, two-factor                   |
 | [src/modules/users](src/modules/users/README.md)               | the user domain and its authorisation                     |
 | [src/modules/admin](src/modules/admin/README.md)               | operator-only routes                                      |
+| [src/modules/audit](src/modules/audit/README.md)               | what is recorded, and what deliberately is not            |
+| [src/modules/mail](src/modules/mail/README.md)                 | templates, transports, the delivery record                |
+| [src/modules/queue](src/modules/queue/README.md)               | the two drivers, deduplication, the dead-letter list      |
 | [src/modules/maintenance](src/modules/maintenance/README.md)   | nightly retention, batching, dry run, run history         |
 | [src/modules/notification](src/modules/notification/README.md) | operator alerts, channels, per-user preferences           |
 
