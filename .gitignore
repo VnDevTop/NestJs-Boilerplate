@@ -60,3 +60,9 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # husky
 .husky/_
+
+# e2e environment written by test/e2e/global-setup.ts
+/test/.e2e-env.json
+
+# stryker output
+/reports
