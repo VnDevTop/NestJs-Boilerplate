@@ -181,16 +181,11 @@ function toDatabase(redisUrl: string, database: number): string {
 async function migrate(databaseUrl: string): Promise<void> {
   const { ENTITIES } = await import('../../src/database/data-source.js');
 
-  const modules = import.meta.glob<{ default: new () => unknown }>(
-    '../../src/database/migrations/*.ts',
-    { eager: true },
-  );
-
   const dataSource = new DataSource({
     type: 'postgres',
     url: databaseUrl,
     entities: ENTITIES,
-    migrations: Object.values(modules).map((entry) => entry.default),
+    migrations: loadMigrationClasses(),
     synchronize: false,
     ssl: false,
     extra: { ssl: false },
@@ -203,3 +198,39 @@ async function migrate(databaseUrl: string): Promise<void> {
     await dataSource.destroy();
   }
 }
+
+/** A migration class, as TypeORM recognises one. */
+type MigrationClass = new () => { up: unknown; down: unknown };
+
+/**
+ * Every migration class under `src/database/migrations`.
+ *
+ * All exports of each file are collected, not just `default`, because the
+ * migrations in this repository export a named class and no default one. Taking
+ * `module.default` therefore produced `undefined` for every file, and TypeORM's
+ * `buildMigrations` fails on the first one with "migrationClass is not a
+ * constructor" — which is exactly what the CLI's own loader does not do: it
+ * walks every exported value and keeps the ones that are classes
+ * (`DirectoryExportedClassesLoader.loadFileClasses`).
+ *
+ * The `up`/`down` check is that same shape, narrowed. A migration file that
+ * exported a helper alongside its class would otherwise have handed TypeORM
+ * something to instantiate.
+ */
+export function loadMigrationClasses(): MigrationClass[] {
+  const modules = import.meta.glob<Record<string, unknown>>(
+    '../../src/database/migrations/*.ts',
+    { eager: true },
+  );
+
+  return Object.values(modules)
+    .flatMap((module) => Object.values(module))
+    .filter(isMigrationClass);
+}
+
+const isMigrationClass = (value: unknown): value is MigrationClass =>
+  typeof value === 'function' &&
+  typeof (value as { prototype?: { up?: unknown; down?: unknown } }).prototype
+    ?.up === 'function' &&
+  typeof (value as { prototype?: { up?: unknown; down?: unknown } }).prototype
+    ?.down === 'function';
