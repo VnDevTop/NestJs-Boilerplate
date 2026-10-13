@@ -113,7 +113,15 @@ export async function resetDatabase(
   await dataSource.query(`TRUNCATE ${quoted} RESTART IDENTITY CASCADE`);
 }
 
-/** Clears the cache and redis namespaces between specs. */
+/**
+ * Clears every redis namespace the suite wrote to.
+ *
+ * The cache and queue prefixes plus the bare root names the throttler and the
+ * dead-letter list use when a caller passes an already-complete key. Missing
+ * either group is not cosmetic: leftover throttle counters make a later spec hit
+ * a 429 for a request no client made, and the failure looks like the route being
+ * broken rather than like state from a previous file.
+ */
 export async function resetRedis(): Promise<void> {
   const { createClient } = await import('redis');
 
@@ -128,6 +136,11 @@ export async function resetRedis(): Promise<void> {
     for (const pattern of [
       `${process.env.CACHE_KEY_PREFIX}:*`,
       `${process.env.REDIS_KEY_PREFIX}:*`,
+      'throttle:*',
+      'dead:*',
+      // Session revocations are written straight to redis under their own key,
+      // not through the cache, because there is no column to re-read them from.
+      'token:revoked:*',
     ]) {
       // A scan rather than `keys`, so a large namespace cannot block the server
       // the way a `keys` does. The suite is small, but the habit is the point.
@@ -169,6 +182,27 @@ export async function seedAdmin(
   await new AdminSeeder().run(dataSource);
 }
 
+/**
+ * Promotes the seeded administrator to super administrator.
+ *
+ * The seeder creates a plain admin, and a plain admin deliberately holds neither
+ * `RoleWrite` nor `MaintenanceRun` — an administrator who could rewrite roles
+ * could grant themselves another administrator's. The routes the e2e suite
+ * exercises need those two permissions, so the fixture promotes rather than
+ * re-seeding with a different role, which would stop testing the seeder.
+ */
+export async function promoteToSuperAdmin(
+  dataSource: BootedApp['dataSource'],
+  email: string,
+): Promise<void> {
+  const { Role } = await import('../../src/common/enums/index.js');
+
+  await dataSource.query('UPDATE users SET role = $1 WHERE email = $2', [
+    Role.SuperAdmin,
+    email.toLowerCase(),
+  ]);
+}
+
 /** Registers a user over HTTP and returns their access token. */
 export async function registerAndLogin(
   app: INestApplication,
@@ -187,6 +221,57 @@ export async function registerAndLogin(
     .expect(200);
 
   return response.body.accessToken as string;
+}
+
+/**
+ * Polls until a predicate holds, or fails with what it last saw.
+ *
+ * Several things the application does are legitimately not finished when the
+ * http response returns: mail is enqueued and processed in the worker, and the
+ * in-process dispatcher resolves its enqueue before running the job. An
+ * assertion that reads a `mail_logs` row straight after a register is a race
+ * that passes on a fast machine and fails in CI.
+ *
+ * Polling rather than a fixed sleep, so the suite is neither slow nor flaky: it
+ * waits exactly as long as the work took.
+ */
+export async function waitFor(
+  predicate: () => Promise<boolean>,
+  options: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    description?: string;
+  } = {},
+): Promise<void> {
+  const {
+    timeoutMs = 10_000,
+    intervalMs = 50,
+    description = 'condition',
+  } = options;
+
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error(
+    `Timed out after ${timeoutMs}ms waiting for ${description}. ` +
+      'The application did not do it, rather than being slow.',
+  );
+}
+
+/** The templates recorded in `mail_logs`, in order. */
+export async function mailTemplates(dataSource: DataSource): Promise<string[]> {
+  const rows = await dataSource.query<{ template: string }[]>(
+    'SELECT template FROM mail_logs ORDER BY "createdAt"',
+  );
+
+  return rows.map((row) => row.template);
 }
 
 export const http = (app: INestApplication) => request(app.getHttpServer());

@@ -9,13 +9,15 @@ import {
   cleanState,
   e2eEnabled,
   http,
+  mailTemplates,
+  waitFor,
 } from './harness.js';
 import { OPTIONAL_PACKAGES } from '../../src/core/optional/optional-packages.js';
 import { isOptionalAvailable } from '../../src/core/optional/optional.util.js';
 import { MailService } from '../../src/modules/mail/mail.service.js';
 import { MemoryMailTransport } from '../../src/modules/mail/transports/memory.transport.js';
-import { InProcessDispatcher } from '../../src/modules/queue/in-process.dispatcher.js';
 import { JOB_QUEUE } from '../../src/modules/queue/queue.module.js';
+import type { JobQueue } from '../../src/modules/queue/queue.interface.js';
 
 /**
  * The suite that boots the application the way a fresh clone does.
@@ -94,8 +96,50 @@ describe.skipIf(!e2eEnabled())('empty optional dependencies (e2e)', () => {
     expect(result.transportName).toBe('memory');
   });
 
-  it('falls back to the in-process dispatcher', () => {
-    expect(app.get(JOB_QUEUE)).toBeInstanceOf(InProcessDispatcher);
+  it('boots with the queue switched on, whichever driver it can get', () => {
+    // Not an assertion about *which* driver, because that depends on whether
+    // `bullmq` is installed — and it is, as a dev dependency, precisely so the
+    // adapter is tested against the real library. The branch where the package
+    // cannot be resolved cannot be taken from inside a process where it can:
+    // `queue.module.ts` chooses it, and there is no environment variable that
+    // pretends the package is missing. `bullmq.dispatcher.spec.ts` covers that
+    // branch directly.
+    //
+    // What is worth asserting here is the shape of the promise: a queue either way,
+    // and the app serving traffic regardless of which one it got.
+    const queue = app.get<{ driver: string }>(JOB_QUEUE);
+
+    expect(['bullmq', 'in-process']).toContain(queue.driver);
+  });
+
+  it('runs a mail job through whichever driver it got', async () => {
+    // The claim that matters is not which driver, but that the work ran at all.
+    // A queue whose enqueue resolves and drops the job would answer everything
+    // else in this file and still lose every email.
+    const queue = app.get<{ driver: string; enqueue: JobQueue['enqueue'] }>(
+      JOB_QUEUE,
+    );
+
+    await expect(
+      queue.enqueue('mail', {
+        name: 'mail.send',
+        payload: {
+          to: 'job-probe@example.test',
+          template: 'welcome',
+          data: { firstName: 'Job', appName: 'Boilerplate E2E' },
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    await waitFor(
+      async () =>
+        (
+          await dataSource.query(`SELECT 1 FROM mail_logs WHERE "to" = $1`, [
+            'job-probe@example.test',
+          ])
+        ).length > 0,
+      { description: 'the enqueued mail to be sent' },
+    );
   });
 
   it('records a registration mail row rather than losing the message', async () => {
@@ -110,6 +154,16 @@ describe.skipIf(!e2eEnabled())('empty optional dependencies (e2e)', () => {
         lastName: 'Deps',
       })
       .expect(201);
+
+    // Polled rather than read straight away: mail is enqueued, and the in-process
+    // dispatcher resolves its enqueue before it runs the job. Reading on the next
+    // line is a race that passes on a fast laptop and fails in CI.
+    await waitFor(
+      async () => (await mailTemplates(dataSource)).includes('welcome'),
+      {
+        description: 'the welcome mail to be recorded',
+      },
+    );
 
     const rows = await dataSource.query(
       'SELECT template, transport, delivered FROM mail_logs',

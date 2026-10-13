@@ -9,6 +9,7 @@ import {
   cleanState,
   e2eEnabled,
   http,
+  promoteToSuperAdmin,
   registerAndLogin,
   seedAdmin,
 } from './harness.js';
@@ -49,6 +50,7 @@ describe.skipIf(!e2eEnabled())('retention dry run (e2e)', () => {
 
     await cleanState(booted);
     await seedAdmin(dataSource);
+    await promoteToSuperAdmin(dataSource, process.env.ADMIN_EMAIL!);
 
     adminToken = await login(app);
     await registerAndLogin(app, 'stale@example.test');

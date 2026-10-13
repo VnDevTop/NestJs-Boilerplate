@@ -2,8 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 
-import { hashToken } from '../../src/common/utils/index.js';
-
 import {
   API_ROOT,
   applyE2eEnvironment,
@@ -11,7 +9,10 @@ import {
   cleanState,
   e2eEnabled,
   http,
+  mailTemplates,
+  waitFor,
 } from './harness.js';
+import { hashToken } from '../../src/common/utils/index.js';
 
 const EMAIL = 'auth-flow@example.test';
 const PASSWORD = 'E2e-password-1-Strong';
@@ -20,16 +21,14 @@ const PASSWORD = 'E2e-password-1-Strong';
  * The three requests every client makes, end to end, over the wire.
  *
  * The unit suite covers the rotation rules and the reuse signal in detail. What
- * it cannot cover is that the routes are reachable, that the response shape a
- * client depends on is what the DTO says, and that a verified address is
- * actually reachable end to end — which is why the verification token is
- * extracted from the database here. The alternative, calling the internal
- * service, would test a path no client ever takes.
+ * it cannot cover is that the routes are reachable, that the status codes are
+ * the ones a client branches on, and that a verified address is reachable end to
+ * end — which is why a token whose plaintext is known is planted here. The
+ * alternative, calling the internal service, would test a path no client takes.
  */
 describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
   let app: INestApplication;
   let dataSource: DataSource;
-  let accessToken: string;
 
   beforeAll(async () => {
     applyE2eEnvironment();
@@ -46,7 +45,7 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
     await app?.close();
   });
 
-  it('registers a user and mails a welcome and a verification', async () => {
+  it('registers a user, returns a token pair and mails two messages', async () => {
     const response = await http(app)
       .post(`${API_ROOT}/auth/register`)
       .send({
@@ -57,36 +56,74 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
       })
       .expect(201);
 
-    expect(response.body).toHaveProperty('id');
-    // Deliberately not asserting a token here: registration does not sign the
-    // new user in, and a client that assumed it did would be a real bug.
-    expect(response.body.accessToken).toBeUndefined();
+    // Registration signs the user in. It does not verify them, which is the next
+    // test — a client that assumed both happened at once would be a real bug.
+    expect(response.body).toMatchObject({
+      accessToken: expect.any(String),
+      refreshToken: expect.any(String),
+      tokenType: 'Bearer',
+    });
 
-    const templates = await dataSource.query<{ template: string }[]>(
-      'SELECT template FROM mail_logs ORDER BY "createdAt"',
-    );
+    // Mail is queued, so the rows appear after the response has been sent.
+    await waitFor(async () => (await mailTemplates(dataSource)).length >= 2, {
+      description: 'the welcome and verification mails to be recorded',
+    });
 
-    expect(templates.map((row) => row.template)).toEqual(
+    expect(await mailTemplates(dataSource)).toEqual(
       expect.arrayContaining(['welcome', 'verify-email']),
     );
   });
 
-  it('verifies the address and signs the user in for real', async () => {
-    // The token the mail carried cannot be read back out of a digest, so this
-    // plants a token whose plaintext is known. That is the one thing the suite
-    // does to the database directly, and it is what makes the rest of the flow
-    // the real one: the route, the guard and the refresh rotation are all
-    // exercised against a genuinely verified account.
+  it('refuses a password the policy rejects', async () => {
+    await http(app)
+      .post(`${API_ROOT}/auth/register`)
+      .send({
+        email: 'weak@example.test',
+        password: 'password',
+        firstName: 'Weak',
+        lastName: 'Password',
+      })
+      .expect(400);
+
+    const [row] = await dataSource.query<[{ count: string }]>(
+      'SELECT count(*)::text AS count FROM users WHERE email = $1',
+      ['weak@example.test'],
+    );
+
+    // The policy runs before the row is created, so nothing is left behind for a
+    // signup that was refused.
+    expect(row.count).toBe('0');
+  });
+
+  it('refuses a verification token it never issued', async () => {
+    const [row] = await dataSource.query<[{ tokenHash: string }]>(
+      `SELECT "tokenHash" FROM email_verification_tokens LIMIT 1`,
+    );
+
+    // 400 rather than 401, and one message for unknown, spent and expired alike:
+    // a live token is a credential until it is spent, so telling those apart
+    // would leak.
+    const response = await http(app)
+      .post(`${API_ROOT}/auth/verify-email`)
+      .send({ token: row.tokenHash })
+      .expect(400);
+
+    expect(response.body.message).toMatch(/invalid or has expired/i);
+  });
+
+  it('verifies the address with the token it mailed', async () => {
+    // The plaintext of a mailed token cannot be recovered from the digest that
+    // was stored, so this plants one. It is the only direct write this suite
+    // makes, and it is what makes the rest of the flow the real one: the route,
+    // the guard and the rotation all run against a genuinely verified account.
+    const token = 'e2e-verification-token';
     const [user] = await dataSource.query<[{ id: string }]>(
       'SELECT id FROM users WHERE email = $1',
       [EMAIL],
     );
 
-    const token = 'e2e-verification-token';
-
     await dataSource.query(
-      `INSERT INTO email_verification_tokens
-         (id, "userId", "tokenHash", "expiresAt")
+      `INSERT INTO email_verification_tokens (id, "userId", "tokenHash", "expiresAt")
        VALUES (gen_random_uuid(), $1, $2, now() + interval '1 hour')`,
       [user.id, hashToken(token)],
     );
@@ -94,10 +131,24 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
     await http(app)
       .post(`${API_ROOT}/auth/verify-email`)
       .send({ token })
-      .expect(201);
+      .expect(202);
+
+    const [verified] = await dataSource.query<[{ verified: boolean }]>(
+      'SELECT "isEmailVerified" AS verified FROM users WHERE email = $1',
+      [EMAIL],
+    );
+
+    expect(verified.verified).toBe(true);
   });
 
-  it('logs in and returns the documented token pair', async () => {
+  it('refuses to spend the same verification token twice', async () => {
+    await http(app)
+      .post(`${API_ROOT}/auth/verify-email`)
+      .send({ token: 'e2e-verification-token' })
+      .expect(400);
+  });
+
+  it('logs in and returns the documented pair', async () => {
     const response = await http(app)
       .post(`${API_ROOT}/auth/login`)
       .send({ email: EMAIL, password: PASSWORD })
@@ -107,14 +158,17 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
       accessToken: expect.any(String),
       refreshToken: expect.any(String),
     });
-
-    accessToken = response.body.accessToken;
   });
 
-  it('authenticates the very next request with that access token', async () => {
+  it('authenticates the next request with that access token', async () => {
+    const { body } = await http(app)
+      .post(`${API_ROOT}/auth/login`)
+      .send({ email: EMAIL, password: PASSWORD })
+      .expect(200);
+
     const response = await http(app)
       .get(`${API_ROOT}/auth/me`)
-      .set('Authorization', `Bearer ${accessToken}`)
+      .set('Authorization', `Bearer ${body.accessToken}`)
       .expect(200);
 
     expect(response.body.email).toBe(EMAIL);
@@ -133,16 +187,16 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
 
     expect(rotated.body.refreshToken).not.toBe(first.body.refreshToken);
 
-    // Replaying the superseded token is the reuse signal, and it is refused.
-    // Over http, with the real table and the real rotation, rather than against
-    // a mock that would answer the same either way.
+    // Replaying the superseded token is the reuse signal, checked here over http
+    // against the real table, rather than against a mock that would answer the
+    // same either way.
     await http(app)
       .post(`${API_ROOT}/auth/refresh-token`)
       .send({ refreshToken: first.body.refreshToken })
       .expect(401);
   });
 
-  it('refuses a wrong password with the same answer as an unknown address', async () => {
+  it('answers a wrong password exactly as it answers an unknown address', async () => {
     const wrongPassword = await http(app)
       .post(`${API_ROOT}/auth/login`)
       .send({ email: EMAIL, password: 'Not-the-password-1' })
@@ -153,8 +207,8 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
       .send({ email: 'nobody@example.test', password: 'Not-the-password-1' })
       .expect(401);
 
-    // The two answers must be indistinguishable, or the endpoint tells an
-    // attacker which addresses are registered.
+    // Different answers would tell an attacker which addresses are registered,
+    // with no successful guess anywhere in the attempt.
     expect(unknownAddress.body.message).toBe(wrongPassword.body.message);
   });
 });
