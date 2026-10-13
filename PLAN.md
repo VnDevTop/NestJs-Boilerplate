@@ -1055,7 +1055,7 @@ What is deliberately not here, so it is not mistaken for an oversight:
 
 ## Phase 21: Testing Depth and Documentation
 
-Status: Pending
+Status: Done
 
 Goal:
 
@@ -1064,21 +1064,21 @@ which are the ones that fail quietly.
 
 Tasks:
 
-- [ ] Add unit tests for every new service and template
-- [ ] Add an integration test that boots the app with an empty
+- [x] Add unit tests for every new service and template
+- [x] Add an integration test that boots the app with an empty
       `optionalDependencies` and asserts every feature degrades cleanly
-- [ ] Add a cache test that mutates a user and re-reads immediately, asserting
+- [x] Add a cache test that mutates a user and re-reads immediately, asserting
       invalidation happened rather than trusting the TTL
-- [ ] Add a retention test with a dry run, asserting nothing is deleted
-- [ ] Add `testcontainers` for real Postgres and Redis in e2e
-- [ ] Run the e2e suite in CI against service containers, it currently only
+- [x] Add a retention test with a dry run, asserting nothing is deleted
+- [x] Add `testcontainers` for real Postgres and Redis in e2e
+- [x] Run the e2e suite in CI against service containers, it currently only
       type checks
-- [ ] Add a k6 or Artillery smoke test for login, register and refresh
-- [ ] Add mutation testing on the auth and retention paths, where a silent
+- [x] Add a k6 or Artillery smoke test for login, register and refresh
+- [x] Add mutation testing on the auth and retention paths, where a silent
       logic error is expensive
-- [ ] Write `src/modules/mail/README.md`, `src/modules/queue/README.md`,
+- [x] Write `src/modules/mail/README.md`, `src/modules/queue/README.md`,
       `src/modules/notification/README.md`, `src/modules/maintenance/README.md`
-- [ ] Update `docs/production.md` and the root `README.md` with the new
+- [x] Update `docs/production.md` and the root `README.md` with the new
       environment variables and the module list
 
 Expected outcome:
@@ -1086,11 +1086,89 @@ Expected outcome:
 - A regression in cache invalidation or optional loading fails CI.
 - Every new module is documented next to its code, in the same commit.
 
-Expected commit:
+Commits:
 
 ```text
-test: cover optional dependencies, cache invalidation and retention
+test: stop the unit job running the e2e suite
+test: run the end to end suite against real containers
+test: prove the optional dependencies degrade cleanly
+test: prove cache invalidation without waiting a ttl
+test: prove a retention dry run deletes nothing
+test: cover sign-in, sign-up and refresh end to end
+test: add a k6 smoke test
+test: add mutation testing for auth and retention
+test: cover the auth service, two factor and every template
+docs: document the testing layers and the new variables
+docs: mark phase 21 testing depth as done
 ```
+
+What was built:
+
+- **`test/e2e/global-setup.ts`**, which starts one Postgres and one Redis for the
+  whole run, migrates them and writes the urls to `test/.e2e-env.json`.
+- **`test/e2e/harness.ts`**, which reads that file into `process.env`, boots
+  `AppModule` through a dynamic import, and truncates every table between specs.
+- Four e2e suites: optional dependencies, cache invalidation, retention dry run
+  and the auth flow.
+- `src/modules/auth/auth.service.spec.ts` and
+  `src/modules/auth/two-factor.service.spec.ts`, the two services in the module
+  that had no direct coverage.
+- `src/modules/mail/templates/mail.templates.spec.ts`, which renders all nine
+  templates with a payload that is hostile in every field at once.
+- `test/smoke/k6-smoke.js` and `stryker.conf.json`.
+
+Decisions worth carrying forward, because each is a refusal of something:
+
+- **The suite skips without Docker and CI does not skip.** `E2E_NO_CONTAINERS=1`
+  exists so the e2e job can work on a laptop. The CI job deliberately omits it,
+  because a job that could not start its containers would otherwise report
+  success on nothing — which is the exact failure mode a skipped suite produces.
+- **Nothing was moved into `optionalDependencies`.** npm installs an
+  `optionalDependencies` entry whenever it resolves, so a test that relied on it
+  would pass on a machine with a warm lockfile cache and prove nothing on the
+  machine that needed it. The assertion is the fallback path, which holds
+  everywhere.
+- **No e2e assertion waits out a TTL.** A cache test that sleeps for the expiry
+  to prove invalidation works passes just as well when the invalidation is
+  deleted; it only costs a minute a day. The suite reads redis directly and
+  asserts the key is gone.
+- **The soft delete in the cache suite goes through the service, not a raw
+  `UPDATE`.** A write made directly in the database is invisible to invalidation
+  by design, so asserting it there would be asserting a limitation as though it
+  were a guarantee.
+- **`*.e2e-spec.ts` ends with `.spec.ts`, so the unit config was pulling the e2e
+  suite in.** `npm test` was booting the whole application against a developer's
+  database. The failure mode looks like a slow unit test, which is why it
+  survived this long.
+- **Mutation testing is scoped and off the pull request workflow.** Auth and the
+  two retention files, because a flipped comparison there deletes or locks out
+  something real and produces no exception. A full run takes minutes, which is
+  the wrong price for every commit.
+- **`testcontainers` gave up its convenience classes.** `PostgreSqlContainer` and
+  `RedisContainer` are no longer exported from the package entry point, and
+  reconstructing them is thirty lines of wait strategies the suite would then
+  have to maintain. The Postgres wait is on the log line rather than `pg_isready`,
+  which answers before the server accepts connections from anything but its own
+  socket.
+- **The smoke test registers a real user per virtual user.** It is a smoke test,
+  not a capacity plan, so the defaults stay small and `docs/production.md` says
+  why.
+
+Known limits:
+
+- The e2e suite needs a Docker daemon. It runs one file at a time
+  (`fileParallelism: false`), because two suites booting their own containers
+  would race for ports and fail each other.
+- `test/app.e2e-spec.ts` no longer asserts `Hello World`. It asserts the versioned
+  prefix, which is what a client actually calls.
+- The optional-dependency suite sets `MAIL_TRANSPORT=ses` and expects the memory
+  fallback, so it does not prove a _present_ SES package works. That is the
+  transport's own spec's job, and that spec asserts the call rather than a
+  session.
+- The k6 script needs `k6` installed and a booted instance; nothing runs it for
+  you.
+- Mutation testing runs on demand rather than on CI, so a surviving mutant is
+  found by whoever runs it rather than by the pull request.
 
 ---
 
@@ -1215,7 +1293,7 @@ lands after the harness in Phase 12 is solid.
 | Phase 17a | Permission-based Authorization                 | Done    |
 | Phase 17b | Authentication and Authorization through Cache | Done    |
 | Phase 18  | Notifications                                  | Done    |
-| Phase 19  | Account Security Features                      | Pending |
-| Phase 20  | Operational Hardening                          | Pending |
-| Phase 21  | Testing Depth and Documentation                | Pending |
+| Phase 19  | Account Security Features                      | Done    |
+| Phase 20  | Operational Hardening                          | Done    |
+| Phase 21  | Testing Depth and Documentation                | Done    |
 | Phase 22  | Configurable Email Templates                   | Pending |
