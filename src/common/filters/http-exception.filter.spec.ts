@@ -92,10 +92,15 @@ describe('Retry-After on a 429', () => {
   });
 
   it('does not put the wait in the body', () => {
-    filter.catch(new LoginLockedException(60), h.host);
+    // 90 seconds rather than a round number. A round number turns this into a
+    // clock: the body carries a `timestamp`, so a run at 13:04:60 or in any
+    // minute whose digits contain the wait would fail on the timestamp rather
+    // than on the wait, and the test would be right to fail for a reason nobody
+    // could see. The assertion reads the message field, not the whole body.
+    filter.catch(new LoginLockedException(137), h.host);
 
-    const body = JSON.stringify(h.response.json.mock.calls[0][0]);
+    const body = h.response.json.mock.calls[0][0] as { message: unknown };
 
-    expect(body).not.toContain('60');
+    expect(JSON.stringify(body.message)).not.toContain('137');
   });
 });

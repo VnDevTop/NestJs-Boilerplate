@@ -178,6 +178,34 @@ describe('RedisClientService key namespacing', () => {
       expect(key).toMatch(/^app:redis:/);
     }
   });
+
+  it('namespaces the keys a Lua script is given, on both paths', async () => {
+    // The script path is where the prefix was missing, and the missing part was
+    // invisible until two deployments shared a redis and shared a rate limit:
+    // every other command went through `key()`, `eval` passed its keys straight
+    // to the client.
+    const evalSha = vi.fn().mockResolvedValue([1, 0, 0, 0]);
+    const evalScript = vi.fn().mockResolvedValue([1, 0, 0, 0]);
+    const client = fakeClient({
+      evalSha,
+      eval: evalScript,
+    });
+    const { service } = build(() => client);
+
+    await service.eval('return 1', ['throttle:login:127.0.0.1'], [1]);
+
+    expect(evalSha.mock.calls[0][1].keys).toEqual([
+      'app:redis:throttle:login:127.0.0.1',
+    ]);
+
+    // And the fallback, taken when redis has forgotten the digest — a restart.
+    evalSha.mockRejectedValueOnce(new Error('NOSCRIPT'));
+    await service.eval('return 1', ['throttle:login:127.0.0.1'], [1]);
+
+    expect(evalScript.mock.calls[0][1].keys).toEqual([
+      'app:redis:throttle:login:127.0.0.1',
+    ]);
+  });
 });
 
 describe('RedisClientService.setIfAbsent', () => {

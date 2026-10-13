@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
+import type { RedisClientType } from 'redis';
 
 import {
   API_ROOT,
@@ -9,10 +10,13 @@ import {
   cleanState,
   e2eEnabled,
   http,
+  promoteToSuperAdmin,
   registerAndLogin,
   seedAdmin,
 } from './harness.js';
 import { Permission, Role } from '../../src/common/enums/index.js';
+import { authRoleKey, authUserKey } from '../../src/core/cache/index.js';
+import { PermissionsService } from '../../src/modules/users/permissions.service.js';
 import { UsersService } from '../../src/modules/users/users.service.js';
 
 /**
@@ -20,19 +24,32 @@ import { UsersService } from '../../src/modules/users/users.service.js';
  *
  * `auth-cache.spec.ts` proves the same property over a `Map`, which is the right
  * place to prove it because it runs in the unit job on every commit. This one
- * exists for the part a `Map` cannot check: that the delete really reaches redis,
- * that the prefix is the one the reader uses, and that the answer changes on the
+ * exists for the part a `Map` cannot check: that the delete really reaches
+ * redis, under the prefix the reader uses, and that the answer changes on the
  * next request rather than on the next expiry.
  *
- * Every assertion is immediate. Nothing here sleeps, and no test waits out a TTL
- * to prove something expired — a test that waits for an entry to lapse is a test
- * that passes when invalidation is deleted and only costs sixty seconds a day.
+ * Two caches are covered, because they are invalidated in different places:
+ *
+ * - `user:<id>`, the claims, dropped by every write that moves an
+ *   authentication answer. Exercised over http, because that is the only way to
+ *   show the *next request* is refused.
+ * - `role:<role>`, the grants, dropped by the write that replaces them.
+ *   Exercised through the service, because every route carrying
+ *   `@Permissions()` also carries `@Roles(Admin, SuperAdmin)`: a plain user is
+ *   refused by the role guard first, so an http test here would pass with the
+ *   permission cache deleted.
+ *
+ * No assertion waits out a TTL. A cache test that sleeps for an entry to expire
+ * passes just as well when the invalidation is removed, and only costs a minute a
+ * day.
  */
 describe.skipIf(!e2eEnabled())('cache invalidation (e2e)', () => {
   let app: INestApplication;
   let dataSource: DataSource;
+  let redis: RedisClientType;
   let adminToken: string;
   let userToken: string;
+  let userId: string;
 
   beforeAll(async () => {
     applyE2eEnvironment();
@@ -46,90 +63,66 @@ describe.skipIf(!e2eEnabled())('cache invalidation (e2e)', () => {
 
     await cleanState(booted);
     await seedAdmin(dataSource);
+    await promoteToSuperAdmin(dataSource, process.env.ADMIN_EMAIL!);
 
-    adminToken = await login(app, process.env.ADMIN_EMAIL!);
+    const { createClient } = await import('redis');
+    redis = createClient({ url: process.env.CACHE_URL }) as RedisClientType;
+    await redis.connect();
+
+    adminToken = await login(
+      app,
+      process.env.ADMIN_EMAIL!,
+      process.env.ADMIN_PASSWORD!,
+    );
     userToken = await registerAndLogin(app, 'cache-target@example.test');
+
+    [userId] = await idOf('cache-target@example.test');
   });
 
   afterAll(async () => {
+    await redis?.quit();
     await app?.close();
   });
 
-  it('serves a granted permission on the request after the grant', async () => {
-    // Prime the cache first, so the later refusal cannot be explained by the
-    // entry having simply never been written.
-    await callProtected(userToken).expect(403);
-
-    await replaceGrants([Permission.AdminHealthRead]).expect(200);
-
-    // No TTL wait. The grant has to be visible now, because a grant that takes
-    // effect in ten minutes is a grant that is not yet a permission.
-    await callProtected(userToken).expect(200);
-  });
-
-  it('revokes a permission on the very next request, without waiting a TTL', async () => {
-    await callProtected(userToken).expect(200);
-
-    await replaceGrants([]).expect(200);
-
-    const response = await callProtected(userToken).expect(403);
-
-    expect(response.body.message).toContain(Permission.AdminHealthRead);
-  });
-
-  it('keeps the admin able to read grants while the user role holds none', async () => {
-    const response = await http(app)
-      .get(`${API_ROOT}/admin/roles/user/permissions`)
-      .set('Authorization', `Bearer ${adminToken}`)
+  it('caches the claims a request is authorised from', async () => {
+    // Prime it, so a later refusal cannot be explained by an entry that was
+    // never written.
+    await http(app)
+      .get(`${API_ROOT}/auth/me`)
+      .set('Authorization', `Bearer ${userToken}`)
       .expect(200);
 
-    expect(response.body.permissions).toEqual([]);
+    expect(await redis.exists(cacheKey(authUserKey(userId)))).toBe(1);
   });
 
-  /**
-   * Reads the value straight out of redis, so a passing response cannot be
-   * explained by a store that was never written or was bypassed entirely.
-   */
-  it('evicts the role key from redis rather than relying on its expiry', async () => {
-    const { createClient } = await import('redis');
-    const client = createClient({ url: process.env.CACHE_URL });
-    await client.connect();
+  it('refuses a locked account on the next request', async () => {
+    await app.get(UsersService).lockAccount(userId, 'e2e test');
 
-    try {
-      await replaceGrants([Permission.AdminHealthRead]).expect(200);
-      await callProtected(userToken).expect(200);
+    const response = await http(app)
+      .get(`${API_ROOT}/auth/me`)
+      .set('Authorization', `Bearer ${userToken}`)
+      .expect(401);
 
-      const populated = await client.keys(
-        `${process.env.CACHE_KEY_PREFIX}:*${Role.User}*`,
-      );
-      expect(populated.length).toBeGreaterThan(0);
+    // The same message an unregistered address gets. A dedicated one would be a
+    // free oracle to anybody willing to burn twenty attempts.
+    expect(response.body.message).toMatch(/invalid|unauthor/i);
+  });
 
-      await replaceGrants([]).expect(200);
+  it('lets the account back in when it is unlocked', async () => {
+    await app.get(UsersService).unlockAccount(userId, 'e2e test');
 
-      const remaining = await client.keys(
-        `${process.env.CACHE_KEY_PREFIX}:*${Role.User}*`,
-      );
-      expect(remaining).toEqual([]);
-    } finally {
-      await client.quit();
-    }
+    await http(app)
+      .get(`${API_ROOT}/auth/me`)
+      .set('Authorization', `Bearer ${userToken}`)
+      .expect(200);
   });
 
   it('refuses a soft-deleted caller on the next request', async () => {
-    // The other half of the same property: a user row change is a login answer
-    // change, and a stale entry here is somebody still authenticated after an
-    // erasure request.
-    //
-    // Deleted through the service, not with `UPDATE`. A write made directly in the
-    // database is invisible to invalidation by design — nothing inside the
+    // Deleted through the service, not with `UPDATE`. A write made directly in
+    // the database is invisible to invalidation by design — nothing inside the
     // application can see a write it did not make — so a raw statement here would
     // be asserting a limitation as though it were a guarantee.
-    const [row] = await dataSource.query<[{ id: string }]>(
-      'SELECT id FROM users WHERE email = $1',
-      ['cache-target@example.test'],
-    );
-
-    await app.get(UsersService).softDelete(row.id, 'e2e');
+    await app.get(UsersService).softDelete(userId, 'e2e');
 
     await http(app)
       .get(`${API_ROOT}/auth/me`)
@@ -137,22 +130,79 @@ describe.skipIf(!e2eEnabled())('cache invalidation (e2e)', () => {
       .expect(401);
   });
 
-  const callProtected = (token: string) =>
-    http(app)
-      .get(`${API_ROOT}/admin/dashboard`)
-      .set('Authorization', `Bearer ${token}`);
+  it('evicts the role key from redis rather than relying on its expiry', async () => {
+    const permissions = app.get(PermissionsService);
+    const key = cacheKey(authRoleKey(Role.User));
 
-  const replaceGrants = (permissions: string[]) =>
-    http(app)
+    await permissions.setForRole(Role.User, [Permission.UserRead]);
+    await permissions.forRole(Role.User);
+    expect(await redis.exists(key)).toBe(1);
+
+    await permissions.setForRole(Role.User, [
+      Permission.UserRead,
+      Permission.UserWrite,
+    ]);
+
+    // Asserted between the write and the next read, because a read that repopulated
+    // it first would hide the miss and make a deleted invalidation look alive.
+    expect(await redis.exists(key)).toBe(0);
+
+    // And the next read carries the new set, so the entry that comes back is not
+    // the one that was just evicted.
+    await expect(permissions.forRole(Role.User)).resolves.toEqual(
+      expect.arrayContaining([Permission.UserRead, Permission.UserWrite]),
+    );
+  });
+
+  it('serves a replaced grant immediately, over http', async () => {
+    // The admin route exists so that changing a grant goes through the
+    // application, and therefore through the invalidation. Using it here rather
+    // than the service is what makes this the test an operator would recognise.
+    const [id] = await idOf('cache-target@example.test');
+
+    await http(app)
+      .get(`${API_ROOT}/admin/roles/user/permissions`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    await http(app)
       .put(`${API_ROOT}/admin/roles/user/permissions`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ permissions });
+      .send({ permissions: [Permission.UserRead] })
+      .expect(200);
+
+    // Reads it back through the application rather than redis, so a passing
+    // assertion cannot be explained by a key that was never written.
+    const response = await http(app)
+      .get(`${API_ROOT}/admin/roles/user/permissions`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(response.body.permissions).toEqual([Permission.UserRead]);
+    expect(id).toBeTruthy();
+  });
+
+  /** Cache keys go through keyv, which applies the configured prefix itself. */
+  const cacheKey = (key: string): string =>
+    `${process.env.CACHE_KEY_PREFIX}:${key}`;
+
+  async function idOf(email: string): Promise<[string]> {
+    const [row] = await dataSource.query<[{ id: string }]>(
+      'SELECT id FROM users WHERE email = $1',
+      [email],
+    );
+    return [row.id];
+  }
 });
 
-async function login(app: INestApplication, email: string): Promise<string> {
+async function login(
+  app: INestApplication,
+  email: string,
+  password: string | undefined,
+): Promise<string> {
   const response = await http(app)
     .post(`${API_ROOT}/auth/login`)
-    .send({ email, password: process.env.ADMIN_PASSWORD })
+    .send({ email, password })
     .expect(200);
 
   return response.body.accessToken as string;

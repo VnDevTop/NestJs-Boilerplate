@@ -191,11 +191,24 @@ Four layers, each answering a question the one above it cannot.
 | `npm run test:smoke`  | a running instance | does a deployed one answer the calls a client makes |
 
 The end-to-end suite starts its own Postgres and Redis with `testcontainers`, runs
-every migration against them, and hands the urls to each spec. It needs a Docker
-daemon; without one it skips, and CI deliberately runs it without the opt-out flag
-so a suite that cannot reach its containers fails rather than reporting success on
-nothing. Point it at an existing stack with `E2E_DATABASE_URL` and `E2E_REDIS_URL`
-instead of paying for two more containers.
+every migration against them, and hands the urls to each spec.
+
+It needs a container runtime. Without one it does not fail — it prints the three
+things that work and skips:
+
+```bash
+colima start                 # 1. start one; `docker info` is the check
+
+docker compose up -d postgres valkey   # 2. or reuse the local stack
+E2E_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nestjs_boiler_plate \
+E2E_REDIS_URL=redis://localhost:6379/1 npm run test:e2e
+
+E2E_NO_CONTAINERS=1 npm run test:e2e   # 3. or skip, which runs nothing
+```
+
+CI deliberately omits both the opt-out flag and option 2, so a job that cannot
+reach a container runtime fails rather than reporting success on a suite that
+never ran.
 
 ```bash
 npm run test:e2e                              # starts its own containers

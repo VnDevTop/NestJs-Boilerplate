@@ -1098,6 +1098,8 @@ test: cover sign-in, sign-up and refresh end to end
 test: add a k6 smoke test
 test: add mutation testing for auth and retention
 test: cover the auth service, two factor and every template
+fix: namespace the keys a lua script is given
+fix: say what to do when there is no container runtime
 docs: document the testing layers and the new variables
 docs: mark phase 21 testing depth as done
 ```
@@ -1123,6 +1125,12 @@ Decisions worth carrying forward, because each is a refusal of something:
   exists so the e2e job can work on a laptop. The CI job deliberately omits it,
   because a job that could not start its containers would otherwise report
   success on nothing — which is the exact failure mode a skipped suite produces.
+  The first version instead surfaced testcontainers' own
+  `Could not find a working container runtime strategy`, which names what was
+  looked for and nothing about what to do next; on a machine with no Docker that
+  was the entire output of the command. It is now one pure `planInfra()` —
+  skip locally, fail on CI, run when both addresses are supplied — tested without
+  needing a runtime.
 - **Nothing was moved into `optionalDependencies`.** npm installs an
   `optionalDependencies` entry whenever it resolves, so a test that relied on it
   would pass on a machine with a warm lockfile cache and prove nothing on the
@@ -1144,6 +1152,24 @@ Decisions worth carrying forward, because each is a refusal of something:
   two retention files, because a flipped comparison there deletes or locks out
   something real and produces no exception. A full run takes minutes, which is
   the wrong price for every commit.
+- **`RedisClientService.eval` did not namespace its keys.** Every other command
+  went through the prefix helper and `eval` passed its keys straight to the
+  client, so the throttler's counters sat in the root namespace while every other
+  queue key sat under `REDIS_KEY_PREFIX` — two deployments on one redis sharing a
+  rate limit. It was found while writing the e2e reset, and the fix has a test
+  that asserts the prefix on both the `EVALSHA` path and the `EVAL` fallback.
+- **An `@Permissions()` route is also `@Roles(Admin, SuperAdmin)`, always.** The
+  first version of the cache suite drove a grant change through http with a plain
+  user and would have passed with the permission cache deleted, because the role
+  guard refuses first and never reaches the permission guard. The grants are now
+  asserted through `PermissionsService` and the key is read out of redis, which is
+  the claim actually being made.
+- **A seeded admin is not a super admin, on purpose.** The seeder creates
+  `Role.Admin`, which holds neither `RoleWrite` nor `MaintenanceRun`, so the
+  harness promotes its fixture rather than re-seeding under a different role.
+- **Mail rows are polled for, never read straight after a request.** The queue
+  resolves its enqueue before the job runs, so an assertion on `mail_logs` on the
+  next line is a race that passes on a fast machine and fails in CI.
 - **`testcontainers` gave up its convenience classes.** `PostgreSqlContainer` and
   `RedisContainer` are no longer exported from the package entry point, and
   reconstructing them is thirty lines of wait strategies the suite would then

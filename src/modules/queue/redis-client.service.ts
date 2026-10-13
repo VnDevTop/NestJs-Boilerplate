@@ -271,12 +271,19 @@ export class RedisClientService implements OnModuleDestroy {
     keys: readonly string[],
     args: TArgs,
   ): Promise<TResult | null> {
+    // Namespaced here like every other command. It was not, and that put the
+    // throttler's counters in the root namespace while every other queue key sat
+    // under `REDIS_KEY_PREFIX` — so two deployments sharing a redis shared a
+    // rate limit, and `SCAN`-and-delete aimed at one namespace could delete the
+    // other's. The difference is invisible until somebody shares a server.
+    const namespaced = keys.map((key) => this.key(key));
+
     return this.run(async (client) => {
       const digest = sha1(script);
 
       try {
         return (await client.evalSha(digest, {
-          keys: [...keys],
+          keys: namespaced,
           arguments: args.map(String),
         })) as TResult;
       } catch (error) {
@@ -285,7 +292,7 @@ export class RedisClientService implements OnModuleDestroy {
         }
 
         return (await client.eval(script, {
-          keys: [...keys],
+          keys: namespaced,
           arguments: args.map(String),
         })) as TResult;
       }
