@@ -106,3 +106,16 @@ forgotten. A rule naming a table that does not exist would fail on every run.
 A malformed `RETENTION_SCHEDULE` is logged and the job is not scheduled, rather
 than throwing out of bootstrap. Refusing to boot over a typo in an environment
 variable turns a housekeeping problem into an outage.
+
+## Tests
+
+The unit suite covers the policy, the batching and the run log. The property worth
+rehearsing — that a dry run counts exactly and deletes nothing — is checked in
+`test/e2e/retention-dry-run.e2e-spec.ts`, against a real Postgres with a row
+planted past the cutoff. A mocked delete proves the flag reached the query
+builder; only a database proves no row moved.
+
+That suite also records what a dry run does _not_ cover: a row made fresh by a
+direct `UPDATE` is counted only once, and the age guard is a config check rather
+than a query condition. The rehearsal is for a mistyped `.env` value, not for a
+schema the application got wrong.

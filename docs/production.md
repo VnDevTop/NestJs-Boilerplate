@@ -546,6 +546,42 @@ because it looks implemented.
 
 `docs/runbook.md` has the queries.
 
+## Error reporting
+
+| Variable         | Default | Notes                                                     |
+| ---------------- | ------- | --------------------------------------------------------- |
+| `SENTRY_DSN`     | unset   | Unset means no error reporting; the service stays a no-op |
+| `SENTRY_RELEASE` | unset   | Attached to every event, so a regression is attributable  |
+
+Set the release to the commit or the image tag. Without it every deployment looks
+identical, and "this started after Tuesday" becomes an archaeology exercise
+rather than a diff.
+
+## Two-factor at rest
+
+| Variable                    | Default                | Notes                                                         |
+| --------------------------- | ---------------------- | ------------------------------------------------------------- |
+| `TWO_FACTOR_ENABLED`        | `true`                 | Off is a real setting, and it turns off the whole feature     |
+| `TWO_FACTOR_ENCRYPTION_KEY` | required while enabled | 32+ bytes; the example value is refused in production         |
+| `TWO_FACTOR_ISSUER`         | `App`                  | Shown in the authenticator app, so it is what users recognise |
+
+The key encrypts every stored TOTP secret. Changing it invalidates all of them,
+which locks out every account that has two-factor on — so it is a variable to set
+once, from a secret store, and not something to rotate on a schedule without a
+migration plan.
+
+## Queue namespacing
+
+| Variable           | Default         | Notes                                                                  |
+| ------------------ | --------------- | ---------------------------------------------------------------------- |
+| `QUEUE_PREFIX`     | `nestjs-boiler` | Namespace for BullMQ queue keys in Redis                               |
+| `REDIS_KEY_PREFIX` | `nestjs`        | Must differ from `CACHE_KEY_PREFIX`; the boot refuses to run otherwise |
+
+Sharing the two would mean a cache sweep evicting pending jobs, or a short queue
+TTL expiring cached authentication claims. That rule is in `env.validation.ts`
+rather than in a comment, because a namespace collision is silent until one of
+the two misbehaves in production.
+
 ## Alerts
 
 `ops/prometheus/alerts.yml` holds three rules. Their thresholds live in
@@ -791,6 +827,56 @@ problem cannot make the container look dead and get it restarted.
 
 ## CI
 
-`.github/workflows/ci.yml` runs lint, typecheck, test and build on Node 24, then
-builds the image. The image is built but not pushed, since publishing needs
-registry credentials the template does not assume.
+`.github/workflows/ci.yml` runs three jobs on Node 24. `verify` runs lint,
+typecheck, the unit suite and the build. `e2e` runs `npm run test:e2e`, which
+starts its own Postgres and Redis through `testcontainers` and boots the
+application against them. `docker` builds the image but does not push it, since
+publishing needs registry credentials the template does not assume.
+
+The `e2e` job sets no `E2E_NO_CONTAINERS`, on purpose. That flag makes the suite
+skip itself on a machine with no Docker daemon, which is right locally and
+catastrophic in CI: a job that could not start its containers would report
+success on nothing. So a CI e2e job fails when the runtime is unavailable, and a
+developer opts out explicitly.
+
+### Running the suites locally
+
+```bash
+npm test                     # unit and integration, no external process
+npm run test:e2e             # starts its own containers
+npm run test:cov             # coverage report into coverage/
+npm run test:mutate          # mutation testing, auth and retention only
+npm run test:smoke           # k6, against an instance you started yourself
+```
+
+The end-to-end suite derives its environment from the containers it started and
+writes it to `test/.e2e-env.json`, which each spec reads before importing
+`AppModule`. Two consequences follow from that ordering, and both are worth
+knowing before adding a spec:
+
+- **Do not import `AppModule` at the top of an e2e file.** The configuration
+  namespaces read `process.env` while the module graph loads, and `ConfigModule`
+  caches the result for the life of the process. A static import boots the
+  application against the developer's `.env`. Boot through `boot()` from
+  `test/e2e/harness.ts`, which imports it dynamically after the environment is in
+  place.
+- **The suite truncates every table between specs.** It does that in a container
+  it started, and it refuses to run without one, so it cannot touch a real
+  database. Point it somewhere else with `E2E_DATABASE_URL` only at your own risk.
+
+Mutation testing is scoped to the auth module and the two retention files, and is
+not on the pull request workflow. A full run takes minutes, which is the wrong
+price for every commit, and a surviving mutant is a missing test rather than
+something that should block a branch. Run it, read `reports/mutation/index.html`,
+and treat an unexpected survivor in the lockout or an age cutoff as a gap in the
+assertions.
+
+The smoke test needs `k6` on the machine and a booted instance:
+
+```bash
+npm run build && npm run start:prod
+BASE_URL=http://localhost:3000 npm run test:smoke
+```
+
+It registers a real user per virtual user, so keep `SMOKE_VUS` and `SMOKE_DURATION`
+small against anything shared.

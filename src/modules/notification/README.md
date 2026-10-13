@@ -262,3 +262,15 @@ recipient search and a guessed window.
 an argument. It is a service method that knows nothing about requests, and a call
 site that had to thread an id through would eventually forget to — which is the
 same gap `requestId` already closes for log lines.
+
+## Tests
+
+`channels.spec.ts` exercises each channel against a stubbed HTTP transport, which
+is how the Telegram and Slack payload shapes are pinned without reaching a real
+chat room. The escaping tests matter most there: a body carries a user's email
+address, and an address containing `<` became a clickable link in a shared ops
+channel before that was fixed.
+
+`notification.graph.spec.ts` asserts the module split — the delivery service
+cannot live in a module that enqueues — because the failure mode is a circular
+dependency that only appears at boot, and only in this wiring.

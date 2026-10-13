@@ -10,6 +10,7 @@ README covers what the template contains.
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Production hardening](production.md)             | rate limiting, the two lockouts, the audit trail, idempotency, erasure, data export, optimistic locking, retention, the auth cache, headers, CORS, request ids, logging, health, shutdown, env validation, migrations, Docker, CI |
 | [Optional integrations](optional-integrations.md) | how a feature can exist in the code without its package on disk, and how to enable one                                                                                                                                            |
+| [Operations runbook](runbook.md)                  | what to do when mail fails, jobs dead-letter, the retention job stops or Redis is lost                                                                                                                                            |
 
 ## Where the rest of the writing lives
 

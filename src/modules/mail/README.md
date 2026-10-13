@@ -51,3 +51,15 @@ outcome than a missing log row.
 row per attempt, four or five per registration on a busy deployment — and the one
 holding the most personal data, so the window is a data-retention decision rather
 than housekeeping.
+
+## Tests
+
+`npm test` covers every transport, the registry and all nine templates
+(`templates/mail.templates.spec.ts`, which renders each one with hostile data and
+asserts nothing user-controlled reaches the html part unescaped).
+
+`npm run test:e2e` boots the whole application with `MAIL_TRANSPORT=ses` and no
+`@aws-sdk/client-sesv2` installed, then asserts the send still resolves, names the
+transport that actually ran, and leaves a `mail_logs` row an operator can follow.
+That suite is the only thing here that would catch a missing `loadOptional`
+fallback, because every unit test resolves a transport that is present.
