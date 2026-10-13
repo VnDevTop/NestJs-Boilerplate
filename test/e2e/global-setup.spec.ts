@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { loadMigrationClasses } from './global-setup.js';
+import { loadMigrationClasses, planInfra } from './global-setup.js';
 
 /**
  * The migration list the e2e suite migrates its container with.
@@ -23,6 +23,99 @@ const MIGRATIONS_DIR = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../src/database/migrations',
 );
+
+describe('the infrastructure decision', () => {
+  /**
+   * The matrix behind `npm run test:e2e`.
+   *
+   * Pure, so it is testable on a machine with no runtime — which is the machine
+   * that needs it most. The `CI` row is the one worth having a test for: the same
+   * missing Docker has to skip locally and fail on CI, because a CI job that
+   * skipped would report success on a suite that never ran.
+   */
+  const run = {
+    externalDatabase: 'postgresql://x/y',
+    externalRedis: 'redis://localhost:6379',
+  } as const;
+
+  it('runs when a runtime answers and nothing was supplied', () => {
+    expect(planInfra({ runtimeAvailable: true, ci: false })).toEqual({
+      action: 'run',
+    });
+  });
+
+  it('runs on an externally supplied stack without asking for a runtime at all', () => {
+    // A machine that cannot install anything can still run this suite, and it is
+    // a supported configuration rather than a workaround.
+    expect(planInfra({ ...run, runtimeAvailable: false, ci: false })).toEqual({
+      action: 'run',
+    });
+  });
+
+  it('starts only what was not supplied', () => {
+    expect(
+      planInfra({
+        externalDatabase: 'postgresql://x/y',
+        runtimeAvailable: true,
+        ci: false,
+      }),
+    ).toEqual({ action: 'run' });
+  });
+
+  it('skips locally when there is no runtime and no way to supply one', () => {
+    const plan = planInfra({ runtimeAvailable: false, ci: false });
+
+    expect(plan.action).toBe('skip');
+    expect(plan).toMatchObject({ reason: 'no-runtime' });
+  });
+
+  it('fails on CI under exactly the same conditions', () => {
+    const plan = planInfra({ runtimeAvailable: false, ci: true });
+
+    expect(plan.action).toBe('fail');
+  });
+
+  it('does not ask CI to fail for a runtime it was never going to use', () => {
+    // Both supplied: no container is started, so a machine with no Docker is
+    // correct and must not be reported as broken.
+    expect(planInfra({ ...run, runtimeAvailable: false, ci: true })).toEqual({
+      action: 'run',
+    });
+  });
+
+  it('honours the opt-out even where a runtime is available', () => {
+    const previous = process.env.E2E_NO_CONTAINERS;
+    process.env.E2E_NO_CONTAINERS = '1';
+
+    try {
+      expect(planInfra({ runtimeAvailable: true, ci: false })).toEqual({
+        action: 'skip',
+        reason: 'disabled',
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.E2E_NO_CONTAINERS;
+      } else {
+        process.env.E2E_NO_CONTAINERS = previous;
+      }
+    }
+  });
+
+  it('names the three ways out of a missing runtime, in order', () => {
+    const plan = planInfra({ runtimeAvailable: false, ci: false });
+
+    const guidance =
+      plan.action === 'skip' && 'guidance' in plan ? plan.guidance : '';
+
+    // A start, a URL and a flag. The message is the whole output of the command
+    // for the person who hits this, so "what do I do" has to be in it rather than
+    // left to the error the runtime library printed.
+    expect(guidance).toContain('colima');
+    expect(guidance).toContain('docker compose up -d');
+    expect(guidance).toContain('E2E_DATABASE_URL');
+    expect(guidance).toContain('E2E_NO_CONTAINERS');
+  });
+});
 
 describe('the e2e migration loader', () => {
   const migrations = loadMigrationClasses();

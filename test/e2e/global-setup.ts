@@ -6,6 +6,7 @@ import { DataSource } from 'typeorm';
 import {
   GenericContainer,
   Wait,
+  getContainerRuntimeClient,
   type StartedTestContainer,
 } from 'testcontainers';
 
@@ -39,14 +40,98 @@ let postgres: StartedTestContainer | undefined;
 let redis: StartedTestContainer | undefined;
 
 /**
- * Opt-out for a machine with no docker runtime.
+ * Explicit opt-out. `E2E_NO_CONTAINERS=1 npm run test:e2e`.
  *
- * An explicit flag rather than a capability probe: `docker info` on a machine
- * whose daemon is merely slow answers "no" just as reliably as on one where it is
- * absent, and a probe that guesses wrong turns a real failure into a silently
- * skipped suite.
+ * Kept as a flag rather than only a probe because a probe cannot distinguish
+ * "no runtime installed" from "the daemon is slow to answer", and guessing wrong
+ * in the second direction turns a real run into a silent skip.
  */
 const containersDisabled = (): boolean => process.env.E2E_NO_CONTAINERS === '1';
+
+/**
+ * True when a container runtime can actually be reached.
+ *
+ * This exists because the alternative is the error everybody meets first:
+ * `Could not find a working container runtime strategy`, which says what
+ * testcontainers looked for and nothing about what to do next. On a machine with
+ * no Docker at all — a common state on a laptop that only ever runs the unit
+ * suite — that is the whole output of `npm run test:e2e`.
+ */
+async function containerRuntimeAvailable(): Promise<boolean> {
+  try {
+    // Resolving the client is itself the check: it throws when no runtime
+    // answers, which is where `Could not find a working container runtime
+    // strategy` came from.
+    const client: { info?: unknown } = await getContainerRuntimeClient();
+
+    // The extra call catches the other half — Docker installed and stopped, where
+    // a client resolves but nothing answers it. Typed loosely because `info` is a
+    // function on the docker client and a plain value on some of the others.
+    if (typeof client.info === 'function') {
+      await (client.info as () => Promise<unknown>)();
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const NO_RUNTIME_GUIDANCE = [
+  'npm run test:e2e needs a container runtime and none answered.',
+  '',
+  '  1. Start one. Docker Desktop, colima (`colima start`) or podman all work;',
+  '     `docker info` is the check.',
+  '  2. Or point the suite at a stack you already have:',
+  '       docker compose up -d postgres valkey',
+  '       E2E_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nestjs_boiler_plate \\',
+  '       E2E_REDIS_URL=redis://localhost:6379/1 npm run test:e2e',
+  '  3. Or skip it, which runs nothing and reports nothing as passing:',
+  '       E2E_NO_CONTAINERS=1 npm run test:e2e',
+].join('\n');
+
+export interface InfraInputs {
+  externalDatabase?: string;
+  externalRedis?: string;
+  runtimeAvailable: boolean;
+  ci: boolean;
+}
+
+export type InfraPlan =
+  /** Nothing to do: the flags already said not to. */
+  | { action: 'skip'; reason: 'disabled' }
+  /** No runtime and nothing supplied: fail on CI, skip anywhere else. */
+  | { action: 'skip'; reason: 'no-runtime'; guidance: string }
+  | { action: 'fail'; reason: 'no-runtime'; guidance: string }
+  /** Run, starting whatever was not supplied. */
+  | { action: 'run' };
+
+/**
+ * What to do about infrastructure, given what is available.
+ *
+ * A pure function so the matrix is testable without a runtime. It matters
+ * because the two branches differ only by `CI`, and that difference is the whole
+ * point of the change: the same machine with the same missing Docker skips
+ * locally — where the unit suite is the real gate — and fails on CI, where a
+ * skip would report success on a suite that never ran.
+ */
+export function planInfra(inputs: InfraInputs): InfraPlan {
+  const { externalDatabase, externalRedis, runtimeAvailable, ci } = inputs;
+
+  if (containersDisabled()) {
+    return { action: 'skip', reason: 'disabled' };
+  }
+
+  const needsContainer = !externalDatabase || !externalRedis;
+
+  if (needsContainer && !runtimeAvailable) {
+    return ci
+      ? { action: 'fail', reason: 'no-runtime', guidance: NO_RUNTIME_GUIDANCE }
+      : { action: 'skip', reason: 'no-runtime', guidance: NO_RUNTIME_GUIDANCE };
+  }
+
+  return { action: 'run' };
+}
 
 const TEST_ENV: Record<string, string> = {
   NODE_ENV: 'test',
@@ -79,15 +164,36 @@ const TEST_ENV: Record<string, string> = {
 };
 
 export async function setup(): Promise<void> {
-  if (containersDisabled()) {
-    return;
-  }
-
   // An externally supplied address wins. It is what makes the suite runnable on a
   // laptop that already has `docker compose up`, without paying for two more
-  // containers on top.
+  // containers on top — and the reason a machine with no Docker at all can still
+  // run it, which is a configuration rather than a workaround.
   const externalDatabase = process.env.E2E_DATABASE_URL;
   const externalRedis = process.env.E2E_REDIS_URL;
+
+  const needsContainer = !externalDatabase || !externalRedis;
+
+  const plan = planInfra({
+    externalDatabase,
+    externalRedis,
+    runtimeAvailable: needsContainer
+      ? await containerRuntimeAvailable()
+      : false,
+    ci: Boolean(process.env.CI),
+  });
+
+  if (plan.action === 'fail') {
+    throw new Error(plan.guidance);
+  }
+
+  if (plan.action === 'skip') {
+    console.warn(
+      plan.reason === 'disabled'
+        ? '[e2e] E2E_NO_CONTAINERS=1, every spec is skipped.'
+        : `[e2e] ${plan.guidance}\n[e2e] Every spec is skipped. Run \`npm test\` for the unit suite.`,
+    );
+    return;
+  }
 
   const databaseUrl = externalDatabase ?? (await startPostgres());
   const redisUrl = externalRedis ?? (await startRedis());

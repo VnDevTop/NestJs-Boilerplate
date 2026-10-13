@@ -849,6 +849,31 @@ npm run test:mutate          # mutation testing, auth and retention only
 npm run test:smoke           # k6, against an instance you started yourself
 ```
 
+### When there is no container runtime
+
+`npm run test:e2e` needs Docker, colima or podman. Without one it does not fail
+with the runtime library's own message — it says which of three things to do:
+
+```bash
+# 1. start one; `docker info` is the check
+colima start          # or open Docker Desktop
+
+# 2. or use the stack docker-compose.yml already defines
+docker compose up -d postgres valkey
+E2E_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nestjs_boiler_plate \
+E2E_REDIS_URL=redis://localhost:6379/1 npm run test:e2e
+
+# 3. or skip, which runs nothing
+E2E_NO_CONTAINERS=1 npm run test:e2e
+```
+
+Local runs with no runtime **skip** the suite and say so. CI with no runtime
+**fails**, on purpose: a job that skipped would report success on a suite that
+never ran, which is the outcome a green tick is supposed to rule out. Both paths
+come out of one pure function, `planInfra()`, which is tested without needing a
+runtime — the machine that cannot run the suite is the one that most needs its
+decision pinned down.
+
 The end-to-end suite derives its environment from the containers it started and
 writes it to `test/.e2e-env.json`, which each spec reads before importing
 `AppModule`. Two consequences follow from that ordering, and both are worth
