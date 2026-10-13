@@ -31,6 +31,7 @@ describe('retention policy contents', () => {
       'account_unlock_tokens',
       'audit_logs',
       'email_verification_tokens',
+      'mail_logs',
       'notification_logs',
       'password_reset_tokens',
       'refresh_tokens',
@@ -40,13 +41,18 @@ describe('retention policy contents', () => {
   });
 
   it('keeps the deferred tables visible instead of forgetting them', () => {
-    // `notification-logs` left this list in Phase 18, when its entity arrived, and
-    // `audit-logs` in Phase 19. They are named in the assertion rather than derived,
-    // so an entry that quietly reappears is a failure rather than a no-op.
-    expect(DEFERRED_TARGETS.map((t) => t.id)).toEqual([
-      'mail-logs',
-      'login-attempts',
-    ]);
+    // `notification-logs` left this list in Phase 18, `audit-logs` in Phase 19 and
+    // `mail-logs` in Phase 20, each when its table arrived. They are named in the
+    // assertion rather than derived, so an entry that quietly reappears is a failure
+    // rather than a no-op.
+    expect(DEFERRED_TARGETS.map((t) => t.id)).toEqual(['login-attempts']);
+  });
+
+  it('cleans the mail log on its own window, since Phase 20 created the table', () => {
+    // The largest of these tables — one row per *attempt* — and the one holding the
+    // most personal data, so its window is a data-retention decision rather than
+    // housekeeping.
+    expect(target('mail-logs').ageKey).toBe('mailLogs');
   });
 
   it('keeps the audit log a year, because a month of it is not a trail', () => {

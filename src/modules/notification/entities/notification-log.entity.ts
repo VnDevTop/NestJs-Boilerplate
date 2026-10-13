@@ -76,6 +76,18 @@ export class NotificationLog {
   attempts!: number;
 
   /**
+   * The request that raised this event, when there was one.
+   *
+   * Indexed for the same reason `mail_logs.requestId` is: "that Slack alert at
+   * 14:02 — which request was it?" is one lookup rather than a recipient search
+   * and a guessed time window. Nullable because a system action — the retention
+   * anomaly, a scheduled digest — has no request.
+   */
+  @Index()
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  requestId!: string | null;
+
+  /**
    * Set on failure. The message rather than a stack trace: a stack trace from a
    * webhook timeout is noise, and the message is what identifies the problem.
    */

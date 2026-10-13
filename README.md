@@ -86,6 +86,12 @@ else.
   an orchestrator restart every healthy instance.
 - Migrations with `synchronize` off, an idempotent seed, graceful shutdown, a
   two stage Docker image and a local docker-compose stack.
+- Prometheus metrics, OpenTelemetry spans and Sentry error reporting, each
+  optional and each off by default. See [the optional integrations
+  guide](docs/optional-integrations.md).
+- Alert rules in [`ops/prometheus/alerts.yml`](ops/prometheus/alerts.yml), checked
+  against the constants they are generated from so the two cannot drift, and a
+  [runbook](docs/runbook.md) for each one.
 
 ## Stack
 

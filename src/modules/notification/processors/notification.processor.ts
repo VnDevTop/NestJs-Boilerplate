@@ -35,6 +35,15 @@ export interface NotificationJobPayload {
   event: NotificationEventKey;
   data: NotificationEventData[NotificationEventKey];
   userId?: string;
+  /**
+   * The request that raised this event.
+   *
+   * Carried in the payload for the same reason as `MailJobPayload.requestId`: the
+   * delivery happens later, when the async context that held it is gone, and a
+   * `notification_logs` row that cannot be joined to its request is a row nobody
+   * can follow back to a person.
+   */
+  requestId?: string;
 }
 
 /**
@@ -79,7 +88,9 @@ export class NotificationProcessor {
       const outcome = await this.notifications.notify(
         payload.event,
         payload.data as never,
-        { userId: payload.userId },
+        // The request id travels with the job rather than being looked up, because
+        // this runs in the worker and the request that enqueued it is out of scope.
+        { userId: payload.userId, requestId: payload.requestId },
       );
 
       return this.toJobResult(outcome.deliveries);

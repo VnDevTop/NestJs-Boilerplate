@@ -89,7 +89,10 @@ export class NotificationService {
   async notify<TKey extends NotificationEventKey>(
     event: TKey,
     data: NotificationEventData[TKey],
-    options: { userId?: string } = {},
+    // `requestId` is threaded from the job payload rather than read from the async
+    // context here, because `notify` is called by the processor in the worker where
+    // the request that enqueued it is no longer in scope.
+    options: { userId?: string; requestId?: string } = {},
   ): Promise<DeliveryOutcome> {
     const notificationId = randomUUID();
 
@@ -109,6 +112,7 @@ export class NotificationService {
           headline,
           body,
           userId: options.userId,
+          requestId: options.requestId,
         }),
       );
     }
@@ -132,7 +136,13 @@ export class NotificationService {
     notificationId: string,
     event: NotificationEventKey,
     channel: NotificationChannel,
-    payload: { headline: string; body: string; userId?: string },
+    payload: {
+      headline: string;
+      body: string;
+      userId?: string;
+      /** Carried from the job payload; this runs in the worker, out of request scope. */
+      requestId?: string;
+    },
   ): Promise<ChannelDelivery> {
     const muted =
       payload.userId === undefined
@@ -145,6 +155,9 @@ export class NotificationService {
       // first is something the user needs to be able to confirm.
       await this.logs.record({
         notificationId,
+        // Carried from the job payload, not read here: this runs in the worker,
+        // where the request that enqueued it is no longer in scope.
+        requestId: payload.requestId,
         event,
         channel: channel.name,
         userId: payload.userId,
@@ -193,6 +206,7 @@ export class NotificationService {
 
     await this.logs.record({
       notificationId,
+      requestId: payload.requestId,
       event,
       channel: channel.name,
       userId: payload.userId,
@@ -254,7 +268,13 @@ export class NotificationService {
   private async attempt(
     channel: NotificationChannel,
     event: NotificationEventKey,
-    payload: { headline: string; body: string; userId?: string },
+    payload: {
+      headline: string;
+      body: string;
+      userId?: string;
+      /** Carried from the job payload; this runs in the worker, out of request scope. */
+      requestId?: string;
+    },
     attempt: number,
   ): Promise<ChannelDelivery> {
     const base = { channel: channel.name, attempts: attempt };

@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  AuditService,
-  changedFields,
-  redactForAudit,
-} from './audit.service.js';
+import { AuditService, changedFields } from './audit.service.js';
+import { redactValue } from '../../core/redact/index.js';
 
 /**
  * Two things this suite exists to pin down.
@@ -179,7 +176,7 @@ describe('what never gets written', () => {
     // An operator looking at the row should be able to see that the password
     // changed without being able to see what it is. Removing the key entirely
     // makes "changed" and "never existed" the same answer.
-    expect(redactForAudit({ password: 'x', email: 'a@x.com' })).toEqual({
+    expect(redactValue({ password: 'x', email: 'a@x.com' })).toEqual({
       password: '[redacted]',
       email: 'a@x.com',
     });
@@ -195,16 +192,16 @@ describe('what never gets written', () => {
       deep = { nested: deep };
     }
 
-    const redacted = JSON.stringify(redactForAudit(deep));
+    const redacted = JSON.stringify(redactValue(deep));
 
     expect(redacted).not.toContain('bottom');
     expect(redacted).toContain('[too deep]');
   });
 
   it('is a no-op on a primitive, which several actions pass', async () => {
-    expect(redactForAudit(null)).toBeNull();
-    expect(redactForAudit('a string')).toBe('a string');
-    expect(redactForAudit(42)).toBe(42);
+    expect(redactValue(null)).toBeNull();
+    expect(redactValue('a string')).toBe('a string');
+    expect(redactValue(42)).toBe(42);
   });
 });
 

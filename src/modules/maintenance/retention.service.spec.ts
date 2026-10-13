@@ -1,5 +1,6 @@
 import type { DataSource, Repository } from 'typeorm';
 
+import { MetricsService } from '../../core/metrics/index.js';
 import { MaintenanceLog } from './entities/maintenance-log.entity.js';
 import { RetentionTrigger } from './entities/retention-trigger.enum.js';
 
@@ -123,6 +124,9 @@ function harness(options: {
       ages: { ...DEFAULT_AGES, ...options.ages },
     },
     logs as unknown as Repository<MaintenanceLog>,
+    // The real service: with `prom-client` absent every method is a no-op, which
+    // is the state this suite runs in.
+    new MetricsService(),
   );
 
   return {

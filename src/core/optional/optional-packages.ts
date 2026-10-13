@@ -34,6 +34,20 @@ export const OPTIONAL_PACKAGES = {
     envFlag: 'none, the password policy works without it',
     install: 'npm install zxcvbn',
   },
+  otelApi: {
+    feature: 'OpenTelemetry traces',
+    specifier: '@opentelemetry/api',
+    envFlag: 'none, every span is a no-op without it',
+    install:
+      'npm install @opentelemetry/api @opentelemetry/sdk-node ' +
+      '@opentelemetry/auto-instrumentations-node',
+  },
+  promClient: {
+    feature: 'Prometheus metrics',
+    specifier: 'prom-client',
+    envFlag: 'none, /metrics returns 404 without it',
+    install: 'npm install prom-client',
+  },
   bullmq: {
     feature: 'BullMQ job queue',
     specifier: '@nestjs/bullmq',

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { MetricsService } from '../../core/metrics/index.js';
 import type { AppConfig } from '../../configs/app.config.js';
 import type { MailConfig } from '../../configs/mail.config.js';
 import {
@@ -32,6 +33,16 @@ export const MAIL_TRANSPORT = 'MAIL_TRANSPORT';
 export interface SendMailResult extends SendResult {
   mailId: string;
   template: TemplateName;
+  /**
+   * Which transport actually ran, and the rendered subject.
+   *
+   * On the result rather than looked up by the caller, because `mail_logs` is
+   * written by the processor and the processor only has this object. Asking the
+   * service separately would mean a second source of truth for a fact already
+   * known here — and a log row that says "smtp" while the transport was SES.
+   */
+  transportName: string;
+  subject: string;
   /** False when the send failed or the transport was unavailable. */
   delivered: boolean;
   /**
@@ -69,6 +80,7 @@ export interface SendTemplateOptions {
 export class MailService {
   constructor(
     @Inject(MAIL_TRANSPORT) private readonly transport: MailTransport,
+    private readonly metrics: MetricsService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -142,11 +154,29 @@ export class MailService {
           `rejected=${result.rejected.length}`,
       );
 
-      return { ...result, mailId: message.mailId, template, delivered: true };
+      // Counted on the way out rather than where the job was enqueued, because
+      // "enqueued" is not a number anybody can alert on — a provider that refuses
+      // everything produces a healthy-looking send count forever.
+      this.metrics.mailSent(template, this.transport.name);
+
+      return {
+        ...result,
+        mailId: message.mailId,
+        template,
+        transportName: this.transport.name,
+        subject: message.subject,
+        delivered: true,
+      };
     } catch (error) {
       logger.error(
         `[mail:${message.mailId}] template=${template} transport=${this.transport.name} ` +
           `failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+
+      this.metrics.mailFailed(
+        template,
+        this.transport.name,
+        isPermanentRejection(error),
       );
 
       return {
@@ -154,6 +184,8 @@ export class MailService {
         rejected: [],
         mailId: message.mailId,
         template,
+        transportName: this.transport.name,
+        subject: message.subject,
         delivered: false,
         permanent: isPermanentRejection(error),
         // Undefined rather than null when there is no status, so the field is

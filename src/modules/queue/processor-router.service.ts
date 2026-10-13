@@ -12,6 +12,7 @@ import {
   MailProcessor,
   type MailJobPayload,
 } from './processors/mail.processor.js';
+import { TracingService } from '../../core/tracing/index.js';
 import type { Job, JobResult } from './queue.interface.js';
 
 /**
@@ -33,6 +34,10 @@ export class ProcessorRouter {
     private readonly mailProcessor: MailProcessor,
     private readonly retentionProcessor: RetentionProcessor,
     private readonly notificationProcessor: NotificationProcessor,
+    // Default-constructed so a test that builds the router with three fakes keeps
+    // working, and so a deployment without `@opentelemetry/api` gets the no-op
+    // service rather than a missing dependency.
+    private readonly tracing: TracingService = new TracingService(),
   ) {}
 
   /** True when some processor claims this name. */
@@ -44,7 +49,28 @@ export class ProcessorRouter {
     );
   }
 
+  /**
+   * Wraps the run in a `queue.process` span.
+   *
+   * A job is not inside a request — the thing that enqueued it answered minutes
+   * ago — so without a span here a job's work has no trace of its own and cannot
+   * be followed from the enqueue to the provider call. The trace id on the job's
+   * log lines and the spans below it then come from this one.
+   */
   async process(job: Job): Promise<JobResult> {
+    return this.tracing.withSpan(
+      'queue.process',
+      {
+        'messaging.system': 'in-house-queue',
+        'messaging.operation': 'process',
+        'messaging.message.name': job.name,
+        'messaging.message.id': job.dedupeKey ?? '',
+      },
+      () => this.route(job),
+    );
+  }
+
+  private async route(job: Job): Promise<JobResult> {
     if (MailProcessor.handles(job.name)) {
       return this.mailProcessor.process(job as Job<MailJobPayload>);
     }

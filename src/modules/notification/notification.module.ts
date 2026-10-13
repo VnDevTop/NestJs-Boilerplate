@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import type { ConfigType } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { MetricsModule } from '../../core/metrics/index.js';
 import { notificationConfig } from '../../configs/notification.config.js';
 import { MailModule, MailService } from '../mail/index.js';
 import {
@@ -95,6 +96,8 @@ type NotificationConfig = ConfigType<typeof notificationConfig>;
     HttpModule,
     // For the email channel, which delegates rather than speaking SMTP itself.
     MailModule,
+    // For the delivery counters. One direction only, so no cycle.
+    MetricsModule,
   ],
   providers: [
     NotificationPreferencesService,

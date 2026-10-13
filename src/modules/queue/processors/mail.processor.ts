@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { MailService, type SendMailResult } from '../../mail/index.js';
+import type { MailLogWriter } from '../../mail/mail-log.service.js';
 import type {
   TemplateDataByName,
   TemplateName,
@@ -27,6 +28,19 @@ export interface MailJobPayload {
   data: TemplateDataByName[TemplateName];
   subjectPrefix?: string;
   replyTo?: string;
+  /**
+   * The request that caused this send.
+   *
+   * Carried in the payload rather than read at send time because the send happens
+   * later — possibly much later, if the queue is backed up — and by then the
+   * async context that held it is gone. A `mail_logs` row without it cannot be
+   * joined to the request that produced it, which is the lookup the whole table
+   * exists for.
+   *
+   * Absent for a send that no request caused: a scheduled digest, the retention
+   * job's own operator mail.
+   */
+  requestId?: string;
 }
 
 /**
@@ -42,7 +56,13 @@ export interface MailJobPayload {
 export class MailProcessor {
   private readonly logger = new Logger(MailProcessor.name);
 
-  constructor(private readonly mailService: MailService) {}
+  constructor(
+    private readonly mailService: MailService,
+    // Optional in the constructor rather than required, because this processor is
+    // built by the queue module and a test that builds it with just a mail service
+    // should not have to know about the log.
+    private readonly mailLog?: MailLogWriter,
+  ) {}
 
   /** True for the job name this processor handles, so routing stays in one place. */
   static handles(name: string): boolean {
@@ -70,7 +90,30 @@ export class MailProcessor {
     }
 
     try {
-      return this.toJobResult(await this.send(payload));
+      const result = await this.send(payload);
+
+      // Recorded after the send rather than before it, so a row exists for every
+      // attempt that reached the provider — including the failed ones, which are
+      // the ones somebody is looking for when they say they got nothing.
+      //
+      // Not awaited, and deliberately so: this is on the delivery path, and the log
+      // writer swallows its own failures. Awaiting it would add a statement to
+      // every send to buy a guarantee that is not offered.
+      void this.mailLog?.record({
+        mailId: result.mailId,
+        template: payload.template,
+        to: payload.to,
+        transport: result.transportName,
+        subject: result.subject,
+        delivered: result.delivered,
+        statusCode: result.status ?? null,
+        attempt: 1,
+        permanent: result.permanent ?? false,
+        error: result.error ?? null,
+        requestId: payload.requestId ?? null,
+      });
+
+      return this.toJobResult(result);
     } catch (error) {
       // MailService swallows provider failures, so a throw here came from
       // somewhere else: a template bug, or a dependency that rejected. It is left

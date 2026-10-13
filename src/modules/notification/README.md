@@ -248,3 +248,17 @@ skipped. Leaving it on in production is how a broken webhook becomes a failing j
 - **Nothing reads `notification_logs` through the API.** `NotificationLogService` has
   `recent()` and `forNotification()`; Phase 20's operational work is what puts them
   behind a route and a permission.
+
+## The request id on every row
+
+`notification_logs.requestId` is carried in the job payload from
+`NotificationEventsService.notify()` and written by the worker.
+
+Same reasoning as `mail_logs.requestId`, from the other direction: "that Slack
+alert at 14:02 — which request was it?" is one indexed read rather than a
+recipient search and a guessed window.
+
+`NotificationEventsService` reads it from the async context rather than taking it as
+an argument. It is a service method that knows nothing about requests, and a call
+site that had to thread an id through would eventually forget to — which is the
+same gap `requestId` already closes for log lines.

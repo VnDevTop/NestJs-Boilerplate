@@ -60,6 +60,10 @@ const configOf = (configService: ConfigService): QueueConfig =>
     NotificationModule,
   ],
   providers: [
+    // The mail delivery record comes from `MailModule`, which `QueueModule` already
+    // imports. The processor takes it as an optional constructor dependency rather
+    // than a required one so a test of the queue half still builds without a
+    // database.
     MailProcessor,
     RetentionProcessor,
     NotificationProcessor,

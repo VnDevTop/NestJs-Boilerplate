@@ -51,6 +51,21 @@ export interface MailTransport {
   /** Config name, reported by the health check so an operator can see it. */
   readonly name: string;
   send(message: MailMessage): Promise<SendResult>;
+
+  /**
+   * Checks the transport is usable, without sending anything.
+   *
+   * **Optional on purpose.** The memory transport cannot be verified — there is
+   * nothing out there to reach — and a transport whose provider has no cheap
+   * readiness call is better off omitting this than shipping a probe that sends
+   * mail. The health check reports `verified: false` when it is absent rather than
+   * treating the absence as a failure.
+   *
+   * The contract is narrow for a reason: this is a health check, not a
+   * connectivity test. It must not send a message, must not consume a provider
+   * quota in a loop, and must resolve rather than hang when the provider is down.
+   */
+  verify?(): Promise<boolean>;
 }
 
 /**

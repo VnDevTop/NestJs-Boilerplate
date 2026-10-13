@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { MetricsService } from '../../core/metrics/index.js';
 import { NotificationLogService } from './notification-log.service.js';
 import type { LogEntry } from './types/index.js';
 
@@ -31,7 +32,10 @@ function harness(): Harness {
   const insert = vi.fn().mockResolvedValue({ identifiers: [] });
 
   return {
-    service: new NotificationLogService({ insert } as never),
+    service: new NotificationLogService(
+      { insert } as never,
+      new MetricsService(),
+    ),
     insert,
   };
 }
@@ -168,7 +172,10 @@ describe('record', () => {
 describe('reading', () => {
   it('asks for the newest rows first, capped by the caller', async () => {
     const find = vi.fn().mockResolvedValue([]);
-    const service = new NotificationLogService({ find } as never);
+    const service = new NotificationLogService(
+      { find } as never,
+      new MetricsService(),
+    );
 
     await service.recent(50);
 
@@ -182,7 +189,10 @@ describe('reading', () => {
     // Collapsing these would lose the sequence, and the sequence is what tells
     // "flaky network" from "the token expired".
     const find = vi.fn().mockResolvedValue([]);
-    const service = new NotificationLogService({ find } as never);
+    const service = new NotificationLogService(
+      { find } as never,
+      new MetricsService(),
+    );
 
     await service.forNotification('n1');
 

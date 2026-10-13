@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { retentionConfig } from '../../configs/retention.config.js';
+import { MetricsModule } from '../../core/metrics/index.js';
 import { NotificationModule } from '../notification/notification.module.js';
 import { MaintenanceLog } from './entities/index.js';
 import { RetentionProcessor } from './processors/retention.processor.js';
@@ -30,6 +31,9 @@ import { RetentionService } from './retention.service.js';
     ConfigModule.forFeature(retentionConfig),
     TypeOrmModule.forFeature([MaintenanceLog]),
     NotificationModule,
+    // For the per-target deleted-row counters. One direction only: metrics imports
+    // nothing from here, so there is no cycle to reason about.
+    MetricsModule,
   ],
   providers: [RetentionService, RetentionProcessor],
   exports: [RetentionService, RetentionProcessor],

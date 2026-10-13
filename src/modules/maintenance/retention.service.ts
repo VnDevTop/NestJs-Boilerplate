@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { DataSource, QueryRunner } from 'typeorm';
 import { Repository } from 'typeorm';
 
+import { MetricsService } from '../../core/metrics/index.js';
 import { retentionConfig } from '../../configs/retention.config.js';
 import { MaintenanceLog } from './entities/maintenance-log.entity.js';
 import { RetentionTrigger } from './entities/retention-trigger.enum.js';
@@ -116,6 +117,7 @@ export class RetentionService {
     private readonly config: ConfigType<typeof retentionConfig>,
     @InjectRepository(MaintenanceLog)
     private readonly logs: Repository<MaintenanceLog>,
+    private readonly metrics: MetricsService,
   ) {}
 
   async run(options: RetentionRunOptions = {}): Promise<RetentionRunResult> {
@@ -176,6 +178,15 @@ export class RetentionService {
         .filter((entry) => entry.error !== undefined)
         .map((entry) => entry.id),
     };
+
+    // Counted per target, not as one total. "The retention job deleted a million
+    // rows" is not answerable by an alert; "notification_logs is not being pruned"
+    // is, and it needs the per-target series to show up on a dashboard.
+    for (const target of targets) {
+      if (target.deleted > 0) {
+        this.metrics.retentionRowsDeleted(target.id, target.deleted);
+      }
+    }
 
     this.log(result);
 

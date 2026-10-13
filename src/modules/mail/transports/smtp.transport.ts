@@ -47,6 +47,28 @@ export class SmtpMailTransport implements MailTransport {
     return this.client !== null;
   }
 
+  /**
+   * Opens a connection and hangs up, without sending anything.
+   *
+   * nodemailer's own `verify`, which speaks EHLO and closes. Sending a message to
+   * test the transport would put a message in a real recipient's inbox every time
+   * a probe ran, and a provider rate limit would eventually refuse the probe and
+   * take the real queue down with it.
+   */
+  async verify(): Promise<boolean> {
+    if (this.client === null) {
+      return false;
+    }
+
+    const transport = this.client.createTransport(this.options());
+
+    try {
+      return await (transport.verify?.() ?? Promise.resolve(true));
+    } finally {
+      transport.close?.();
+    }
+  }
+
   async send(message: MailMessage): Promise<SendResult> {
     if (this.client === null) {
       throw new Error(

@@ -1,4 +1,23 @@
 /**
+ * How much work is sitting on one queue.
+ *
+ * `waiting` is the backlog: the number that grows when the application produces
+ * faster than it delivers. `failed` is separate because a queue full of failures
+ * and a queue full of undelivered mail are different incidents, and an alert
+ * that cannot tell them apart pages somebody for the wrong one.
+ *
+ * `active` and `delayed` are here so a queue that is *busy* can be told apart
+ * from one that is *stuck*: a `waiting` count that never moves with a non-zero
+ * `active` is a different problem from one with nothing running at all.
+ */
+export interface QueueDepth {
+  waiting: number;
+  active: number;
+  failed: number;
+  delayed: number;
+}
+
+/**
  * The job queue's contract with the rest of the application.
  *
  * Nothing in this file mentions BullMQ, Redis or a timer. That is the whole
@@ -80,4 +99,14 @@ export interface JobQueue {
    * the request.
    */
   enqueue(queue: QueueName, job: Job): Promise<void>;
+
+  /**
+   * Current counts for one queue, or `null` when the implementation cannot answer.
+   *
+   * `null` rather than zeroes on purpose. The in-process dispatcher knows its own
+   * backlog exactly; a BullMQ deployment that cannot reach Redis cannot know, and
+   * reporting zero failed jobs because the store is down would turn an outage into
+   * a reassuring dashboard. The health check turns `null` into `degraded`.
+   */
+  depth(queue: QueueName): Promise<QueueDepth | null>;
 }

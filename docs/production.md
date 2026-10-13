@@ -501,6 +501,125 @@ would erase a preference at the moment an operator might be about to restore.
 The address in `mail_logs.recipient` is removed by that table's own 30-day window,
 not by this flow.
 
+## Log redaction
+
+Every log line is scrubbed on the way out. See
+[src/core/redact/README.md](../src/core/redact/README.md) for the full rule.
+
+- **By field name**, at any depth, for a structured payload — a request body, an
+  audit diff. `password`, every flavour of `token`, `secret`, `otp`,
+  `recoveryCodes`, `authorization`, `cookie`, `apiKey`, `signature`.
+- **By pattern, inside a sentence.** Most log lines are strings, and a token in a
+  message has no key above it: `Bearer …`, `?token=…`, `token: …`, `Set-Cookie: …`.
+
+Two things worth knowing when reading a log:
+
+- **A redacted value shows as `[redacted]`, and the key stays.** A key that
+  disappears makes "the password changed" indistinguishable from "this payload
+  never had a password".
+- **`code` is redacted even though it is usually a country code**, because in this
+  application it is where the six digit one-time password arrives. `code: 'EN'` is
+  an accepted casualty of that trade.
+
+The logger cannot throw. A cyclic payload, a value whose `toJSON` throws and a
+closed stream all degrade to a shorter line, because a logger that breaks the
+request it was describing loses the one record that explained the fault.
+
+## Correlation
+
+One id ties a request to everything it caused: the log lines, the audit entries,
+the mail that was sent, the notification that was delivered, and the spans.
+
+| Where               | How to find it                                     |
+| ------------------- | -------------------------------------------------- |
+| log lines           | `requestId` on every entry, from the async context |
+| `mail_logs`         | `SELECT … WHERE "requestId" = '…'`                 |
+| `notification_logs` | same                                               |
+| `audit_logs`        | `requestId`                                        |
+| Sentry              | attached as a tag                                  |
+
+**The id travels in the queue payload, not looked up at delivery time.** A mail or
+a notification is delivered in the worker, possibly long after the request answered,
+and the async context that held the id is gone by then. Reading it at delivery would
+write `null` on every row — which is the worst shape for a correlation column,
+because it looks implemented.
+
+`docs/runbook.md` has the queries.
+
+## Alerts
+
+`ops/prometheus/alerts.yml` holds three rules. Their thresholds live in
+`src/core/alerts/alert.policy.ts`, and `alert.policy.spec.ts` parses the YAML and
+fails when the two disagree — because a drifted alert is worse than no alert in one
+specific way: it stays green while the thing it watches is on fire, and people stop
+believing the alerts that do fire.
+
+| Alert                | Fires on                                  | Waits | Runbook                                                                   |
+| -------------------- | ----------------------------------------- | ----- | ------------------------------------------------------------------------- |
+| `MailFailing`        | >10% of mail failing over 5 minutes       | `5m`  | [mail is failing](runbook.md#mail-is-failing)                             |
+| `JobsDeadLettered`   | one job exhausted its retries             | `1h`  | [jobs are dead-lettering](runbook.md#jobs-are-dead-lettering)             |
+| `MaintenanceOverdue` | the retention job has not run in 26 hours | `5m`  | [the retention job has not run](runbook.md#the-retention-job-has-not-run) |
+
+**Every rule has a wait, not just a threshold.** A restart, a cron landing on the
+hour, a deploy doubling traffic for ninety seconds — a rule that fires on those is
+a rule people learn to ignore.
+
+**The mail ratio divides failures by all sends**, not by a fixed number, so a quiet
+deployment is not alerted and a busy one is not diluted. The denominator is
+clamped, so a deployment that has sent nothing stays quiet instead of dividing by
+zero on the way up.
+
+`dead_lettered_total` and `maintenance_age_hours` are set by the health checks,
+because Prometheus does not poll `/health` — a gauge only a health endpoint
+refreshes reads zero when nobody has called it.
+
+## Grafana
+
+`ops/grafana/dashboard.json` imports directly — the data source is a template
+variable, so it does not depend on how your Grafana is provisioned.
+
+Four rows: **authentication** (failure rate and ratio), **mail** (delivery by
+transport, failure ratio), **queue** (p95 job lag and per-queue backlog), and the
+stat panels for dead-lettered jobs, the maintenance age and what retention deleted.
+
+`src/core/metrics/dashboard.spec.ts` checks every panel expression against the
+metrics `MetricsService` actually registers, so a panel cannot quietly reference a
+metric that stopped existing — an empty panel looks identical to "nothing is
+happening", which is the one conclusion a dashboard must not support by accident.
+
+See [src/core/metrics/README.md](../src/core/metrics/README.md) for the panels and
+why each one is there.
+
+## Health checks
+
+`/api/v1/health/ready` reports the database, the cache, the mail transport and
+the queue backlog.
+
+**Nothing except the database is ever `down`.** `down` makes Terminus return 503,
+which an orchestrator answers by pulling every instance out of rotation. A mail
+provider outage, a full queue or a dead redis each degrade a system that is still
+answering requests, and reporting them as `down` turns each into a full outage of
+the API. They report `degraded`, which lands in `info`, returns 200, and is
+visible to an operator without anything being restarted.
+
+Worth knowing about each:
+
+- **cache** — a write-then-read round trip, because cache-manager turns a failing
+  store into a miss and a plain read cannot tell "unreachable" from "empty".
+- **mail** — reports the configured transport and never sends a probe email. A
+  `memory` transport in production reports `degraded` on its own: every mail is
+  being written to a buffer that dies with the process.
+- **queue** — backlog per queue, the driver in use, and the dead-letter count.
+  An unreadable backlog is `degraded` rather than a reassuring zero.
+- **maintenance** — the last retention run, how long ago it finished, and
+  whether it succeeded. **This is the only signal that a missed retention job
+  exists**: nothing fails when the job does not run, the tables just keep growing
+  until something else breaks. Degrades past 26 hours, which is one full daily
+  cycle missed plus most of the next.
+
+`QUEUE_ENABLED=false` is worth reading as an answer in itself: the in-process
+driver has no shared backlog, so every pending job dies with the process.
+
 ## Data export
 
 `GET /api/v1/users/me/export?format=csv|json` returns everything held about the
@@ -539,6 +658,47 @@ prove the inbox is theirs.
 **There is no administrator route.** Not a permission, not a path parameter — the
 endpoint reads the caller's own id and has no way to be pointed at another one. A
 support agent who needs a user's data asks the user for their export.
+
+## Log redaction
+
+Every log line is scrubbed on the way out. See
+[src/core/redact/README.md](../src/core/redact/README.md) for the full rule.
+
+- **By field name**, at any depth, for a structured payload — a request body, an
+  audit diff. `password`, every flavour of `token`, `secret`, `otp`,
+  `recoveryCodes`, `authorization`, `cookie`, `apiKey`, `signature`.
+- **By pattern, inside a sentence.** Most log lines are strings, and a token in a
+  message has no key above it: `Bearer …`, `?token=…`, `token: …`, `Set-Cookie: …`.
+
+Two things worth knowing when reading a log:
+
+- **A redacted value shows as `[redacted]`, and the key stays.** A key that
+  disappears makes "the password changed" indistinguishable from "this payload
+  never had a password".
+- **`code` is redacted even though it is usually a country code**, because in this
+  application it is where the six digit one-time password arrives. `code: 'EN'` is
+  an accepted casualty of that trade.
+
+The logger cannot throw. A cyclic payload, a value whose `toJSON` throws and a
+closed stream all degrade to a shorter line, because a logger that breaks the
+request it was describing loses the one record that explained the fault.
+
+## Grafana
+
+`ops/grafana/dashboard.json` imports directly — the data source is a template
+variable, so it does not depend on how your Grafana is provisioned.
+
+Four rows: **authentication** (failure rate and ratio), **mail** (delivery by
+transport, failure ratio), **queue** (p95 job lag and per-queue backlog), and the
+stat panels for dead-lettered jobs, the maintenance age and what retention deleted.
+
+`src/core/metrics/dashboard.spec.ts` checks every panel expression against the
+metrics `MetricsService` actually registers, so a panel cannot quietly reference a
+metric that stopped existing — an empty panel looks identical to "nothing is
+happening", which is the one conclusion a dashboard must not support by accident.
+
+See [src/core/metrics/README.md](../src/core/metrics/README.md) for the panels and
+why each one is there.
 
 ## Health checks
 

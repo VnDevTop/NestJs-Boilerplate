@@ -1,0 +1,73 @@
+# Prometheus alert rules.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# Generated from `src/core/alerts/alert.policy.ts` and checked against it by
+# `alert.policy.spec.ts`, which parses this file and fails when a threshold here
+# disagrees with the constant there.
+#
+# That arrangement is deliberate. This is hand-maintained YAML with no compiler
+# anywhere near it, and a drifted alert is worse than no alert in one specific
+# way: it stays green while the thing it watches is on fire, and people stop
+# believing the alerts that do fire. That is how a monitoring system gets turned
+# off.
+#
+# Apply with:
+#   promtool check rules ops/prometheus/alerts.yml
+#   kubectl apply -f ops/prometheus/alerts.yml      (with the CRD installed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+groups:
+  - name: nestjs-boilerplate
+    interval: 30s
+    rules:
+      # A customer noticed this one. The ratio is of failures to *all* sends, not
+      # to a fixed number, so a quiet deployment is not alerted and a busy one is
+      # not diluted.
+      #
+      # `clamp_min(..., 1)` is what stops a deployment that has sent nothing at all
+      # from dividing by zero and alerting forever on the way up from zero.
+      - alert: MailFailing
+        expr: |
+          sum(rate(mail_failures_total[5m]))
+            / clamp_min(
+                sum(rate(mail_sent_total[5m])) + sum(rate(mail_failures_total[5m])),
+                1
+              )
+            > 0.1
+        for: 5m
+        labels:
+          severity: page
+          component: mail
+        annotations:
+          summary: A large share of outbound mail is being refused or failing.
+          runbook_url: https://github.com/VnDevTop/NestJs-Boilerplate/blob/master/docs/runbook.md#mail-is-failing
+          runbook: docs/runbook.md#mail-is-failing
+
+      # A job that exhausts its retries is not going to retry again. The one hour
+      # is so a small incident is noticed on somebody's next coffee break rather
+      # than in the middle of it — and the recovery action needs enough context to
+      # be worth doing.
+      - alert: JobsDeadLettered
+        expr: dead_lettered_total > 1
+        for: 1h
+        labels:
+          severity: page
+          component: queue
+        annotations:
+          summary: Jobs have exhausted their retries and will not run again.
+          runbook_url: https://github.com/VnDevTop/NestJs-Boilerplate/blob/master/docs/runbook.md#jobs-are-dead-lettering
+          runbook: docs/runbook.md#jobs-are-dead-lettering
+
+      # The one nobody notices. Nothing fails when the retention job does not run;
+      # the tables it prunes just keep growing until one of them is large enough
+      # that something else breaks, and by then the cause is days old.
+      - alert: MaintenanceOverdue
+        expr: maintenance_age_hours > 26
+        for: 5m
+        labels:
+          severity: ticket
+          component: maintenance
+        annotations:
+          summary: The nightly retention job has not finished in over a day.
+          runbook_url: https://github.com/VnDevTop/NestJs-Boilerplate/blob/master/docs/runbook.md#the-retention-job-has-not-run
+          runbook: docs/runbook.md#the-retention-job-has-not-run

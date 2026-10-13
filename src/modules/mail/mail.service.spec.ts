@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppConfig } from '../../configs/app.config.js';
 import type { MailConfig } from '../../configs/mail.config.js';
+import { MetricsService } from '../../core/metrics/index.js';
 import {
   MAIL_TRANSPORT,
   MailService,
@@ -83,7 +84,10 @@ function build(
     },
   } as unknown as ConfigService;
 
-  return new MailService(transport, configService);
+  // A real `MetricsService` rather than a fake: with `prom-client` absent it is a
+  // no-op, and that is the state this suite most likely runs in. Asserting against
+  // a fake would test the fake.
+  return new MailService(transport, new MetricsService(), configService);
 }
 
 const welcomeData = { firstName: 'Ada', appName: 'Example' };
@@ -351,6 +355,10 @@ describe('MailService as a Nest provider', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         { provide: MAIL_TRANSPORT, useValue: memory },
+        // The real service, for the same reason the plain harness uses it: with
+        // `prom-client` absent every method is a no-op, and that is the state this
+        // runs in.
+        MetricsService,
         MailService,
         {
           provide: ConfigService,

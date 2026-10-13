@@ -151,6 +151,23 @@ export const RETENTION_TARGETS: readonly RetentionTarget[] = [
     cascades: [],
   },
   {
+    // Phase 20. The table arrived with `mail_logs`, and it is the largest of these
+    // tables: one row per *attempt*, on a busy deployment that is four or five rows
+    // per registration.
+    id: 'mail-logs',
+    table: 'mail_logs',
+    description: 'mail delivery records, once past the retention window',
+    ageKey: 'mailLogs',
+    ageDays: 0,
+    // On the insert time and nothing else. The `requestId` is indexed but is not
+    // the predicate: a row is evidence that a send was attempted and its value is
+    // "how recently did we hear from this transport", and a rule that kept the
+    // interesting ones would be a rule about which templates somebody thought were
+    // worth keeping.
+    buildPredicate: (cutoff) => `"createdAt" < '${cutoff.toISOString()}'`,
+    cascades: [],
+  },
+  {
     // Phase 19. It moved out of `DEFERRED_TARGETS` when the entity arrived.
     //
     // A year, not the week everything else gets. `RETENTION_AUDIT_LOGS_DAYS`
@@ -219,7 +236,6 @@ export const DEFERRED_TARGETS: readonly {
   readonly id: string;
   readonly reason: string;
 }[] = [
-  { id: 'mail-logs', reason: 'the mail log table arrives with its own phase' },
   {
     id: 'login-attempts',
     reason: 'login-attempt bookkeeping is not stored in its own table',
