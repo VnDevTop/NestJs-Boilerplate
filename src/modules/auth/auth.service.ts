@@ -156,6 +156,19 @@ export class AuthService {
     // cannot be reached later without asking for a new one.
     void this.sendVerification(user).catch(() => undefined);
 
+    // The welcome message, from the same register call. The template has been in
+    // the registry since the mail phase and PLAN.md lists it as one of the four
+    // that are emitted, but nothing ever enqueued it — so a registered user was
+    // told nothing and the e2e assertion on the pair of messages was the only
+    // thing that noticed.
+    //
+    // Keyed on the user rather than the address, so a re-registration of the same
+    // address does not have the deduplication guard suppress it: those are two
+    // different accounts, and the second one deserves to be told about itself.
+    void this.enqueueWelcome(user.id, user.email, user.firstName ?? '').catch(
+      () => undefined,
+    );
+
     // The operator alert is not awaited, and `notify` does not reject anyway.
     // Detached rather than awaited so nothing about the notification path can delay
     // a token that is already ready to return. Reads the address and the name off
@@ -164,6 +177,38 @@ export class AuthService {
     void this.notifyRegistered(user.id, user.email, user.firstName ?? '');
 
     return this.createAuthToken(user, token, device, sessionId);
+  }
+
+  /**
+   * Queues the welcome message for a freshly registered account.
+   *
+   * Detached, like every other mail on this path: the account exists and the
+   * token is about to be returned, so a queue that is down costs one message
+   * rather than the registration.
+   *
+   * `async` for the same reason `sendVerification` is. `enqueueMail` attaches
+   * its `.catch()` to the promise `enqueue` returns, so a *synchronous* throw
+   * from the queue — which is what a broken transport does before it can reject
+   * — would escape the handler and take the registration down with it. Being
+   * `async` converts that into the rejection the handler already expects.
+   */
+  private async enqueueWelcome(
+    userId: string,
+    email: string,
+    firstName: string,
+  ): Promise<void> {
+    await this.enqueueMail(
+      {
+        to: email,
+        template: 'welcome',
+        data: { firstName, appName: this.appConfig.name },
+      },
+      dedupeKey({
+        template: 'welcome',
+        to: email,
+        subjectId: userId,
+      }),
+    );
   }
 
   /**
