@@ -2,7 +2,7 @@ import { Test } from '@nestjs/testing';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AppModule } from './app.module.js';
 import { ENTITIES } from './database/data-source.js';
@@ -42,6 +42,26 @@ import { JOB_QUEUE } from './modules/queue/queue.tokens.js';
  * it uses, and `AppModule` importing a module does not make its providers
  * available to its siblings.
  */
+
+/**
+ * The secrets `ConfigModule` insists on, set before the imports below run.
+ *
+ * `vi.hoisted` is not a stylistic choice here. An ESM import is evaluated before
+ * any statement in the importing file, and `ConfigModule.forRoot` validates
+ * `process.env` while `app.module.ts` is being imported — so a `beforeAll` that
+ * set them would be too late, and the file would fail before a single test ran.
+ *
+ * Without this the suite passed on a machine with a `.env` and failed on one
+ * without, which is the same class of bug as the boot failure itself: an
+ * environment assumed rather than provided.
+ */
+vi.hoisted(() => {
+  process.env['JWT_SECRET'] ??=
+    'app-module-spec-jwt-secret-value-long-enough-32';
+  process.env['JWT_REFRESH_SECRET'] ??=
+    'app-module-spec-refresh-secret-value-long-enough-32';
+  process.env['NODE_ENV'] ??= 'test';
+});
 describe('the application module', () => {
   it('builds', async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
