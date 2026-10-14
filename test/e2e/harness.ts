@@ -22,8 +22,16 @@ const ENV_FILE = resolve(HERE, '..', '.e2e-env.json');
  * through `boot()` rather than directly.
  */
 
-/** Where the application listens, mirrored by `API_PREFIX`/`API_VERSION`. */
-export const API_ROOT = '/api/v1';
+/**
+ * Where the application listens.
+ *
+ * A constant rather than a literal in each spec, because it is a *fact about the
+ * running application* and `boot()` reads it from the same config the routes were
+ * registered with. A spec that hard-codes `/api/v1` passes on a deployment
+ * configured otherwise, which is the same way the whole suite was testing the
+ * wrong application.
+ */
+export let API_ROOT = '/api/v1';
 
 export type BootedApp = {
   app: INestApplication;
@@ -76,6 +84,7 @@ export async function boot(): Promise<BootedApp> {
   // Imported after the environment is set, because the config namespaces read
   // `process.env` at module scope.
   const { AppModule } = await import('../../src/app.module.js');
+  const { configureApp, apiRoot } = await import('../../src/bootstrap.js');
   const { getDataSourceToken } = await import('@nestjs/typeorm');
 
   const moduleRef = await Test.createTestingModule({
@@ -83,7 +92,18 @@ export async function boot(): Promise<BootedApp> {
   }).compile();
 
   const app = moduleRef.createNestApplication();
+
+  // The same wiring `main.ts` applies. Without it the global prefix and the URI
+  // versioning never happen, `/health` is not the route a client calls, and no
+  // response is wrapped — so every URL and every body in this suite would be
+  // describing an application nobody runs.
+  configureApp(app);
+
   await app.init();
+
+  // A live binding, so every spec that reads `API_ROOT` inside a test body gets
+  // the prefix this run actually mounted rather than the one someone typed.
+  API_ROOT = apiRoot(app);
 
   return { app, dataSource: app.get(getDataSourceToken()) };
 }
@@ -144,11 +164,20 @@ export async function resetRedis(): Promise<void> {
     ]) {
       // A scan rather than `keys`, so a large namespace cannot block the server
       // the way a `keys` does. The suite is small, but the habit is the point.
-      for await (const key of client.scanIterator({
+      //
+      // The iterator yields **batches**, not single keys, and each batch is an
+      // array. Passing one straight to `del` is `DEL <array>`, which the server
+      // answers with "ERR wrong number of arguments" — so the whole reset fails
+      // and every spec after it inherits the previous file's rows.
+      for await (const keys of client.scanIterator({
         MATCH: pattern,
         COUNT: 500,
       })) {
-        await client.del(key);
+        const batch = Array.isArray(keys) ? keys : [keys];
+
+        if (batch.length > 0) {
+          await client.del(batch);
+        }
       }
     }
   } finally {
@@ -220,7 +249,7 @@ export async function registerAndLogin(
     .send({ email, password })
     .expect(200);
 
-  return response.body.accessToken as string;
+  return response.body.data.accessToken as string;
 }
 
 /**

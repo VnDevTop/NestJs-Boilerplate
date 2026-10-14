@@ -58,7 +58,7 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
 
     // Registration signs the user in. It does not verify them, which is the next
     // test — a client that assumed both happened at once would be a real bug.
-    expect(response.body).toMatchObject({
+    expect(response.body.data).toMatchObject({
       accessToken: expect.any(String),
       refreshToken: expect.any(String),
       tokenType: 'Bearer',
@@ -154,7 +154,7 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
       .send({ email: EMAIL, password: PASSWORD })
       .expect(200);
 
-    expect(response.body).toMatchObject({
+    expect(response.body.data).toMatchObject({
       accessToken: expect.any(String),
       refreshToken: expect.any(String),
     });
@@ -168,10 +168,10 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
 
     const response = await http(app)
       .get(`${API_ROOT}/auth/me`)
-      .set('Authorization', `Bearer ${body.accessToken}`)
+      .set('Authorization', `Bearer ${body.data.accessToken}`)
       .expect(200);
 
-    expect(response.body.email).toBe(EMAIL);
+    expect(response.body.data.email).toBe(EMAIL);
   });
 
   it('rotates the refresh token and refuses the one it replaced', async () => {
@@ -182,17 +182,19 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
 
     const rotated = await http(app)
       .post(`${API_ROOT}/auth/refresh-token`)
-      .send({ refreshToken: first.body.refreshToken })
+      .send({ refreshToken: first.body.data.refreshToken })
       .expect(200);
 
-    expect(rotated.body.refreshToken).not.toBe(first.body.refreshToken);
+    expect(rotated.body.data.refreshToken).not.toBe(
+      first.body.data.refreshToken,
+    );
 
     // Replaying the superseded token is the reuse signal, checked here over http
     // against the real table, rather than against a mock that would answer the
     // same either way.
     await http(app)
       .post(`${API_ROOT}/auth/refresh-token`)
-      .send({ refreshToken: first.body.refreshToken })
+      .send({ refreshToken: first.body.data.refreshToken })
       .expect(401);
   });
 

@@ -1102,6 +1102,7 @@ fix: namespace the keys a lua script is given
 fix: say what to do when there is no container runtime
 fix: break the queue and retention module cycle
 fix: make the application boot
+fix: share one bootstrap between the binary and the e2e harness
 test: build the whole module graph in the unit suite
 docs: document the testing layers and the new variables
 docs: mark phase 21 testing depth as done
@@ -1155,6 +1156,15 @@ Decisions worth carrying forward, because each is a refusal of something:
   two retention files, because a flipped comparison there deletes or locks out
   something real and produces no exception. A full run takes minutes, which is
   the wrong price for every commit.
+- **The e2e harness was booting a different application from the one that ships.**
+  `setGlobalPrefix`, URI versioning, the validation pipe, the filters and the
+  response wrapper all lived inline in `main.ts`, so a test-created application
+  had no prefix and no wrapper: `/health` was a 404, every success body was bare
+  rather than `{ success, data, timestamp }`, and the "unknown path returns 404"
+  test passed for the wrong reason — the prefixed path was also a 404. `main.ts`
+  now delegates to `src/bootstrap.ts`, which both it and the harness call, and
+  `app.module.spec.ts` asserts `/api/v1/health` is routed and `/health` is not,
+  with no container involved.
 - **The application did not boot at all, and 120 unit test files could not see
   it.** Six faults sat behind the first error each time: `NotificationEventsModule`
   re-exporting a provider belonging to an imported module; `ThrottlerModule

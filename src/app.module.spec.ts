@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 
+import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AppModule } from './app.module.js';
@@ -84,6 +85,27 @@ describe('the application module', () => {
     await moduleRef.close();
   });
 
+  it('serves the routes where a client actually looks for them', async () => {
+    const app = await bootedApp();
+
+    try {
+      // The prefix and the URI versioning come from `configureApp`, the same
+      // function `main.ts` runs. They used to live inline in `main.ts`, so a test
+      // that booted the application without them found `/health` on the bare
+      // path — and the only symptom was a suite reaching a 404 while passing
+      // every assertion about how the response would look.
+      const prefixed = await request(app.getHttpServer()).get('/api/v1/health');
+      const bare = await request(app.getHttpServer()).get('/health');
+
+      expect(prefixed.status).not.toBe(404);
+      // The route is only there once. A second one at the bare path would mean a
+      // client could reach it both ways, which is not what ships.
+      expect(bare.status).toBe(404);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('provides the queue and the transport the way the routes ask for them', async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(getDataSourceToken())
@@ -104,6 +126,22 @@ describe('the application module', () => {
     await moduleRef.close();
   });
 });
+
+/** A compiled, configured application with nothing behind it. */
+async function bootedApp() {
+  const { configureApp } = await import('./bootstrap.js');
+
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(getDataSourceToken())
+    .useValue(stubDataSource())
+    .compile();
+
+  const app = moduleRef.createNestApplication();
+  configureApp(app);
+  await app.init();
+
+  return app;
+}
 
 /**
  * The smallest thing `TypeOrmModule` needs from a data source at wiring time.

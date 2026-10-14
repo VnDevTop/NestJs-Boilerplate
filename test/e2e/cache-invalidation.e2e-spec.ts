@@ -178,7 +178,7 @@ describe.skipIf(!e2eEnabled())('cache invalidation (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
 
-    expect(response.body.permissions).toEqual([Permission.UserRead]);
+    expect(response.body.data.permissions).toEqual([Permission.UserRead]);
     expect(id).toBeTruthy();
   });
 
@@ -205,5 +205,5 @@ async function login(
     .send({ email, password })
     .expect(200);
 
-  return response.body.accessToken as string;
+  return response.body.data.accessToken as string;
 }
