@@ -18,7 +18,7 @@ import {
   RetentionRunDto,
   RetentionRunListDto,
 } from '../maintenance/dto/index.js';
-import { JOB_QUEUE } from '../queue/queue.module.js';
+import { JOB_QUEUE } from '../queue/queue.tokens.js';
 import { QUEUE_NAMES, type JobQueue } from '../queue/queue.interface.js';
 import {
   RETENTION_JOB,

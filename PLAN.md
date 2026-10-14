@@ -1100,6 +1100,7 @@ test: add mutation testing for auth and retention
 test: cover the auth service, two factor and every template
 fix: namespace the keys a lua script is given
 fix: say what to do when there is no container runtime
+fix: break the queue and retention module cycle
 docs: document the testing layers and the new variables
 docs: mark phase 21 testing depth as done
 ```
@@ -1152,6 +1153,17 @@ Decisions worth carrying forward, because each is a refusal of something:
   two retention files, because a flipped comparison there deletes or locks out
   something real and produces no exception. A full run takes minutes, which is
   the wrong price for every commit.
+- **The module graph had a cycle, and it only failed outside `node dist/main`.**
+  `QueueModule` imported `MaintenanceModule` through the `maintenance/index.js`
+  barrel, and that barrel re-exports `MaintenanceSchedulerModule`, which imports
+  `QueueModule` back. `node` resolved the cycle by luck; vitest did not, and the
+  e2e job died at boot with `The module at index [2] of the QueueModule "imports"
+array is undefined` — a message that reads as a missing provider and is not
+  one. Every unit test passed, because no unit test builds the application.
+  Fixed by importing the module file directly and by moving `JOB_QUEUE` into
+  `queue.tokens.ts` so a string constant no longer evaluates a module graph.
+  `module-graph.spec.ts` now fails on any value-import cycle, and type-only
+  cycles stay legal because the compiler erases them.
 - **`RedisClientService.eval` did not namespace its keys.** Every other command
   went through the prefix helper and `eval` passed its keys straight to the
   client, so the throttler's counters sat in the root namespace while every other

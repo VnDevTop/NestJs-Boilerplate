@@ -7,5 +7,6 @@ export * from './processors/mail.processor.js';
 export * from './processor-router.service.js';
 export * from './queue.interface.js';
 export * from './queue.module.js';
+export * from './queue.tokens.js';
 export * from './redis-client.service.js';
 export * from './retry.policy.js';

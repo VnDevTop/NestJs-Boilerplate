@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { HealthIndicatorResult } from '@nestjs/terminus';
 
-import { JOB_QUEUE } from '../../modules/queue/queue.module.js';
+import { JOB_QUEUE } from '../../modules/queue/queue.tokens.js';
 import {
   QUEUE_NAMES,
   type JobQueue,
