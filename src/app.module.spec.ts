@@ -44,24 +44,36 @@ import { JOB_QUEUE } from './modules/queue/queue.tokens.js';
  */
 
 /**
- * The secrets `ConfigModule` insists on, set before the imports below run.
+ * The environment this file builds the application in.
  *
- * `vi.hoisted` is not a stylistic choice here. An ESM import is evaluated before
- * any statement in the importing file, and `ConfigModule.forRoot` validates
- * `process.env` while `app.module.ts` is being imported — so a `beforeAll` that
- * set them would be too late, and the file would fail before a single test ran.
+ * `vi.hoisted` is not a stylistic choice: an ESM import is evaluated before any
+ * statement in the importing file, and `ConfigModule.forRoot` validates
+ * `process.env` while `app.module.ts` is being imported. A `beforeAll` that set
+ * these would be too late and the file would fail before a single test ran.
  *
- * Without this the suite passed on a machine with a `.env` and failed on one
- * without, which is the same class of bug as the boot failure itself: an
- * environment assumed rather than provided.
+ * Assigned rather than defaulted, and that is the point of the whole block. Every
+ * one of these defaults to something that reaches the network or to a machine's
+ * own `.env`, so a developer with `CACHE_BACKEND=redis` in theirs and a runner
+ * with no `.env` at all were two different tests wearing one name. This spec has
+ * to be the same test everywhere, so it states its own environment outright:
+ *
+ * - the two secrets `ConfigModule` refuses to boot without;
+ * - `CACHE_BACKEND=memory`, because `CacheModule` deliberately turns an
+ *   unreachable redis into a **failed boot** by probing the store while building
+ *   it. That is right for an application and wrong here — building the graph is
+ *   the whole point, and contacting a cache server is not part of it.
+ *
+ * Nothing here reaches a network. Postgres is stubbed, and the queue's redis
+ * client connects on first command rather than at construction.
  */
 vi.hoisted(() => {
-  process.env['JWT_SECRET'] ??=
-    'app-module-spec-jwt-secret-value-long-enough-32';
-  process.env['JWT_REFRESH_SECRET'] ??=
+  process.env['JWT_SECRET'] = 'app-module-spec-jwt-secret-value-long-enough-32';
+  process.env['JWT_REFRESH_SECRET'] =
     'app-module-spec-refresh-secret-value-long-enough-32';
-  process.env['NODE_ENV'] ??= 'test';
+  process.env['NODE_ENV'] = 'test';
+  process.env['CACHE_BACKEND'] = 'memory';
 });
+
 describe('the application module', () => {
   it('builds', async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
