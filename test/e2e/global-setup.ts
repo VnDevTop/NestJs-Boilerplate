@@ -246,12 +246,21 @@ async function startPostgres(): Promise<string> {
       POSTGRES_PASSWORD: 'e2e',
     })
     .withExposedPorts(5432)
-    // `pg_isready` alone answers before the database accepts connections from
-    // anything but the socket, which is the classic reason a container is
-    // "ready" and the first migration still fails.
+    // Waiting for "database system is ready to accept connections" looks right
+    // and is not: on a fresh volume the entrypoint runs a throwaway server
+    // during initdb which logs exactly that line, then shuts it down again. The
+    // wait resolves on that temporary server, `start()` returns, and the first
+    // real connection is reset while the final server is still coming up —
+    // which surfaces as a bare `read ECONNRESET` from `migrate` with nothing in
+    // the suite output about containers at all.
+    //
+    // `PostgreSQL init process complete; ready for start up` is printed only
+    // once initdb has finished and the entrypoint is about to start the real
+    // server. `migrate` then retries the connection regardless, because the
+    // log line lands slightly before postgres binds its port.
     .withWaitStrategy(
       Wait.forLogMessage(
-        /database system is ready to accept connections.*/g,
+        /PostgreSQL init process complete; ready for start up/i,
       ).withStartupTimeout(120_000),
     )
     .start();
@@ -307,7 +316,7 @@ async function migrate(databaseUrl: string): Promise<void> {
     extra: { ssl: false },
   });
 
-  await dataSource.initialize();
+  await connectWithRetry(dataSource);
   try {
     // The initial migration declares its primary keys with
     // `DEFAULT uuid_generate_v4()`, which is the `uuid-ossp` extension — and no
@@ -329,6 +338,64 @@ async function migrate(databaseUrl: string): Promise<void> {
 
 /** A migration class, as TypeORM recognises one. */
 type MigrationClass = new () => { up: unknown; down: unknown };
+
+/**
+ * Connects, retrying while the server refuses.
+ *
+ * Postgres accepting the tcp connection is not the same as accepting a query:
+ * the entrypoint starts the real server after the log line the wait strategy
+ * watches for, so there is a short window where a connection is established and
+ * then dropped. A single `initialize()` either lands in that window or does not,
+ * which is why this read as an intermittent failure.
+ *
+ * Only connection failures are retried, and the deadline is long enough to cover
+ * a cold image on a loaded machine but short enough that a genuinely wrong url
+ * still fails the run rather than appearing to hang.
+ */
+async function connectWithRetry(dataSource: DataSource): Promise<void> {
+  const deadline = Date.now() + 60_000;
+
+  for (;;) {
+    try {
+      await dataSource.initialize();
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline || !isConnectionFailure(error)) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
+/**
+ * Whether an error is the connection being refused or dropped, rather than
+ * something wrong with the configuration.
+ *
+ * `ECONNRESET` is the one this suite actually hit, and it is also the one a
+ * proxy in front of the database produces for a bad password — so the message is
+ * checked too, which distinguishes "server closed the socket" from "server
+ * rejected the credentials". Everything else, a missing extension or a failed
+ * migration, fails immediately.
+ */
+function isConnectionFailure(error: unknown): boolean {
+  const code = (error as { code?: string } | undefined)?.code;
+
+  if (
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT'
+  ) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+
+  return /econnreset|econnrefused|etimedout|connection terminated|socket hang up/i.test(
+    message,
+  );
+}
 
 /**
  * Every migration class under `src/database/migrations`.

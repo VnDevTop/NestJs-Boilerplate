@@ -190,9 +190,14 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
       .send({ email: EMAIL, password: PASSWORD })
       .expect(200);
 
+    // The route is authenticated: it is not `@Public()`, so it carries the access
+    // token login just handed back. Omitting the header fails at `JwtAuthGuard`
+    // with a plain 401, which is indistinguishable from a token the service
+    // rejected — and the replay below would then pass for the wrong reason.
     const rotated = await expectStatus(
       http(app)
         .post(`${API_ROOT}/auth/refresh-token`)
+        .set('Authorization', `Bearer ${first.body.data.accessToken}`)
         .send({ refreshToken: first.body.data.refreshToken }),
       200,
       'refresh',
@@ -205,8 +210,14 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
     // Replaying the superseded token is the reuse signal, checked here over http
     // against the real table, rather than against a mock that would answer the
     // same either way.
+    //
+    // Sent with the *rotated* access token, because a successful rotation marks
+    // the previous session revoked. Reusing the old one would be refused by the
+    // guard before the refresh token was ever read, so the assertion would pass
+    // on a rotation that had not actually detected anything.
     await http(app)
       .post(`${API_ROOT}/auth/refresh-token`)
+      .set('Authorization', `Bearer ${rotated.body.data.accessToken}`)
       .send({ refreshToken: first.body.data.refreshToken })
       .expect(401);
   });

@@ -135,29 +135,65 @@ export async function resetDatabase(
 }
 
 /**
+ * Every key the suite's own runs can leave behind.
+ *
+ * **The namespace prefix is part of every one of these.** `RedisClientService`
+ * applies `REDIS_KEY_PREFIX` itself (`redis-client.service.ts`, `key()`), so the
+ * counters on the wire are `e2e:redis:throttle:login-ip:<hash>` and never the bare
+ * `throttle:login-ip:<hash>`. The patterns below listed the bare names, matched
+ * nothing, and cleared nothing — while still passing every run, because a scan
+ * that finds no keys is not an error.
+ *
+ * That is how the login throttle survived `cleanState` and the failure surfaced
+ * as a 429 in whichever file happened to run after the one that spent the bucket:
+ *
+ *     Error: login fresh@example.test: expected 200, got 429
+ *
+ * A login that any client could make was refused for requests no client in that
+ * file had sent.
+ *
+ * The lockout keys are the second half of it, and they were never in the list at
+ * all — a different prefix written by a different module.
+ */
+const redisKeyPatterns = (): string[] => {
+  const namespace = process.env.REDIS_KEY_PREFIX;
+
+  return [
+    `${process.env.CACHE_KEY_PREFIX}:*`,
+    // Deduplication markers, idempotency claims, throttle counters and the
+    // dead-letter list all live in the queue namespace.
+    `${namespace}:*`,
+    // Login lockout counters. Not in the queue namespace and not the cache's —
+    // written by `LoginLockoutService` under its own prefix — so the
+    // `${namespace}:*` above does not reach them either. These lock the account
+    // itself, so a leftover one fails the next file's login with a 401 or 429
+    // rather than anything a reader would connect to a route.
+    'lockout:login*',
+    // Session revocations, written straight to redis rather than through the
+    // cache, because there is no column to re-read them from.
+    'token:revoked:*',
+  ];
+};
+
+/**
  * Clears every redis namespace the suite wrote to.
  *
- * The cache and queue prefixes plus the bare root names the throttler and the
- * dead-letter list use when a caller passes an already-complete key. Missing
- * either group is not cosmetic: leftover throttle counters make a later spec hit
- * a 429 for a request no client made, and the failure looks like the route being
- * broken rather than like state from a previous file.
+ * **Every** database the application is configured with, selected and cleared in
+ * turn. This loop previously ran `select()` for each url and then fell through to
+ * the scans, leaving the client on the *last* database and clearing only that one.
  */
 export async function resetRedis(): Promise<void> {
   const { createClient } = await import('redis');
 
-  // **Every** database the application is configured with, not just the cache's.
-  //
-  // The throttle counters, the deduplication markers and the dead-letter list go
-  // to the queue's redis, and the queue has its own url on purpose. Clearing the
-  // cache database left those in place, so a rate limit counted across spec files:
-  // a later file hit a 429 for a request no client in it had made, and the
-  // failure reads as a broken route rather than as leftover state.
   const urls = [
     process.env.CACHE_URL,
     process.env.REDIS_URL,
     process.env.QUEUE_REDIS_URL,
   ].filter((url): url is string => Boolean(url));
+
+  if (urls.length === 0) {
+    return;
+  }
 
   const client = createClient({
     url: urls[0],
@@ -167,39 +203,28 @@ export async function resetRedis(): Promise<void> {
   await client.connect();
 
   try {
-    for (const url of urls.slice(1)) {
+    const patterns = redisKeyPatterns();
+
+    for (const url of urls) {
       await client.select(Number(new URL(url).pathname.slice(1) || 0));
-    }
 
-    for (const pattern of [
-      `${process.env.CACHE_KEY_PREFIX}:*`,
-      `${process.env.REDIS_KEY_PREFIX}:*`,
-      // Throttle counters, deduplication markers, idempotency claims and the
-      // dead-letter list. Each is named by its own module rather than derived
-      // here, because a prefix that is wrong clears nothing and still passes.
-      'throttle:*',
-      'dedupe:*',
-      'idem:*',
-      'dead-letter:*',
-      // Session revocations are written straight to redis under their own key,
-      // not through the cache, because there is no column to re-read them from.
-      'token:revoked:*',
-    ]) {
-      // A scan rather than `keys`, so a large namespace cannot block the server
-      // the way a `keys` does. The suite is small, but the habit is the point.
-      //
-      // The iterator yields **batches**, not single keys, and each batch is an
-      // array. Passing one straight to `del` is `DEL <array>`, which the server
-      // answers with "ERR wrong number of arguments" — so the whole reset fails
-      // and every spec after it inherits the previous file's rows.
-      for await (const keys of client.scanIterator({
-        MATCH: pattern,
-        COUNT: 500,
-      })) {
-        const batch = Array.isArray(keys) ? keys : [keys];
+      for (const pattern of patterns) {
+        // A scan rather than `keys`, so a large namespace cannot block the server
+        // the way a `keys` does. The suite is small, but the habit is the point.
+        //
+        // The iterator yields **batches**, not single keys, and each batch is an
+        // array. Passing one straight to `del` is `DEL <array>`, which the server
+        // answers with "ERR wrong number of arguments" — so the whole reset fails
+        // and every spec after it inherits the previous file's rows.
+        for await (const keys of client.scanIterator({
+          MATCH: pattern,
+          COUNT: 500,
+        })) {
+          const batch = Array.isArray(keys) ? keys : [keys];
 
-        if (batch.length > 0) {
-          await client.del(batch);
+          if (batch.length > 0) {
+            await client.del(batch);
+          }
         }
       }
     }
