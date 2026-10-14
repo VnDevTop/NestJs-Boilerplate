@@ -83,8 +83,16 @@ describe('the http helper', () => {
 
     // Read through what the wrapper built, because that is the object supertest
     // sends — the same object the header was set on.
-    expect(calls[0].headers['Idempotency-Key']).toBe('e2e-1');
-    expect(calls[1].headers['Idempotency-Key']).toBe('e2e-2');
+    expect(calls[0].headers['Idempotency-Key']).toBeDefined();
+    expect(calls[1].headers['Idempotency-Key']).toBeDefined();
+
+    // Distinct, and not a counter: vitest gives each file a fresh module
+    // registry, so a counter restarts at 1 and every file's second register
+    // sends the key the previous file's second register sent — which the
+    // idempotency guard then replays instead of registering.
+    expect(calls[0].headers['Idempotency-Key']).not.toBe(
+      calls[1].headers['Idempotency-Key'],
+    );
   });
 
   it('leaves a read alone', () => {

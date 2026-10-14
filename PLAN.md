@@ -1174,6 +1174,29 @@ Decisions worth carrying forward, because each is a refusal of something:
   migration creates it, because the database this repository is developed against
   already has it. The e2e setup creates it before migrating, with
   `IF NOT EXISTS`, rather than editing an applied migration.
+- **`whitelist: true` strips any property no class-validator decorator names, and
+  two request DTOs had none.** `PUT /admin/roles/:role/permissions` answered 400
+  for every call — `permissions` was stripped and the controller checks for a list
+  — and `PATCH /notifications/preferences` had nothing to write, because all three
+  fields of the pair and the list holding them were stripped too. `@ApiProperty` is
+  documentation and nothing else, so Swagger advertised fields the application
+  never received. `request-dto-validation.spec.ts` now checks every `@Body()` type
+  against the pipe's own rule.
+- **Locking a user invalidates their access token, and unlocking does not bring
+  it back.** `lockAccount` bumps `sessionsVersion`; the claim is compared on every
+  request, so the token that was refused while locked stays refused afterwards. The
+  account is reachable again, that session is not — which is the point of a lock,
+  and which the cache suite had asserted the opposite of.
+- **The idempotency key was a counter, and vitest resets it per file.** Every
+  file's second `POST /auth/register` sent the key the previous file's second
+  register sent, so the guard replayed the earlier file's stored response: a
+  registration reported as created when the row had never been written, and the
+  sign-in after it answered 401 for an address that did not exist. A uuid cannot
+  collide across files, which is the property the header is asking for.
+- **A verification token row needs the address it was minted for.** The test's
+  own `INSERT` omitted a NOT NULL column, so the account was never verified and
+  every later refresh was refused — a cascade that looked like an application
+  fault and was a fault in the fixture.
 - **The harness's fake agent was a function; supertest's is not.** Two bugs in one
   function, both caught by CI and neither by the test beside it.
   `Object.assign(wrapped, agent)` copied supertest's verb methods — which are

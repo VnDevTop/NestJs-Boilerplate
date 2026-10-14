@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -261,17 +262,47 @@ export async function registerAndLogin(
 ): Promise<string> {
   const password = 'E2e-password-1-Strong';
 
-  await http(app)
-    .post(`${API_ROOT}/auth/register`)
-    .send({ email, password, firstName: 'E2e', lastName: 'User' })
-    .expect(201);
+  await expectStatus(
+    http(app)
+      .post(`${API_ROOT}/auth/register`)
+      .send({ email, password, firstName: 'E2e', lastName: 'User' }),
+    201,
+    `register ${email}`,
+  );
 
-  const response = await http(app)
-    .post(`${API_ROOT}/auth/login`)
-    .send({ email, password })
-    .expect(200);
+  const response = await expectStatus(
+    http(app).post(`${API_ROOT}/auth/login`).send({ email, password }),
+    200,
+    `login ${email}`,
+  );
 
   return response.body.data.accessToken as string;
+}
+
+/**
+ * Asserts a status with the response body attached.
+ *
+ * supertest's `.expect(code)` throws a one-line error carrying the status and
+ * nothing else, and in a suite where a wrong status is the symptom — not the
+ * cause — that turns every failure into another round trip. This prints the body
+ * the application actually sent.
+ */
+export async function expectStatus(
+  pending: request.Test,
+  expected: number,
+  what: string,
+): Promise<request.Response> {
+  const response = await pending;
+
+  if (response.status !== expected) {
+    throw new Error(
+      `${what}: expected ${expected}, got ${response.status}\n` +
+        `  body: ${JSON.stringify(response.body).slice(0, 800)}\n` +
+        `  idempotency-key: ${response.request?.getHeader?.('Idempotency-Key') ?? 'none'}`,
+    );
+  }
+
+  return response;
 }
 
 /**
@@ -356,7 +387,21 @@ type RequestMethods = Record<Verb, (url: string) => request.Test>;
 /** The shape the specs use: the verbs, and nothing else. */
 export type HttpAgent = Record<Verb, (url: string) => request.Test>;
 
-let keyCounter = 0;
+/**
+ * A uuid per request, not a counter.
+ *
+ * A counter looked safe and was not: vitest gives each test file a fresh module
+ * registry, so the counter restarted at 1 in every file and every file's second
+ * `POST /auth/register` sent `e2e-2` — the same key, to the same path, as the
+ * previous file's. The idempotency guard then replayed the earlier file's stored
+ * response, so a registration was reported as created when the row had never been
+ * written and the follow-up sign-in answered 401 for an address that did not
+ * exist.
+ *
+ * A uuid cannot collide across files, processes or runs, which is exactly the
+ * property the header is asking for.
+ */
+const newIdempotencyKey = (): string => `e2e-${randomUUID()}`;
 
 /**
  * Wraps supertest's agent so every mutating request carries a key.
@@ -377,7 +422,7 @@ export function createHttp(agent: RequestMethods): HttpAgent {
 
     const withKey = SAFE_METHODS.has(method)
       ? built
-      : built.set('Idempotency-Key', `e2e-${++keyCounter}`);
+      : built.set('Idempotency-Key', newIdempotencyKey());
 
     // The body of a failed response, which supertest's `.expect()` throws away.
     // Without this a failing e2e run reports a status code and nothing else, and

@@ -9,6 +9,7 @@ import {
   boot,
   cleanState,
   e2eEnabled,
+  expectStatus,
   http,
   promoteToSuperAdmin,
   registerAndLogin,
@@ -108,12 +109,26 @@ describe.skipIf(!e2eEnabled())('cache invalidation (e2e)', () => {
     expect(response.body.message).toMatch(/invalid|unauthor/i);
   });
 
-  it('lets the account back in when it is unlocked', async () => {
+  it('lets the account back in when it is unlocked, with a new token', async () => {
     await app.get(UsersService).unlockAccount(userId, 'e2e test');
+
+    // A **new** token, because locking bumped `sessionsVersion` and the old access
+    // token carries the previous value in its claim. The strategy compares them,
+    // so the token that was refused above stays refused after the unlock: the
+    // account is reachable again, the *session* is not. Asserting 200 with the old
+    // token would have been asserting that a lock can be undone by unlocking,
+    // which is the opposite of what locking is for.
+    const fresh = await http(app)
+      .post(`${API_ROOT}/auth/login`)
+      .send({
+        email: 'cache-target@example.test',
+        password: 'E2e-password-1-Strong',
+      })
+      .expect(200);
 
     await http(app)
       .get(`${API_ROOT}/auth/me`)
-      .set('Authorization', `Bearer ${userToken}`)
+      .set('Authorization', `Bearer ${fresh.body.data.accessToken}`)
       .expect(200);
   });
 
@@ -165,11 +180,14 @@ describe.skipIf(!e2eEnabled())('cache invalidation (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
 
-    await http(app)
-      .put(`${API_ROOT}/admin/roles/user/permissions`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({ permissions: [Permission.UserRead] })
-      .expect(200);
+    await expectStatus(
+      http(app)
+        .put(`${API_ROOT}/admin/roles/user/permissions`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ permissions: [Permission.UserRead] }),
+      200,
+      'replace the user role grants',
+    );
 
     // Reads it back through the application rather than redis, so a passing
     // assertion cannot be explained by a key that was never written.
