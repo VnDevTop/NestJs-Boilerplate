@@ -1174,14 +1174,18 @@ Decisions worth carrying forward, because each is a refusal of something:
   migration creates it, because the database this repository is developed against
   already has it. The e2e setup creates it before migrating, with
   `IF NOT EXISTS`, rather than editing an applied migration.
-- **`Object.assign(wrapped, agent)` never called the wrapper.** supertest's verb
-  methods are closures over the agent, so copying them onto a wrapper object left
-  `http(app).post(...)` going straight to the original — and the `Idempotency-Key`
-  the harness attaches on the way was never sent. Every mutating route answered
-  400 with "This endpoint requires an Idempotency-Key header", in files that had
-  nothing to do with idempotency. `createHttp()` now replaces each verb rather than
-  decorating it, and `test/e2e/http.spec.ts` tests the wrapper against a stub
-  agent: no server, no container.
+- **The harness's fake agent was a function; supertest's is not.** Two bugs in one
+  function, both caught by CI and neither by the test beside it.
+  `Object.assign(wrapped, agent)` copied supertest's verb methods — which are
+  closures over the agent — onto a wrapper object, so `http(app).post(...)` went
+  straight to the original and the `Idempotency-Key` was never sent: every mutating
+  route answered 400, in files that had nothing to do with idempotency. The fix
+  called the agent itself, and `request(server)` is an **object**, not a function,
+  so every request in the suite became `TypeError: agent is not a function`.
+  `createHttp()` now builds through `agent[verb](url)`, and `http.spec.ts` uses a
+  fake that is an object with verb methods for the same reason: **a fake models
+  what the dependency is, not what the code wishes it were.** Both regressions were
+  reproduced against the fixed version to confirm the test fails on them.
 - **`node-redis` retries a failed connection forever, so `connect()` never
   rejects.** `RedisClientService` promises that a dead redis is a miss rather than
   a hang, and with the default reconnect strategy the first command awaited on the

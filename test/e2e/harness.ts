@@ -327,15 +327,14 @@ export async function mailTemplates(dataSource: DataSource): Promise<string[]> {
 
 /**
  * Every mutating route in this application requires an `Idempotency-Key`, and the
- * application refuses the request without one — which is correct behaviour, and a
- * fact a test has to respect the way a client does.
+ * application refuses the request without one — correct behaviour, and a fact a
+ * test has to respect the way a client does.
  *
  * The header is attached here rather than in each spec, because forgetting it in
- * one place produces a 400 that reads as a broken route, and a spec that copied
- * it into four call sites would drift the moment a fifth appeared. Each request
- * gets a distinct value, because reusing a key is the *other* thing idempotency
- * is for: a spec that retried on purpose would otherwise be replaying an answer
- * the guard is designed to hand back.
+ * one place produces a 400 that reads as a broken route. Each request gets a
+ * distinct value, because reusing a key is the *other* thing idempotency is for: a
+ * spec that retried on purpose would otherwise be replaying an answer the guard is
+ * designed to hand back.
  */
 const SAFE_METHODS = new Set(['get', 'head', 'options']);
 
@@ -349,37 +348,39 @@ const VERBS = [
   'options',
 ] as const;
 
-type RequestFor = (method: string, url: string) => request.Test;
+type Verb = (typeof VERBS)[number];
 
-type Agent = request.SuperTest<request.Test> & RequestFor;
+/** supertest's verb methods, which is the whole of what this harness uses. */
+type RequestMethods = Record<Verb, (url: string) => request.Test>;
+
+/** The shape the specs use: the verbs, and nothing else. */
+export type HttpAgent = Record<Verb, (url: string) => request.Test>;
 
 let keyCounter = 0;
 
 /**
- * Wraps supertest's agent.
+ * Wraps supertest's agent so every mutating request carries a key.
  *
- * The verb methods are replaced rather than decorated, and that is the whole
- * reason this function exists. supertest's `agent.post(...)` is a closure over
- * the agent, so copying it onto another object and calling *that* never reaches a
- * wrapper: the header was silently never sent, and every mutating route answered
- * 400 with "This endpoint requires an Idempotency-Key header". Replacing each verb
- * with one that builds the request and then adds the header puts the two steps in
- * a single place.
+ * **supertest's agent is an object, not a function.** `request(server)` returns
+ * something you call as `agent.post(url)`, `agent.get(url)` — calling the agent
+ * itself is `TypeError: agent is not a function`. That is what this function did
+ * for one CI run, because the unit test beside it used a *callable* fake and so
+ * agreed with it: the fake had modelled the bug away instead of catching it.
  *
- * `createHttp` takes the agent rather than the application so the whole thing is
- * testable without a server — see `http.spec.ts`, which is how the version that
- * silently sent nothing got caught.
+ * `createHttp` therefore takes the agent and returns a new object whose verbs
+ * delegate to it, which is what `http.spec.ts` now exercises with a fake that is
+ * an object for the same reason.
  */
-export function createHttp(agent: Agent): Agent {
-  const call = (method: string, url: string): request.Test => {
-    const built = (agent as unknown as RequestFor)(method, url);
+export function createHttp(agent: RequestMethods): HttpAgent {
+  const call = (method: Verb, url: string): request.Test => {
+    const built = agent[method](url);
 
     const withKey = SAFE_METHODS.has(method)
       ? built
       : built.set('Idempotency-Key', `e2e-${++keyCounter}`);
 
     // The body of a failed response, which supertest's `.expect()` throws away.
-    // Without this, a failing e2e run reports a status code and nothing else, and
+    // Without this a failing e2e run reports a status code and nothing else, and
     // the body is the only thing that says which validation rule fired.
     withKey.on('response', (res: { status: number; body: unknown }) => {
       if (res.status >= 400) {
@@ -392,17 +393,10 @@ export function createHttp(agent: Agent): Agent {
     return withKey;
   };
 
-  const wrapped = ((method: string, url: string) => call(method, url)) as Agent;
-
-  for (const verb of VERBS) {
-    (wrapped as unknown as Record<string, unknown>)[verb] = (url: string) =>
-      call(verb, url);
-  }
-
-  (wrapped as unknown as Record<string, unknown>).agent = agent;
-
-  return wrapped;
+  return Object.fromEntries(
+    VERBS.map((verb) => [verb, (url: string) => call(verb, url)]),
+  ) as HttpAgent;
 }
 
-export const http = (app: INestApplication): Agent =>
-  createHttp(request(app.getHttpServer()) as unknown as Agent);
+export const http = (app: INestApplication): HttpAgent =>
+  createHttp(request(app.getHttpServer()));

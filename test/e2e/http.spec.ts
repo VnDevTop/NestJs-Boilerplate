@@ -5,25 +5,34 @@ import { createHttp } from './harness.js';
 /**
  * The idempotency key the harness attaches.
  *
- * This exists because of a bug that cost a CI run and would have cost every run
- * after it. `http()` returned `Object.assign(wrapped, agent)` — supertest's verb
- * methods copied onto a wrapper object. Every mutating route in this application
- * requires an `Idempotency-Key`, so every `POST` in the e2e suite answered:
+ * This exists because of two bugs, both found by CI, both of which this file
+ * originally failed to catch because **the fake did not match the real thing**.
  *
- * ```text
- * 400 Bad Request — This endpoint requires an Idempotency-Key header.
- * ```
+ * The first was `Object.assign(wrapped, agent)`: supertest's verb methods are
+ * closures over the agent, so copying them onto a wrapper never reached the
+ * wrapper and the `Idempotency-Key` was never sent. Every mutating route answered
+ * 400 with "This endpoint requires an Idempotency-Key header", in files that had
+ * nothing to do with idempotency.
  *
- * The wrapper was bypassed rather than broken. supertest's `agent.post` is a
- * closure over the agent, so calling the copy went straight to the original and
- * the header was never set — the code read as though it did the right thing, and
- * no assertion noticed because the failure surfaced as a status code three files
- * away from the line that caused it.
+ * The second was assuming `request(server)` is callable. It is not — supertest
+ * returns an **object** with verb methods — so calling it was
+ * `TypeError: agent is not a function`. The fake here was a function, so the test
+ * agreed with the bug.
  *
- * Which is also why these are unit tests: the fix is in how the wrapper is
- * assembled, and that is testable with a stub agent and no server, no database and
- * no Docker.
+ * Which is the lesson both times: a fake models what the real dependency *is*, not
+ * what the code under test wishes it were. So `fakeAgent` below is an object with
+ * verb methods, exactly like the real one.
  */
+
+const VERBS = [
+  'get',
+  'post',
+  'put',
+  'patch',
+  'delete',
+  'head',
+  'options',
+] as const;
 
 /** Records what the wrapper asked for, without a socket anywhere. */
 function fakeAgent() {
@@ -33,30 +42,35 @@ function fakeAgent() {
     headers: Record<string, string>;
   }[] = [];
 
-  const agent = ((method: string, url: string) => {
-    const request = {
-      headers: {} as Record<string, string>,
-      set(name: string, value: string) {
-        request.headers[name] = value;
+  const verbs = Object.fromEntries(
+    VERBS.map((verb) => [
+      verb,
+      (url: string) => {
+        const request = {
+          headers: {} as Record<string, string>,
+          set(name: string, value: string) {
+            request.headers[name] = value;
+
+            return request;
+          },
+          // The registered listeners, so a test can fire the `response` event the
+          // way supertest does.
+          listeners: {} as Record<string, ((res: unknown) => void)[]>,
+          on(event: string, listener: (res: unknown) => void) {
+            (request.listeners[event] ??= []).push(listener);
+
+            return request;
+          },
+        };
+
+        calls.push({ method: verb, url, headers: request.headers });
 
         return request;
       },
-      // The registered listeners, so a test can fire the `response` event the
-      // way supertest does.
-      listeners: {} as Record<string, ((res: unknown) => void)[]>,
-      on(event: string, listener: (res: unknown) => void) {
-        (request.listeners[event] ??= []).push(listener);
+    ]),
+  ) as unknown as Parameters<typeof createHttp>[0];
 
-        return request;
-      },
-    };
-
-    calls.push({ method, url, headers: request.headers });
-
-    return request;
-  }) as never;
-
-  return { agent, calls };
+  return { agent: verbs, calls };
 }
 
 describe('the http helper', () => {
@@ -81,10 +95,10 @@ describe('the http helper', () => {
     expect(calls[0].headers['Idempotency-Key']).toBeUndefined();
   });
 
-  it('sends the key through the verb methods, not only the call signature', () => {
-    // The regression itself. Calling `http(app).post(...)` has to reach the same
-    // code path as `http(app)('post', ...)`, and copying supertest's methods onto
-    // the wrapper does not.
+  it('reaches supertest through a verb method, never by calling the agent', () => {
+    // The regression. `request(server)` is an object; calling it throws
+    // `TypeError: agent is not a function`, which is what every request in the
+    // suite reported until this was fixed.
     const { agent, calls } = fakeAgent();
     const http = createHttp(agent);
 
@@ -95,6 +109,15 @@ describe('the http helper', () => {
 
     for (const call of calls) {
       expect(call.headers['Idempotency-Key']).toBeDefined();
+    }
+  });
+
+  it('exposes every verb supertest does', () => {
+    const { agent } = fakeAgent();
+    const http = createHttp(agent);
+
+    for (const verb of VERBS) {
+      expect(typeof http[verb]).toBe('function');
     }
   });
 
