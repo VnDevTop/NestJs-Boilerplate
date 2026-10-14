@@ -145,19 +145,41 @@ export async function resetDatabase(
 export async function resetRedis(): Promise<void> {
   const { createClient } = await import('redis');
 
+  // **Every** database the application is configured with, not just the cache's.
+  //
+  // The throttle counters, the deduplication markers and the dead-letter list go
+  // to the queue's redis, and the queue has its own url on purpose. Clearing the
+  // cache database left those in place, so a rate limit counted across spec files:
+  // a later file hit a 429 for a request no client in it had made, and the
+  // failure reads as a broken route rather than as leftover state.
+  const urls = [
+    process.env.CACHE_URL,
+    process.env.REDIS_URL,
+    process.env.QUEUE_REDIS_URL,
+  ].filter((url): url is string => Boolean(url));
+
   const client = createClient({
-    url: process.env.CACHE_URL,
+    url: urls[0],
     socket: { connectTimeout: 5_000 },
   });
 
   await client.connect();
 
   try {
+    for (const url of urls.slice(1)) {
+      await client.select(Number(new URL(url).pathname.slice(1) || 0));
+    }
+
     for (const pattern of [
       `${process.env.CACHE_KEY_PREFIX}:*`,
       `${process.env.REDIS_KEY_PREFIX}:*`,
+      // Throttle counters, deduplication markers, idempotency claims and the
+      // dead-letter list. Each is named by its own module rather than derived
+      // here, because a prefix that is wrong clears nothing and still passes.
       'throttle:*',
-      'dead:*',
+      'dedupe:*',
+      'idem:*',
+      'dead-letter:*',
       // Session revocations are written straight to redis under their own key,
       // not through the cache, because there is no column to re-read them from.
       'token:revoked:*',

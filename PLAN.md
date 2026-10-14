@@ -1157,6 +1157,23 @@ Decisions worth carrying forward, because each is a refusal of something:
   two retention files, because a flipped comparison there deletes or locks out
   something real and produces no exception. A full run takes minutes, which is
   the wrong price for every commit.
+- **A stale `test/.e2e-env.json` switched the suite on while the setup was skipping
+  it.** That file is the only switch `e2eEnabled()` reads, and it is written by the
+  setup and gitignored, so a fresh clone and a CI runner have none. But a run
+  after an earlier one on the same machine left one behind, and
+  `E2E_NO_CONTAINERS=1 npm run test:e2e` then reported `5 failed (5)` files
+  alongside `30 skipped` tests. The setup now removes the file whenever it skips,
+  not only when it writes one, and a unit test pins that.
+- **`resetRedis` only cleared the cache's database.** The throttle counters, the
+  deduplication markers, the idempotency claims and the dead-letter list live in
+  the queue's redis, which is a different url on purpose. A rate limit therefore
+  carried across spec files, and a later file hit a 429 for a request nothing in
+  it had made — which reads as a broken route rather than as leftover state.
+- **The initial migration needs `uuid-ossp`, which a fresh container does not
+  enable.** `DEFAULT uuid_generate_v4()` is the extension's function and no
+  migration creates it, because the database this repository is developed against
+  already has it. The e2e setup creates it before migrating, with
+  `IF NOT EXISTS`, rather than editing an applied migration.
 - **`Object.assign(wrapped, agent)` never called the wrapper.** supertest's verb
   methods are closures over the agent, so copying them onto a wrapper object left
   `http(app).post(...)` going straight to the original — and the `Idempotency-Key`

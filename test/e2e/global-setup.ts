@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -187,6 +187,16 @@ export async function setup(): Promise<void> {
   }
 
   if (plan.action === 'skip') {
+    // The file is removed as well as not written, and that is the point.
+    //
+    // `e2eEnabled()` is a check for this file, so a stale one left by an earlier
+    // run would switch the suite back on while the setup is explicitly skipping
+    // it: the specs would try to reach a database nobody started, every file
+    // would fail, and the output would say the tests were skipped while also
+    // saying the files failed. The file is the switch, so removing it is the only
+    // way "skip" means skip.
+    rmSync(ENV_FILE, { force: true });
+
     console.warn(
       plan.reason === 'disabled'
         ? '[e2e] E2E_NO_CONTAINERS=1, every spec is skipped.'
@@ -299,6 +309,18 @@ async function migrate(databaseUrl: string): Promise<void> {
 
   await dataSource.initialize();
   try {
+    // The initial migration declares its primary keys with
+    // `DEFAULT uuid_generate_v4()`, which is the `uuid-ossp` extension — and no
+    // migration creates it, because the database this repository is developed
+    // against already has it. A fresh container does not: the official image
+    // ships the extension's files without enabling it.
+    //
+    // Created here rather than in a migration because that dependency predates
+    // this suite, and a migration that already ran on somebody's database cannot
+    // be edited without a checksum story nobody wants. `IF NOT EXISTS` means it
+    // is a no-op everywhere it is already present.
+    await dataSource.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
+
     await dataSource.runMigrations({ transaction: 'all' });
   } finally {
     await dataSource.destroy();

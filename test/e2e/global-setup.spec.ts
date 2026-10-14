@@ -1,10 +1,16 @@
-import { readdirSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { loadMigrationClasses, planInfra } from './global-setup.js';
+import { ENV_FILE, loadMigrationClasses, planInfra } from './global-setup.js';
 
 /**
  * The migration list the e2e suite migrates its container with.
@@ -114,6 +120,62 @@ describe('the infrastructure decision', () => {
     expect(guidance).toContain('docker compose up -d');
     expect(guidance).toContain('E2E_DATABASE_URL');
     expect(guidance).toContain('E2E_NO_CONTAINERS');
+  });
+});
+
+describe('the file that switches the suite on', () => {
+  /**
+   * `test/.e2e-env.json` is the whole switch: `e2eEnabled()` is a check for it and
+   * nothing else. It is written by the setup and gitignored, so it does not exist
+   * on a fresh clone or on a CI runner, and every spec skips until a container
+   * exists.
+   *
+   * Which makes a **stale** one dangerous. It was found the hard way: a run with
+   * `E2E_NO_CONTAINERS=1` on a machine that had run the suite earlier reported
+   *
+   * ```text
+   * [e2e] E2E_NO_CONTAINERS=1, every spec is skipped.
+   *  Test Files  5 failed (5)
+   *       Tests  30 skipped (30)
+   * ```
+   *
+   * — skipped tests inside failing files, because the specs still believed the
+   * suite was enabled and reached for a database nobody had started. So the setup
+   * removes the file whenever it decides to skip, not only when it decides to
+   * write one.
+   */
+  it('is removed when the setup skips, so a stale one cannot switch the suite back on', async () => {
+    const { setup } = await import('./global-setup.js');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const previousFlag = process.env['E2E_NO_CONTAINERS'];
+
+    // Written first, exactly as a previous run would have left it.
+    mkdirSync(dirname(ENV_FILE), { recursive: true });
+    writeFileSync(
+      ENV_FILE,
+      JSON.stringify({ DATABASE_URL: 'postgresql://stale' }),
+    );
+
+    process.env['E2E_NO_CONTAINERS'] = '1';
+
+    try {
+      await setup();
+
+      expect(existsSync(ENV_FILE)).toBe(false);
+    } finally {
+      // Clean up after itself whatever happens. A file left behind here would
+      // switch the e2e suite on for the next run on this machine, which is the
+      // exact failure this test exists to prevent, caused by the test.
+      rmSync(ENV_FILE, { force: true });
+
+      if (previousFlag === undefined) {
+        delete process.env['E2E_NO_CONTAINERS'];
+      } else {
+        process.env['E2E_NO_CONTAINERS'] = previousFlag;
+      }
+      warn.mockRestore();
+    }
   });
 });
 
