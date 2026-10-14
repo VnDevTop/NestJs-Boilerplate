@@ -1,13 +1,21 @@
-import type { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
 import type { RedisClientType } from 'redis';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { RedisConfig } from '../../configs/redis.config.js';
 import {
+  REDIS_CLIENT_FACTORY,
   RedisClientService,
   type RedisClientFactory,
 } from './redis-client.service.js';
+
+/**
+ * The metadata keys Nest writes `@Inject` and `@Optional` into, named rather
+ * than repeated inline.
+ */
+const SELF_DECLARED_DEPS_METADATA = 'self:paramtypes';
+const OPTIONAL_DEPS_METADATA = 'optional:paramtypes';
 
 const config: RedisConfig = {
   url: 'redis://localhost:6379/1',
@@ -54,6 +62,51 @@ function build(clientFactory: RedisClientFactory = () => fakeClient()): {
 
   return { service: new RedisClientService(configService(), factory), factory };
 }
+
+describe('how Nest constructs RedisClientService', () => {
+  /**
+   * The class has to carry `@Injectable()`.
+   *
+   * Without it Nest emits no `design:paramtypes`, and a class with no decorator is
+   * constructed with **no arguments at all** — so `configService` was `undefined`
+   * and the first redis command died with "Cannot read properties of undefined
+   * (reading 'getOrThrow')". Every test in this file passes either way, because
+   * each one constructs the service by hand and supplies its own dependencies.
+   *
+   * This reads the emitted metadata rather than the container, so it names the
+   * actual cause instead of its symptom.
+   */
+  it('declares its dependencies for the injector', () => {
+    const parameters = Reflect.getMetadata(
+      'design:paramtypes',
+      RedisClientService,
+    ) as unknown[] | undefined;
+
+    expect(parameters?.[0]).toBe(ConfigService);
+  });
+
+  it('takes the client factory as an optional injected value, not as a type', () => {
+    // A factory is a function; `design:paramtypes` for one is `Function`, which is
+    // not a provider anywhere in the container. `@Inject` names the token and
+    // `@Optional` keeps it optional.
+    const injected = Reflect.getMetadata(
+      SELF_DECLARED_DEPS_METADATA,
+      RedisClientService,
+    ) as { index: number; param: unknown }[] | undefined;
+
+    // `@Inject` records the token itself, not an object holding it.
+    const factoryToken = injected?.find((dep) => dep.index === 1)?.param;
+
+    expect(factoryToken).toBe(REDIS_CLIENT_FACTORY);
+
+    const optional = Reflect.getMetadata(
+      OPTIONAL_DEPS_METADATA,
+      RedisClientService,
+    ) as number[] | undefined;
+
+    expect(optional).toContain(1);
+  });
+});
 
 describe('RedisClientService connection', () => {
   it('does not connect at construction, so an unreachable redis does not block boot', () => {

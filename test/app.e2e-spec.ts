@@ -29,7 +29,11 @@ describe.skipIf(!e2eEnabled())('application (e2e)', () => {
   it('reports health on the versioned prefix', async () => {
     const response = await http(app).get(`${API_ROOT}/health`).expect(200);
 
-    expect(response.body.status).toMatch(/ok|degraded/);
+    // `data`, because the response interceptor wraps every success body. Reading
+    // the bare payload would pass only if the wrapper were gone — which is the
+    // opposite of what this suite is checking.
+    expect(response.body.data.status).toMatch(/ok|degraded/);
+    expect(response.body.success).toBe(true);
   });
 
   it('refuses an unknown path with a 404 rather than hanging', async () => {

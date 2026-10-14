@@ -134,3 +134,23 @@ evaluates every file it re-exports, which is how a cycle appears out of a line
 that reads like nothing. `JOB_QUEUE` lives in `queue.tokens.ts` for the same
 reason: a token is a string, and reading one should not evaluate the queue graph
 to get it.
+
+## A module imports what it injects
+
+`AppModule` importing a module makes that module's providers available to
+`AppModule`. It does not make them available to anything else, and neither does
+one module importing another:
+
+- a provider has to be in the module's own `providers`, or come from a module in
+  its `imports` that **exports** it;
+- `ConfigModule.forFeature(x)` registers `CONFIGURATION(x)` for the module that
+  calls it, so every module registers the configuration it injects;
+- `ThrottlerModule.forRootAsync` resolves its `inject` list in its own context,
+  so the module supplying the storage goes in that call's `imports`;
+- an interface cannot be an injection token, and neither can anything imported
+  with `import type` — the compiler erases it and Nest receives `Object`.
+
+Each of those was a boot-time failure that every unit test passed straight
+through, because a unit test builds the service and never goes near the injector.
+`src/app.module.spec.ts` builds the whole graph with a stubbed data source, and
+is the reason the last six of them cannot reach a deploy again.

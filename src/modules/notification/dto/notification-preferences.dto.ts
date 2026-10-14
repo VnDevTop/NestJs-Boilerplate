@@ -1,4 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  ValidateNested,
+} from 'class-validator';
 
 import type { NotificationChannelName } from '../../../configs/notification.config.js';
 import { NOTIFICATION_EVENT_KEYS } from '../notification.events.js';
@@ -53,13 +61,22 @@ export class NotificationPreferencesDto {
   preferences!: NotificationPreferenceDto[];
 }
 
-/** One pair to change. */
+/**
+ * One pair to change.
+ *
+ * The validators are not decoration. The global pipe runs with `whitelist: true`,
+ * which strips any property no class-validator decorator names, so a DTO
+ * documented only with `@ApiProperty` arrives at the controller as `undefined` —
+ * every field of this one did, and `PATCH /notifications/preferences` had nothing
+ * to write. Found by the end-to-end suite.
+ */
 export class UpdateNotificationPreferenceDto {
   @ApiProperty({
     enum: NOTIFICATION_EVENT_KEYS,
     example: 'user.registered',
     description: 'The event to change.',
   })
+  @IsIn(NOTIFICATION_EVENT_KEYS)
   event!: string;
 
   @ApiProperty({
@@ -67,6 +84,7 @@ export class UpdateNotificationPreferenceDto {
     example: 'slack',
     description: 'The channel to change it on.',
   })
+  @IsIn(['console', 'email', 'telegram', 'slack', 'discord'])
   channel!: NotificationChannelName;
 
   @ApiProperty({
@@ -74,6 +92,7 @@ export class UpdateNotificationPreferenceDto {
     description:
       'False mutes the pair. True clears the override, because true is the default anyway.',
   })
+  @IsBoolean()
   enabled!: boolean;
 }
 
@@ -88,5 +107,11 @@ export class UpdateNotificationPreferencesDto {
     description:
       'The pairs to change. Pairs not listed are left as they are, so a client built before an event existed does not clear it on every save.',
   })
+  @IsArray()
+  // Bounded because each entry is a write, and an unbounded list is a way to ask
+  // the server to do an unbounded number of them in one request.
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => UpdateNotificationPreferenceDto)
   preferences!: UpdateNotificationPreferenceDto[];
 }

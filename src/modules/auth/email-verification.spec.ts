@@ -376,9 +376,18 @@ describe('AuthService.register verification link', () => {
     // chain to settle rather than relying on registration awaiting it.
     await new Promise((resolve) => setImmediate(resolve));
 
-    const [, job] = jobQueue.enqueue.mock.calls[0];
+    // Located by template rather than by position. Registration queues the welcome
+    // message as well, so the two jobs are independent and their order is an
+    // implementation detail — but only one of them carries a verification link,
+    // which is what this test is about.
+    const verification = jobQueue.enqueue.mock.calls.find(
+      ([, job]) => job.payload.template === 'verify-email',
+    );
+
+    expect(verification).toBeDefined();
+
+    const [, job] = verification!;
     expect(job.name).toBe('mail.send');
-    expect(job.payload.template).toBe('verify-email');
     expect(job.payload.data.verificationUrl).toContain('/auth/verify-email');
   });
 

@@ -75,7 +75,10 @@ describe.skipIf(!e2eEnabled())('empty optional dependencies (e2e)', () => {
   it('boots and serves health', async () => {
     const response = await http(app).get(`${API_ROOT}/health`).expect(200);
 
-    expect(response.body).toMatchObject({ status: expect.any(String) });
+    // `data`, because the response interceptor wraps every success body. Reading
+    // the bare payload would assert against an application that does not exist.
+    expect(response.body.data).toMatchObject({ status: expect.any(String) });
+    expect(response.body.success).toBe(true);
   });
 
   it('falls back to the memory transport instead of failing to send', async () => {

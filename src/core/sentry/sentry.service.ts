@@ -70,7 +70,22 @@ export class SentryService {
 
   private readonly sentry: SentryLike | null;
 
-  constructor(dsn: string | undefined = process.env['SENTRY_DSN']) {
+  /**
+   * No constructor parameters, on purpose.
+   *
+   * A parameter typed `string | undefined` is a dependency-injection token as far
+   * as Nest is concerned: it reads `design:paramtypes`, finds no class, and looks
+   * the *value* of the parameter up in the container. With a default of
+   * `process.env['SENTRY_DSN']` that means a deployment which sets a DSN fails to
+   * boot with "Nest can't resolve dependencies of the SentryService (?)" — while
+   * every unit test passes, because each one constructs the service by hand and
+   * never goes near the injector.
+   *
+   * The DSN is read from the environment here instead, and `@Optional()` exists on
+   * the class only for the modules that override it.
+   */
+  constructor() {
+    const dsn = process.env['SENTRY_DSN'];
     // Present in the graph but not installed: `enabled` is false and everything
     // below is a no-op. Separated from "not configured" below because the two
     // mean different things to whoever is looking.

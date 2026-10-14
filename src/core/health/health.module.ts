@@ -12,8 +12,9 @@ import {
 } from '@nestjs/terminus';
 
 import { Public } from '../../common/decorators/index.js';
-import { MailModule } from '../../modules/mail/index.js';
-import { QueueModule } from '../../modules/queue/index.js';
+import { MailModule } from '../../modules/mail/mail.module.js';
+import { QueueModule } from '../../modules/queue/queue.module.js';
+import { MetricsModule } from '../metrics/index.js';
 import { MaintenanceModule } from '../../modules/maintenance/maintenance.module.js';
 import { CacheHealthIndicator } from './cache.health.js';
 import { MaintenanceHealthIndicator } from './maintenance.health.js';
@@ -78,10 +79,22 @@ export class HealthController {
 
 @Module({
   // `QueueModule` for the dispatcher, the dead-letter list and the redis client
-  // the backlog is read through; `MailModule` for the transport. Both are one
-  // direction only — neither imports the health module — so nothing here can close
-  // a cycle through the indicator.
-  imports: [TerminusModule, MailModule, QueueModule, MaintenanceModule],
+  // the backlog is read through; `MailModule` for the transport; `MetricsModule`
+  // for the counters the indicators record into. All three are one direction only
+  // — none of them imports the health module — so nothing here can close a cycle
+  // through the indicator.
+  //
+  // Each is imported for a provider this module *injects*. `AppModule` importing
+  // the same modules makes them available to `AppModule`, which is a different
+  // question from whether they are available here, and importing one at the root
+  // is what made every indicator a boot-time failure until each import was added.
+  imports: [
+    TerminusModule,
+    MailModule,
+    QueueModule,
+    MaintenanceModule,
+    MetricsModule,
+  ],
   controllers: [HealthController],
   providers: [
     CacheHealthIndicator,

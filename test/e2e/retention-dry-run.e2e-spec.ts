@@ -128,7 +128,7 @@ describe.skipIf(!e2eEnabled())('retention dry run (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
 
-    expect(response.body).toMatchObject({ dryRun: true, totalDeleted: 1 });
+    expect(response.body.data).toMatchObject({ dryRun: true, totalDeleted: 1 });
 
     // The dry run is an operational event, and a rehearsal that left no trace
     // could not be told apart from one that never happened.
@@ -156,5 +156,5 @@ async function login(app: INestApplication): Promise<string> {
     })
     .expect(200);
 
-  return response.body.accessToken as string;
+  return response.body.data.accessToken as string;
 }

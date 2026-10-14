@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -187,6 +187,16 @@ export async function setup(): Promise<void> {
   }
 
   if (plan.action === 'skip') {
+    // The file is removed as well as not written, and that is the point.
+    //
+    // `e2eEnabled()` is a check for this file, so a stale one left by an earlier
+    // run would switch the suite back on while the setup is explicitly skipping
+    // it: the specs would try to reach a database nobody started, every file
+    // would fail, and the output would say the tests were skipped while also
+    // saying the files failed. The file is the switch, so removing it is the only
+    // way "skip" means skip.
+    rmSync(ENV_FILE, { force: true });
+
     console.warn(
       plan.reason === 'disabled'
         ? '[e2e] E2E_NO_CONTAINERS=1, every spec is skipped.'
@@ -236,12 +246,21 @@ async function startPostgres(): Promise<string> {
       POSTGRES_PASSWORD: 'e2e',
     })
     .withExposedPorts(5432)
-    // `pg_isready` alone answers before the database accepts connections from
-    // anything but the socket, which is the classic reason a container is
-    // "ready" and the first migration still fails.
+    // Waiting for "database system is ready to accept connections" looks right
+    // and is not: on a fresh volume the entrypoint runs a throwaway server
+    // during initdb which logs exactly that line, then shuts it down again. The
+    // wait resolves on that temporary server, `start()` returns, and the first
+    // real connection is reset while the final server is still coming up —
+    // which surfaces as a bare `read ECONNRESET` from `migrate` with nothing in
+    // the suite output about containers at all.
+    //
+    // `PostgreSQL init process complete; ready for start up` is printed only
+    // once initdb has finished and the entrypoint is about to start the real
+    // server. `migrate` then retries the connection regardless, because the
+    // log line lands slightly before postgres binds its port.
     .withWaitStrategy(
       Wait.forLogMessage(
-        /database system is ready to accept connections.*/g,
+        /PostgreSQL init process complete; ready for start up/i,
       ).withStartupTimeout(120_000),
     )
     .start();
@@ -297,8 +316,20 @@ async function migrate(databaseUrl: string): Promise<void> {
     extra: { ssl: false },
   });
 
-  await dataSource.initialize();
+  await connectWithRetry(dataSource);
   try {
+    // The initial migration declares its primary keys with
+    // `DEFAULT uuid_generate_v4()`, which is the `uuid-ossp` extension — and no
+    // migration creates it, because the database this repository is developed
+    // against already has it. A fresh container does not: the official image
+    // ships the extension's files without enabling it.
+    //
+    // Created here rather than in a migration because that dependency predates
+    // this suite, and a migration that already ran on somebody's database cannot
+    // be edited without a checksum story nobody wants. `IF NOT EXISTS` means it
+    // is a no-op everywhere it is already present.
+    await dataSource.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
+
     await dataSource.runMigrations({ transaction: 'all' });
   } finally {
     await dataSource.destroy();
@@ -307,6 +338,64 @@ async function migrate(databaseUrl: string): Promise<void> {
 
 /** A migration class, as TypeORM recognises one. */
 type MigrationClass = new () => { up: unknown; down: unknown };
+
+/**
+ * Connects, retrying while the server refuses.
+ *
+ * Postgres accepting the tcp connection is not the same as accepting a query:
+ * the entrypoint starts the real server after the log line the wait strategy
+ * watches for, so there is a short window where a connection is established and
+ * then dropped. A single `initialize()` either lands in that window or does not,
+ * which is why this read as an intermittent failure.
+ *
+ * Only connection failures are retried, and the deadline is long enough to cover
+ * a cold image on a loaded machine but short enough that a genuinely wrong url
+ * still fails the run rather than appearing to hang.
+ */
+async function connectWithRetry(dataSource: DataSource): Promise<void> {
+  const deadline = Date.now() + 60_000;
+
+  for (;;) {
+    try {
+      await dataSource.initialize();
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline || !isConnectionFailure(error)) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
+/**
+ * Whether an error is the connection being refused or dropped, rather than
+ * something wrong with the configuration.
+ *
+ * `ECONNRESET` is the one this suite actually hit, and it is also the one a
+ * proxy in front of the database produces for a bad password — so the message is
+ * checked too, which distinguishes "server closed the socket" from "server
+ * rejected the credentials". Everything else, a missing extension or a failed
+ * migration, fails immediately.
+ */
+function isConnectionFailure(error: unknown): boolean {
+  const code = (error as { code?: string } | undefined)?.code;
+
+  if (
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT'
+  ) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+
+  return /econnreset|econnrefused|etimedout|connection terminated|socket hang up/i.test(
+    message,
+  );
+}
 
 /**
  * Every migration class under `src/database/migrations`.

@@ -111,6 +111,11 @@ export class AuthController {
   @RateLimit('login')
   @Public()
   @Post('login')
+  // 200, not the 201 a POST gets by default. A sign-in creates nothing; it
+  // exchanges a credential for a token, and a client that branches on the status
+  // reads 201 as "something was created". `@ApiOkResponse` already said 200 above
+  // it, so the documentation and the wire disagreed.
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login with email and password' })
   @ApiExtraModels(AuthTokenResponseDto, TwoFactorChallengeResponseDto)
   @ApiOkResponse({
@@ -143,6 +148,7 @@ export class AuthController {
   @RateLimit('login')
   @Public()
   @Post('2fa/login')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Complete a login that requires a second factor',
     description:
@@ -326,6 +332,9 @@ export class AuthController {
   // indefinitely.
   @RequireVerifiedEmail()
   @Post('refresh-token')
+  // 200 for the same reason as login: a rotation replaces one token with another
+  // and creates nothing a client can address afterwards.
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Exchange a refresh token for a new token pair',
     description:

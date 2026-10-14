@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { IsArray, IsString } from 'class-validator';
 
 import { Role } from '../../../common/enums/index.js';
 
@@ -17,6 +18,13 @@ export class SetRolePermissionsDto {
     description:
       'The permissions the role holds after this call. An empty list removes every grant.',
   })
+  // `whitelist: true` strips any property a class-validator decorator does not
+  // name, and `@ApiProperty` is documentation rather than validation — so with
+  // this line undecorated the array arrived empty and the route answered 400 for
+  // every call. Found by the end-to-end suite, which is the only layer that runs
+  // the real validation pipe over a real body.
+  @IsArray()
+  @IsString({ each: true })
   permissions!: string[];
 }
 

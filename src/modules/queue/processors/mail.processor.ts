@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import { MailService, type SendMailResult } from '../../mail/index.js';
-import type { MailLogWriter } from '../../mail/mail-log.service.js';
+import { MailLogService } from '../../mail/mail-log.service.js';
 import type {
   TemplateDataByName,
   TemplateName,
@@ -58,10 +58,18 @@ export class MailProcessor {
 
   constructor(
     private readonly mailService: MailService,
-    // Optional in the constructor rather than required, because this processor is
-    // built by the queue module and a test that builds it with just a mail service
-    // should not have to know about the log.
-    private readonly mailLog?: MailLogWriter,
+    // `@Optional()` rather than a plain optional parameter. Nest reads
+    // `design:paramtypes`, and an interface is erased by the compiler, so the
+    // parameter's type is `Object` — which the injector then tries to resolve as a
+    // provider, and the application cannot boot. The concrete class is named for
+    // exactly that reason: an interface cannot be a token.
+    //
+    // Optional in the first place because this processor is built by the queue
+    // module, and a test that builds it with just a mail service should not have
+    // to know about the log.
+    @Optional()
+    @Inject(MailLogService)
+    private readonly mailLog?: MailLogService,
   ) {}
 
   /** True for the job name this processor handles, so routing stays in one place. */

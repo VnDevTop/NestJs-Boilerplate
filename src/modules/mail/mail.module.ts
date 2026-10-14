@@ -44,6 +44,13 @@ import type { MailTransport } from './transports/transport.interface.js';
     MailService,
     MailLogService,
   ],
-  exports: [MailService, MailLogService],
+  /**
+   * `MAIL_TRANSPORT` is exported because the health indicator asks the transport
+   * itself which provider is installed, not only what the service recorded.
+   * Naming it here is what lets `HealthModule` import `MailModule` and get it: a
+   * module that injects a provider needs the module that provides it in its
+   * imports, and a token that is not exported is invisible there.
+   */
+  exports: [MailService, MailLogService, MAIL_TRANSPORT],
 })
 export class MailModule {}

@@ -8,6 +8,7 @@ import {
   boot,
   cleanState,
   e2eEnabled,
+  expectStatus,
   http,
   mailTemplates,
   waitFor,
@@ -46,19 +47,20 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
   });
 
   it('registers a user, returns a token pair and mails two messages', async () => {
-    const response = await http(app)
-      .post(`${API_ROOT}/auth/register`)
-      .send({
+    const response = await expectStatus(
+      http(app).post(`${API_ROOT}/auth/register`).send({
         email: EMAIL,
         password: PASSWORD,
         firstName: 'Auth',
         lastName: 'Flow',
-      })
-      .expect(201);
+      }),
+      201,
+      'register',
+    );
 
     // Registration signs the user in. It does not verify them, which is the next
     // test — a client that assumed both happened at once would be a real bug.
-    expect(response.body).toMatchObject({
+    expect(response.body.data).toMatchObject({
       accessToken: expect.any(String),
       refreshToken: expect.any(String),
       tokenType: 'Bearer',
@@ -75,15 +77,16 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
   });
 
   it('refuses a password the policy rejects', async () => {
-    await http(app)
-      .post(`${API_ROOT}/auth/register`)
-      .send({
+    await expectStatus(
+      http(app).post(`${API_ROOT}/auth/register`).send({
         email: 'weak@example.test',
         password: 'password',
         firstName: 'Weak',
         lastName: 'Password',
-      })
-      .expect(400);
+      }),
+      400,
+      'register with a password the policy rejects',
+    );
 
     const [row] = await dataSource.query<[{ count: string }]>(
       'SELECT count(*)::text AS count FROM users WHERE email = $1',
@@ -122,10 +125,14 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
       [EMAIL],
     );
 
+    // `email` is on the row because a token minted for one address must not
+    // confirm another: `verify()` compares the denormalised address against the
+    // user before marking it verified. Leaving it out is a NOT NULL violation,
+    // and the cascade is a refresh refused for an account nothing ever verified.
     await dataSource.query(
-      `INSERT INTO email_verification_tokens (id, "userId", "tokenHash", "expiresAt")
-       VALUES (gen_random_uuid(), $1, $2, now() + interval '1 hour')`,
-      [user.id, hashToken(token)],
+      `INSERT INTO email_verification_tokens (id, "userId", "tokenHash", email, "expiresAt")
+       VALUES (gen_random_uuid(), $1, $2, $3, now() + interval '1 hour')`,
+      [user.id, hashToken(token), EMAIL],
     );
 
     await http(app)
@@ -149,12 +156,15 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
   });
 
   it('logs in and returns the documented pair', async () => {
-    const response = await http(app)
-      .post(`${API_ROOT}/auth/login`)
-      .send({ email: EMAIL, password: PASSWORD })
-      .expect(200);
+    const response = await expectStatus(
+      http(app)
+        .post(`${API_ROOT}/auth/login`)
+        .send({ email: EMAIL, password: PASSWORD }),
+      200,
+      'login',
+    );
 
-    expect(response.body).toMatchObject({
+    expect(response.body.data).toMatchObject({
       accessToken: expect.any(String),
       refreshToken: expect.any(String),
     });
@@ -168,10 +178,10 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
 
     const response = await http(app)
       .get(`${API_ROOT}/auth/me`)
-      .set('Authorization', `Bearer ${body.accessToken}`)
+      .set('Authorization', `Bearer ${body.data.accessToken}`)
       .expect(200);
 
-    expect(response.body.email).toBe(EMAIL);
+    expect(response.body.data.email).toBe(EMAIL);
   });
 
   it('rotates the refresh token and refuses the one it replaced', async () => {
@@ -180,19 +190,35 @@ describe.skipIf(!e2eEnabled())('register, login and refresh (e2e)', () => {
       .send({ email: EMAIL, password: PASSWORD })
       .expect(200);
 
-    const rotated = await http(app)
-      .post(`${API_ROOT}/auth/refresh-token`)
-      .send({ refreshToken: first.body.refreshToken })
-      .expect(200);
+    // The route is authenticated: it is not `@Public()`, so it carries the access
+    // token login just handed back. Omitting the header fails at `JwtAuthGuard`
+    // with a plain 401, which is indistinguishable from a token the service
+    // rejected — and the replay below would then pass for the wrong reason.
+    const rotated = await expectStatus(
+      http(app)
+        .post(`${API_ROOT}/auth/refresh-token`)
+        .set('Authorization', `Bearer ${first.body.data.accessToken}`)
+        .send({ refreshToken: first.body.data.refreshToken }),
+      200,
+      'refresh',
+    );
 
-    expect(rotated.body.refreshToken).not.toBe(first.body.refreshToken);
+    expect(rotated.body.data.refreshToken).not.toBe(
+      first.body.data.refreshToken,
+    );
 
     // Replaying the superseded token is the reuse signal, checked here over http
     // against the real table, rather than against a mock that would answer the
     // same either way.
+    //
+    // Sent with the *rotated* access token, because a successful rotation marks
+    // the previous session revoked. Reusing the old one would be refused by the
+    // guard before the refresh token was ever read, so the assertion would pass
+    // on a rotation that had not actually detected anything.
     await http(app)
       .post(`${API_ROOT}/auth/refresh-token`)
-      .send({ refreshToken: first.body.refreshToken })
+      .set('Authorization', `Bearer ${rotated.body.data.accessToken}`)
+      .send({ refreshToken: first.body.data.refreshToken })
       .expect(401);
   });
 

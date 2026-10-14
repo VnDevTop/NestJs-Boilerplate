@@ -96,6 +96,21 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
      */
     QueueModule,
     ThrottlerModule.forRootAsync({
+      /**
+       * `QueueModule` again, and deliberately.
+       *
+       * The storage provider lives there, and a dynamic module resolves its
+       * `inject` list in *its own* context — not in the context of the file that
+       * registered it. Importing `QueueModule` at the root of `AppModule` makes
+       * the provider available to `AppModule`, which is a different question from
+       * whether it is available to `ThrottlerModule`.
+       *
+       * Omitting it reads fine: the type is a `string`, so `inject` type-checks,
+       * and every unit test passes because none of them builds the application.
+       * It fails at boot with "Nest can't resolve dependencies of the
+       * THROTTLER:MODULE_OPTIONS (?)".
+       */
+      imports: [QueueModule],
       inject: [THROTTLER_STORAGE],
       useFactory: throttlerModuleConfig,
     }),

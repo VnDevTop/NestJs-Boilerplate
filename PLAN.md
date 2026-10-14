@@ -1101,6 +1101,10 @@ test: cover the auth service, two factor and every template
 fix: namespace the keys a lua script is given
 fix: say what to do when there is no container runtime
 fix: break the queue and retention module cycle
+fix: make the application boot
+fix: share one bootstrap between the binary and the e2e harness
+fix: make the redis client injectable, and send an idempotency key in e2e
+test: build the whole module graph in the unit suite
 docs: document the testing layers and the new variables
 docs: mark phase 21 testing depth as done
 ```
@@ -1153,6 +1157,101 @@ Decisions worth carrying forward, because each is a refusal of something:
   two retention files, because a flipped comparison there deletes or locks out
   something real and produces no exception. A full run takes minutes, which is
   the wrong price for every commit.
+- **A stale `test/.e2e-env.json` switched the suite on while the setup was skipping
+  it.** That file is the only switch `e2eEnabled()` reads, and it is written by the
+  setup and gitignored, so a fresh clone and a CI runner have none. But a run
+  after an earlier one on the same machine left one behind, and
+  `E2E_NO_CONTAINERS=1 npm run test:e2e` then reported `5 failed (5)` files
+  alongside `30 skipped` tests. The setup now removes the file whenever it skips,
+  not only when it writes one, and a unit test pins that.
+- **`resetRedis` only cleared the cache's database.** The throttle counters, the
+  deduplication markers, the idempotency claims and the dead-letter list live in
+  the queue's redis, which is a different url on purpose. A rate limit therefore
+  carried across spec files, and a later file hit a 429 for a request nothing in
+  it had made — which reads as a broken route rather than as leftover state.
+- **The initial migration needs `uuid-ossp`, which a fresh container does not
+  enable.** `DEFAULT uuid_generate_v4()` is the extension's function and no
+  migration creates it, because the database this repository is developed against
+  already has it. The e2e setup creates it before migrating, with
+  `IF NOT EXISTS`, rather than editing an applied migration.
+- **`whitelist: true` strips any property no class-validator decorator names, and
+  two request DTOs had none.** `PUT /admin/roles/:role/permissions` answered 400
+  for every call — `permissions` was stripped and the controller checks for a list
+  — and `PATCH /notifications/preferences` had nothing to write, because all three
+  fields of the pair and the list holding them were stripped too. `@ApiProperty` is
+  documentation and nothing else, so Swagger advertised fields the application
+  never received. `request-dto-validation.spec.ts` now checks every `@Body()` type
+  against the pipe's own rule.
+- **Locking a user invalidates their access token, and unlocking does not bring
+  it back.** `lockAccount` bumps `sessionsVersion`; the claim is compared on every
+  request, so the token that was refused while locked stays refused afterwards. The
+  account is reachable again, that session is not — which is the point of a lock,
+  and which the cache suite had asserted the opposite of.
+- **The idempotency key was a counter, and vitest resets it per file.** Every
+  file's second `POST /auth/register` sent the key the previous file's second
+  register sent, so the guard replayed the earlier file's stored response: a
+  registration reported as created when the row had never been written, and the
+  sign-in after it answered 401 for an address that did not exist. A uuid cannot
+  collide across files, which is the property the header is asking for.
+- **A verification token row needs the address it was minted for.** The test's
+  own `INSERT` omitted a NOT NULL column, so the account was never verified and
+  every later refresh was refused — a cascade that looked like an application
+  fault and was a fault in the fixture.
+- **The harness's fake agent was a function; supertest's is not.** Two bugs in one
+  function, both caught by CI and neither by the test beside it.
+  `Object.assign(wrapped, agent)` copied supertest's verb methods — which are
+  closures over the agent — onto a wrapper object, so `http(app).post(...)` went
+  straight to the original and the `Idempotency-Key` was never sent: every mutating
+  route answered 400, in files that had nothing to do with idempotency. The fix
+  called the agent itself, and `request(server)` is an **object**, not a function,
+  so every request in the suite became `TypeError: agent is not a function`.
+  `createHttp()` now builds through `agent[verb](url)`, and `http.spec.ts` uses a
+  fake that is an object with verb methods for the same reason: **a fake models
+  what the dependency is, not what the code wishes it were.** Both regressions were
+  reproduced against the fixed version to confirm the test fails on them.
+- **`node-redis` retries a failed connection forever, so `connect()` never
+  rejects.** `RedisClientService` promises that a dead redis is a miss rather than
+  a hang, and with the default reconnect strategy the first command awaited on the
+  client never settles — the initial connect timeout bounds one attempt and the
+  loop starts the next. Measured against a dead port: no rejection at all, with
+  `connectTimeout` at 250ms. The factory now bounds its retries and returns an
+  error, which is what makes `connect()` reject and `run()` report a miss.
+- **`POST /auth/login` answered 201.** Nest defaults POST to 201, and a sign-in
+  creates nothing. `@ApiOkResponse` already documented 200 on all three token
+  routes, so the wire and the documentation disagreed; `login`, `2fa/login` and
+  `refresh-token` now say `@HttpCode(HttpStatus.OK)`.
+- **`RedisClientService` had no `@Injectable()`, so Nest constructed it with no
+  arguments at all.** A class without a decorator emits no `design:paramtypes`,
+  and the injector then supplies nothing: `configService` was `undefined` and the
+  first redis command died with "Cannot read properties of undefined (reading
+  'getOrThrow')". It was masked earlier because the broken client failed _fast_,
+  which let the rate limiter fail open; with a real redis in CI the idempotency
+  guard reached the command and every mutating request returned a 500. Every test
+  in its own spec constructs the service by hand, so nothing noticed.
+- **Every mutating route requires an `Idempotency-Key`, and the e2e specs sent
+  none.** The harness now attaches a distinct one to every non-safe request, the
+  way a client has to.
+- **The e2e harness was booting a different application from the one that ships.**
+  `setGlobalPrefix`, URI versioning, the validation pipe, the filters and the
+  response wrapper all lived inline in `main.ts`, so a test-created application
+  had no prefix and no wrapper: `/health` was a 404, every success body was bare
+  rather than `{ success, data, timestamp }`, and the "unknown path returns 404"
+  test passed for the wrong reason — the prefixed path was also a 404. `main.ts`
+  now delegates to `src/bootstrap.ts`, which both it and the harness call, and
+  `app.module.spec.ts` asserts `/api/v1/health` is routed and `/health` is not,
+  with no container involved.
+- **The application did not boot at all, and 120 unit test files could not see
+  it.** Six faults sat behind the first error each time: `NotificationEventsModule`
+  re-exporting a provider belonging to an imported module; `ThrottlerModule
+.forRootAsync` injecting a token only the root could see; `SentryService` taking
+  the DSN as a constructor parameter, which Nest read as an injection token, so
+  every deployment with `SENTRY_DSN` set failed; `RetentionService` importing
+  `DataSource` as a type, so its erased parameter reached the injector as
+  `Object`; `RetentionScheduler` asking for a config namespace its module never
+  registered; and three modules injecting a provider whose module only the root
+  imported. `src/app.module.spec.ts` now builds the entire graph with a stubbed
+  data source — no database, no Redis, no Docker — and was verified by reverting
+  one fix and watching it fail with the same message the boot produced.
 - **The module graph had a cycle, and it only failed outside `node dist/main`.**
   `QueueModule` imported `MaintenanceModule` through the `maintenance/index.js`
   barrel, and that barrel re-exports `MaintenanceSchedulerModule`, which imports

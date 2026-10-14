@@ -4,6 +4,38 @@ import { SENTRY_SPECIFIER, SentryService } from './sentry.service.js';
 import { appVersion } from './sentry-release.js';
 
 /**
+ * Builds a service with `SENTRY_DSN` set to `dsn`, restoring it afterwards.
+ *
+ * The DSN is an environment variable rather than a constructor argument now, and
+ * that change is not cosmetic: a constructor parameter typed `string | undefined`
+ * is an injection token to Nest, so a deployment with a DSN set could not boot.
+ * Reading it from the environment in the constructor is what keeps the injector
+ * out of it, and this helper is what keeps the tests able to say which DSN a
+ * service was built with.
+ */
+function withDsn<T>(dsn: string | undefined, build: () => T): T {
+  const previous = process.env['SENTRY_DSN'];
+
+  if (dsn === undefined) {
+    delete process.env['SENTRY_DSN'];
+  } else {
+    process.env['SENTRY_DSN'] = dsn;
+  }
+
+  try {
+    return build();
+  } finally {
+    if (previous === undefined) {
+      delete process.env['SENTRY_DSN'];
+    } else {
+      process.env['SENTRY_DSN'] = previous;
+    }
+  }
+}
+
+const DSN = 'https://key@o0.ingest.sentry.io/0';
+
+/**
  * What matters here is the **scrubbing**, not the reporting.
  *
  * Sentry's default integrations attach the request headers, the cookies and the
@@ -61,14 +93,14 @@ function scrub(event: Record<string, unknown>): Record<string, unknown> {
 
 describe('without the SDK installed', () => {
   it('is disabled, and says so rather than pretending', () => {
-    expect(new SentryService(undefined).enabled).toBe(false);
+    expect(withDsn(undefined, () => new SentryService()).enabled).toBe(false);
   });
 
   it('accepts every call without throwing', async () => {
     // This is called from an exception filter, which is the last place a process is
     // still running. An error reporter that throws turns a handled 500 into a dead
     // process.
-    const sentry = new SentryService(undefined);
+    const sentry = withDsn(undefined, () => new SentryService());
 
     expect(() => sentry.captureException(new Error('x'))).not.toThrow();
     expect(() => sentry.captureMessage('x')).not.toThrow();
@@ -81,9 +113,7 @@ describe('with a DSN but no SDK', () => {
   it('stays disabled, because a DSN sends nothing on its own', () => {
     // Worth distinguishing from "installed but no DSN": this is a half-configured
     // deployment, and it is the one somebody will believe is reporting errors.
-    expect(new SentryService('https://key@o0.ingest.sentry.io/0').enabled).toBe(
-      false,
-    );
+    expect(withDsn(DSN, () => new SentryService()).enabled).toBe(false);
   });
 });
 
@@ -95,13 +125,11 @@ describe('with the SDK and a DSN', () => {
   });
 
   it('is enabled', () => {
-    expect(new SentryService('https://key@o0.ingest.sentry.io/0').enabled).toBe(
-      true,
-    );
+    expect(withDsn(DSN, () => new SentryService()).enabled).toBe(true);
   });
 
   it('reports an exception', () => {
-    const sentry = new SentryService('https://key@o0.ingest.sentry.io/0');
+    const sentry = withDsn(DSN, () => new SentryService());
 
     sentry.captureException(new Error('boom'), { requestId: 'req-1' });
 
@@ -113,7 +141,7 @@ describe('with the SDK and a DSN', () => {
 
   it('never throws, whatever the SDK does', () => {
     // The SDK is a third party reached over the network, from a catch block.
-    const exploding = new SentryService('https://key@o0.ingest.sentry.io/0');
+    const exploding = withDsn(DSN, () => new SentryService());
 
     vi.spyOn(
       exploding as unknown as { sentry: { captureException: unknown } },
@@ -135,7 +163,7 @@ describe('what leaves the process', () => {
     initOptions.length = 0;
     // Constructed here rather than in each test: `beforeSend` is a closure the
     // constructor hands Sentry, so there is nothing to call until one exists.
-    new SentryService('https://key@o0.ingest.sentry.io/0');
+    withDsn(DSN, () => new SentryService());
   });
 
   it('never sends the request headers, which is where an auth header lives', () => {
@@ -216,7 +244,7 @@ describe('the release tag', () => {
     // introduced it, and its issue list is a wall of "new since Tuesday".
     delete process.env['SENTRY_RELEASE'];
 
-    new SentryService('https://key@o0.ingest.sentry.io/0');
+    withDsn(DSN, () => new SentryService());
 
     expect(initOptions[0]?.['release']).toBe(appVersion());
   });
@@ -224,7 +252,7 @@ describe('the release tag', () => {
   it('prefers the environment value, which CI sets from the git SHA', () => {
     process.env['SENTRY_RELEASE'] = 'abc1234';
 
-    new SentryService('https://key@o0.ingest.sentry.io/0');
+    withDsn(DSN, () => new SentryService());
 
     expect(initOptions[0]?.['release']).toBe('abc1234');
 
@@ -234,7 +262,7 @@ describe('the release tag', () => {
   it('disables performance tracing, because spans already go to OpenTelemetry', () => {
     // Running one request through two tracing systems doubles the cost and splits
     // the trace in two, so exactly one of them should be on.
-    new SentryService('https://key@o0.ingest.sentry.io/0');
+    withDsn(DSN, () => new SentryService());
 
     expect(initOptions[0]?.['tracesSampleRate']).toBe(0);
   });
