@@ -32,7 +32,8 @@ import {
   type PasswordPolicyConfig,
 } from '../../configs/password-policy.config.js';
 import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
-import { MailModule } from '../mail/index.js';
+import { MetricsModule } from '../../core/metrics/index.js';
+import { MailModule } from '../mail/mail.module.js';
 import { LoginLockoutService } from './login-lockout.service.js';
 import { QueueModule } from '../queue/index.js';
 import { NotificationEventsModule } from '../notification/notification-events.module.js';
@@ -58,6 +59,11 @@ import { PasswordHistoryService } from './password-history.service.js';
     // Mail is an export of MailModule, so the template names and the transport
     // live in the mail module rather than in auth.
     MailModule,
+    // `AuthService` records the sign-in attempt counters, which is the only
+    // sign-in signal that survives a redis outage. The parameter has a default so
+    // a hand-built harness can omit it, and a default does not exempt it from
+    // injection — the provider still has to be visible here.
+    MetricsModule,
     // For the queue: auth enqueues mail instead of sending it, which is what
     // keeps a slow provider out of the registration request.
     QueueModule,

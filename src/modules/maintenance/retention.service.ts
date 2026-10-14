@@ -1,8 +1,13 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { DataSource, QueryRunner } from 'typeorm';
-import { Repository } from 'typeorm';
+// `DataSource` is a value import, not a type import. It is injected, and a
+// type-only import is erased before `design:paramtypes` is emitted, so the
+// parameter arrives at Nest as `Object` and the application cannot boot with
+// "Nest can't resolve dependencies of the RetentionService (?, ...)". The unit
+// suite builds this service by hand and never goes near the injector, so nothing
+// caught it.
+import { DataSource, type QueryRunner, Repository } from 'typeorm';
 
 import { MetricsService } from '../../core/metrics/index.js';
 import { retentionConfig } from '../../configs/retention.config.js';

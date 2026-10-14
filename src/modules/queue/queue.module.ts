@@ -2,6 +2,7 @@ import { Logger, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
 import { queueConfig, type QueueConfig } from '../../configs/queue.config.js';
+import { TracingModule } from '../../core/tracing/index.js';
 import { MailModule } from '../mail/mail.module.js';
 // The module file, never the `../maintenance/index.js` barrel. The barrel also
 // exports `MaintenanceSchedulerModule`, which imports `QueueModule` back, so
@@ -61,6 +62,11 @@ const configOf = (configService: ConfigService): QueueConfig =>
     // holding the dispatch. `NotificationEventsModule` is the other half and sits
     // above, which is where the emit path and the preferences routes live.
     NotificationModule,
+    // `ProcessorRouter` opens a span around every job. Tracing is an optional
+    // integration whose providers live in their own module, so a module that
+    // injects the service has to import it rather than assume the root did —
+    // `AppModule` importing `TracingModule` makes it available to `AppModule`.
+    TracingModule,
   ],
   providers: [
     // The mail delivery record comes from `MailModule`, which `QueueModule` already

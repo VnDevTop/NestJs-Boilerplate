@@ -1101,6 +1101,8 @@ test: cover the auth service, two factor and every template
 fix: namespace the keys a lua script is given
 fix: say what to do when there is no container runtime
 fix: break the queue and retention module cycle
+fix: make the application boot
+test: build the whole module graph in the unit suite
 docs: document the testing layers and the new variables
 docs: mark phase 21 testing depth as done
 ```
@@ -1153,6 +1155,18 @@ Decisions worth carrying forward, because each is a refusal of something:
   two retention files, because a flipped comparison there deletes or locks out
   something real and produces no exception. A full run takes minutes, which is
   the wrong price for every commit.
+- **The application did not boot at all, and 120 unit test files could not see
+  it.** Six faults sat behind the first error each time: `NotificationEventsModule`
+  re-exporting a provider belonging to an imported module; `ThrottlerModule
+.forRootAsync` injecting a token only the root could see; `SentryService` taking
+  the DSN as a constructor parameter, which Nest read as an injection token, so
+  every deployment with `SENTRY_DSN` set failed; `RetentionService` importing
+  `DataSource` as a type, so its erased parameter reached the injector as
+  `Object`; `RetentionScheduler` asking for a config namespace its module never
+  registered; and three modules injecting a provider whose module only the root
+  imported. `src/app.module.spec.ts` now builds the entire graph with a stubbed
+  data source — no database, no Redis, no Docker — and was verified by reverting
+  one fix and watching it fail with the same message the boot produced.
 - **The module graph had a cycle, and it only failed outside `node dist/main`.**
   `QueueModule` imported `MaintenanceModule` through the `maintenance/index.js`
   barrel, and that barrel re-exports `MaintenanceSchedulerModule`, which imports
