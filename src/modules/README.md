@@ -107,3 +107,30 @@ record's owner, or to an admin, is a decision left open in
 4. Guards: default to authenticated. Mark the route `@Public()` only when it has
    to work without a token, and `@Throttle` it tighter if it accepts a password,
    a code or anything guessable.
+
+## Import rules
+
+Two, and both are checked by `module-graph.spec.ts` on every commit.
+
+**No value-import cycles.** A cycle means two modules evaluate in whatever order
+the loader picks. Under `node dist/main` that order happens to work; under vitest
+it does not, and the failure is reported as a missing provider rather than as an
+import problem:
+
+```text
+Nest cannot create the QueueModule instance.
+The module at index [2] of the QueueModule "imports" array is undefined.
+```
+
+That is exactly how this repository broke: `QueueModule` reached the retention
+module through `maintenance/index.js`, and that barrel also re-exports
+`MaintenanceSchedulerModule`, which imports `QueueModule` back.
+
+`import type` is not a cycle — the compiler erases it — so the templates and the
+maintenance log entity are allowed to refer to each other's types.
+
+**A module is imported from its file, not from its folder's barrel.** A barrel
+evaluates every file it re-exports, which is how a cycle appears out of a line
+that reads like nothing. `JOB_QUEUE` lives in `queue.tokens.ts` for the same
+reason: a token is a string, and reading one should not evaluate the queue graph
+to get it.

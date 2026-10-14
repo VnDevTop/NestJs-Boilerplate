@@ -6,7 +6,7 @@ import { getRequestId } from '../../common/utils/index.js';
 import { dedupeKey } from '../queue/dedupe-key.js';
 import { QUEUE_NAMES } from '../queue/queue.interface.js';
 import type { JobQueue } from '../queue/queue.interface.js';
-import { JOB_QUEUE } from '../queue/queue.module.js';
+import { JOB_QUEUE } from '../queue/queue.tokens.js';
 import type {
   NotificationEventData,
   NotificationEventKey,

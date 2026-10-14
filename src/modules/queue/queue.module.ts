@@ -2,8 +2,14 @@ import { Logger, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
 import { queueConfig, type QueueConfig } from '../../configs/queue.config.js';
-import { MailModule } from '../mail/index.js';
-import { MaintenanceModule } from '../maintenance/index.js';
+import { MailModule } from '../mail/mail.module.js';
+// The module file, never the `../maintenance/index.js` barrel. The barrel also
+// exports `MaintenanceSchedulerModule`, which imports `QueueModule` back, so
+// reaching the retention module through it closes a cycle: the two files evaluate
+// in whichever order the loader happens to use, and a module reached while its
+// importer is still evaluating arrives as `undefined`. See `queue.tokens.ts` for
+// the same trap reached through a token.
+import { MaintenanceModule } from '../maintenance/maintenance.module.js';
 import { NotificationModule } from '../notification/notification.module.js';
 import { NotificationProcessor } from '../notification/processors/notification.processor.js';
 import { BullMqDispatcher } from './bullmq.dispatcher.js';
@@ -21,12 +27,9 @@ import { ProcessorRouter } from './processor-router.service.js';
 import type { JobQueue } from './queue.interface.js';
 import { IdempotencyService } from './idempotency.service.js';
 import { RedisClientService } from './redis-client.service.js';
+import { JOB_QUEUE, PROCESSOR_REGISTRY } from './queue.tokens.js';
 
-/** The token both drivers are provided under, so a consumer never branches. */
-export const JOB_QUEUE = 'JOB_QUEUE';
-
-/** The token the deduplication-wrapped registry is provided under. */
-export const PROCESSOR_REGISTRY = 'PROCESSOR_REGISTRY';
+export { JOB_QUEUE, PROCESSOR_REGISTRY };
 
 const logger = new Logger('QueueModule');
 

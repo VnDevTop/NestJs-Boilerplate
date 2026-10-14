@@ -5,7 +5,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 
 import { retentionConfig } from '../../../configs/retention.config.js';
-import { JOB_QUEUE } from '../../queue/queue.module.js';
+import { JOB_QUEUE } from '../../queue/queue.tokens.js';
 import type { JobQueue } from '../../queue/queue.interface.js';
 import { QUEUE_NAMES } from '../../queue/queue.interface.js';
 import {
