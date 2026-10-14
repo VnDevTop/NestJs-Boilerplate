@@ -303,4 +303,38 @@ export async function mailTemplates(dataSource: DataSource): Promise<string[]> {
   return rows.map((row) => row.template);
 }
 
-export const http = (app: INestApplication) => request(app.getHttpServer());
+/**
+ * Every mutating route in this application requires an `Idempotency-Key`, and
+ * the application refuses the request without one — which is the correct
+ * behaviour and a fact a test has to respect like a client does.
+ *
+ * The header is attached here rather than in each spec because forgetting it in
+ * one place produces a 400 that reads as a broken route, and a spec that copied
+ * it into four call sites would drift the moment a fifth route appeared. A
+ * counter makes each request distinct, because reusing a key is the *other*
+ * thing idempotency is for: a spec that retried on purpose would otherwise be
+ * replaying an answer the guard is designed to hand back.
+ */
+const SAFE_METHODS = new Set(['get', 'head', 'options']);
+
+/** Supertest's agent, plus the call signature it already supports. */
+type RequestFor = (method: string, url: string) => request.Test;
+
+type Agent = request.SuperTest<request.Test> & RequestFor;
+
+let keyCounter = 0;
+
+export const http = (app: INestApplication): Agent => {
+  const agent = request(app.getHttpServer()) as unknown as Agent;
+
+  const wrapped: RequestFor = (method, url) => {
+    const call = agent(method, url);
+
+    return SAFE_METHODS.has(method)
+      ? call
+      : call.set('Idempotency-Key', `e2e-${++keyCounter}`);
+  };
+
+  // The verb methods are supertest's own; only the call signature is wrapped.
+  return Object.assign(wrapped, agent) as Agent;
+};

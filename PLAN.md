@@ -1103,6 +1103,7 @@ fix: say what to do when there is no container runtime
 fix: break the queue and retention module cycle
 fix: make the application boot
 fix: share one bootstrap between the binary and the e2e harness
+fix: make the redis client injectable, and send an idempotency key in e2e
 test: build the whole module graph in the unit suite
 docs: document the testing layers and the new variables
 docs: mark phase 21 testing depth as done
@@ -1156,6 +1157,17 @@ Decisions worth carrying forward, because each is a refusal of something:
   two retention files, because a flipped comparison there deletes or locks out
   something real and produces no exception. A full run takes minutes, which is
   the wrong price for every commit.
+- **`RedisClientService` had no `@Injectable()`, so Nest constructed it with no
+  arguments at all.** A class without a decorator emits no `design:paramtypes`,
+  and the injector then supplies nothing: `configService` was `undefined` and the
+  first redis command died with "Cannot read properties of undefined (reading
+  'getOrThrow')". It was masked earlier because the broken client failed _fast_,
+  which let the rate limiter fail open; with a real redis in CI the idempotency
+  guard reached the command and every mutating request returned a 500. Every test
+  in its own spec constructs the service by hand, so nothing noticed.
+- **Every mutating route requires an `Idempotency-Key`, and the e2e specs sent
+  none.** The harness now attaches a distinct one to every non-safe request, the
+  way a client has to.
 - **The e2e harness was booting a different application from the one that ships.**
   `setGlobalPrefix`, URI versioning, the validation pipe, the filters and the
   response wrapper all lived inline in `main.ts`, so a test-created application

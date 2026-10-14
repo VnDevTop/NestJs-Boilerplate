@@ -1,4 +1,10 @@
-import { Logger, type OnModuleDestroy } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  type OnModuleDestroy,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
 
@@ -34,6 +40,16 @@ const isNoScriptError = (error: unknown): boolean => {
 export type RedisClientFactory = (config: RedisConfig) => RedisClientType;
 
 /**
+ * The token the client factory is injected under.
+ *
+ * A factory is a function, and a function is not a type Nest can look up: the
+ * emitted `design:paramtypes` for it is `Function`, which is not a provider
+ * anywhere. `@Inject` names the token explicitly, and `@Optional` keeps the
+ * argument optional so nothing has to provide one in production.
+ */
+export const REDIS_CLIENT_FACTORY = 'REDIS_CLIENT_FACTORY';
+
+/**
  * The redis connection for queue bookkeeping.
  *
  * Distinct from `CacheService` on purpose. The cache is disposable and evicted by
@@ -52,6 +68,16 @@ export type RedisClientFactory = (config: RedisConfig) => RedisClientType;
  *   the caller's fallback is to treat the bookkeeping as absent. Deciding that is
  *   the caller's job, so the methods here report the failure instead of guessing.
  */
+/**
+ * `@Injectable()` is load-bearing and easy to lose.
+ *
+ * Without it Nest emits no `design:paramtypes` for this class, and a class without
+ * a decorator is constructed with **no arguments at all** — so `configService` was
+ * `undefined` and the first command failed with "Cannot read properties of
+ * undefined (reading 'getOrThrow')". Nothing caught it because every test builds
+ * this service by hand, passing its dependencies itself.
+ */
+@Injectable()
 export class RedisClientService implements OnModuleDestroy {
   private client: RedisClientType | null = null;
   private connecting: Promise<RedisClientType> | null = null;
@@ -59,6 +85,8 @@ export class RedisClientService implements OnModuleDestroy {
 
   constructor(
     private readonly configService: ConfigService,
+    @Optional()
+    @Inject(REDIS_CLIENT_FACTORY)
     private readonly factory: RedisClientFactory = (config) =>
       createClient({
         url: config.url,

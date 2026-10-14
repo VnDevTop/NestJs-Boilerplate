@@ -73,6 +73,24 @@ vi.hoisted(() => {
     'app-module-spec-refresh-secret-value-long-enough-32';
   process.env['NODE_ENV'] = 'test';
   process.env['CACHE_BACKEND'] = 'memory';
+
+  // Redis points at a port nothing listens on, and refuses immediately rather
+  // than queueing commands behind a reconnect.
+  //
+  // `ThrottlerGuard` is global, so *every* request in this file asks the rate
+  // limiter to count, and the limiter's storage is a redis client. With the
+  // offline queue on, an unreachable server holds that request open until the
+  // test times out, which looks like a routing failure and is not one.
+  // `REDIS_DISABLE_OFFLINE_QUEUE=true` is also what a production deployment
+  // should set, for the same reason.
+  process.env['REDIS_URL'] = 'redis://127.0.0.1:1';
+  process.env['REDIS_DISABLE_OFFLINE_QUEUE'] = 'true';
+  // The first command on an unreachable server waits for the connect to time
+  // out, and the default is five seconds — exactly a test's budget. A quarter of
+  // a second is enough to prove "nothing is listening here", which is the only
+  // thing this file needs to know.
+  process.env['REDIS_CONNECT_TIMEOUT'] = '250';
+  process.env['QUEUE_ENABLED'] = 'false';
 });
 
 describe('the application module', () => {
@@ -94,12 +112,19 @@ describe('the application module', () => {
       // that booted the application without them found `/health` on the bare
       // path — and the only symptom was a suite reaching a 404 while passing
       // every assertion about how the response would look.
-      const prefixed = await request(app.getHttpServer()).get('/api/v1/health');
-      const bare = await request(app.getHttpServer()).get('/health');
+      // `/auth/me` rather than `/health`, because `health` runs Terminus against
+      // the stubbed data source and a check with nothing behind it waits rather
+      // than answering. An unauthenticated caller getting a 401 proves the route
+      // is mounted *and* that the guard chain is running, which a health check
+      // would not.
+      const prefixed = await request(app.getHttpServer()).get(
+        '/api/v1/auth/me',
+      );
+      const bare = await request(app.getHttpServer()).get('/auth/me');
 
-      expect(prefixed.status).not.toBe(404);
-      // The route is only there once. A second one at the bare path would mean a
-      // client could reach it both ways, which is not what ships.
+      expect(prefixed.status).toBe(401);
+      // The route exists once. A second copy at the bare path would mean a client
+      // could reach it both ways, which is not what ships.
       expect(bare.status).toBe(404);
     } finally {
       await app.close();
