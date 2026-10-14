@@ -1157,6 +1157,25 @@ Decisions worth carrying forward, because each is a refusal of something:
   two retention files, because a flipped comparison there deletes or locks out
   something real and produces no exception. A full run takes minutes, which is
   the wrong price for every commit.
+- **`Object.assign(wrapped, agent)` never called the wrapper.** supertest's verb
+  methods are closures over the agent, so copying them onto a wrapper object left
+  `http(app).post(...)` going straight to the original — and the `Idempotency-Key`
+  the harness attaches on the way was never sent. Every mutating route answered
+  400 with "This endpoint requires an Idempotency-Key header", in files that had
+  nothing to do with idempotency. `createHttp()` now replaces each verb rather than
+  decorating it, and `test/e2e/http.spec.ts` tests the wrapper against a stub
+  agent: no server, no container.
+- **`node-redis` retries a failed connection forever, so `connect()` never
+  rejects.** `RedisClientService` promises that a dead redis is a miss rather than
+  a hang, and with the default reconnect strategy the first command awaited on the
+  client never settles — the initial connect timeout bounds one attempt and the
+  loop starts the next. Measured against a dead port: no rejection at all, with
+  `connectTimeout` at 250ms. The factory now bounds its retries and returns an
+  error, which is what makes `connect()` reject and `run()` report a miss.
+- **`POST /auth/login` answered 201.** Nest defaults POST to 201, and a sign-in
+  creates nothing. `@ApiOkResponse` already documented 200 on all three token
+  routes, so the wire and the documentation disagreed; `login`, `2fa/login` and
+  `refresh-token` now say `@HttpCode(HttpStatus.OK)`.
 - **`RedisClientService` had no `@Injectable()`, so Nest constructed it with no
   arguments at all.** A class without a decorator emits no `design:paramtypes`,
   and the injector then supplies nothing: `configService` was `undefined` and the

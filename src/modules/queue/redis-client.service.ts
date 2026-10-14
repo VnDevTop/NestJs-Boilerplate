@@ -50,6 +50,17 @@ export type RedisClientFactory = (config: RedisConfig) => RedisClientType;
 export const REDIS_CLIENT_FACTORY = 'REDIS_CLIENT_FACTORY';
 
 /**
+ * Connection attempts before the client gives up, after which every command
+ * reports a miss.
+ *
+ * Four is deliberately few. The alternative — retrying for as long as the outage
+ * lasts — is the behaviour node-redis ships with, and it turns a redis outage
+ * into an application that answers no request at all rather than one that loses
+ * its rate limits and its deduplication keys.
+ */
+const REDIS_RECONNECT_ATTEMPTS = 4;
+
+/**
  * The redis connection for queue bookkeeping.
  *
  * Distinct from `CacheService` on purpose. The cache is disposable and evicted by
@@ -90,7 +101,33 @@ export class RedisClientService implements OnModuleDestroy {
     private readonly factory: RedisClientFactory = (config) =>
       createClient({
         url: config.url,
-        socket: { connectTimeout: config.connectTimeout },
+        socket: {
+          connectTimeout: config.connectTimeout,
+          /**
+           * Bounded, and this is not a tuning decision.
+           *
+           * node-redis retries a failed connection forever by default, and
+           * `connect()` does not reject while it is retrying — so with a dead
+           * server the first command awaited on this client never settles. The
+           * first caller hangs, and because `getClient()` memoises the attempt
+           * every caller behind it hangs on the same promise. Measured against an
+           * unreachable port: no rejection at all, with `connectTimeout` set to
+           * 250ms, because the timeout bounds one attempt and the retry loop
+           * starts the next one.
+           *
+           * This class promises the opposite — a dead redis is a miss, not a
+           * hang — so the retries stop. Returning an error from the strategy is
+           * what makes `connect()` reject, and `run()` turns that into a logged
+           * miss. Four attempts over about a second is enough to ride out a
+           * redis restart; past that the caller should hear about it.
+           */
+          reconnectStrategy: (retries) =>
+            retries >= REDIS_RECONNECT_ATTEMPTS
+              ? new Error(
+                  `redis unreachable after ${retries} attempts, giving up`,
+                )
+              : Math.min(50 * 2 ** retries, 1000),
+        },
         // Without this a command issued while the socket is reconnecting waits
         // for the outage to end, so one dead redis turns into every request in
         // flight piling up behind a socket that is not coming back.
