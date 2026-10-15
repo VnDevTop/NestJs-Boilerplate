@@ -121,10 +121,34 @@ function propertiesOf(name: string): Property[] {
   for (const raw of body.split('\n')) {
     const line = raw.trim();
 
+    const opensArgumentList =
+      depth === 0 && line.startsWith('@') && line.includes('(');
+
     depth += countChar(line, '(') - countChar(line, ')');
 
+    // Recorded before the depth check, because a decorator that carries an argument
+    // list is a decorator first:
+    //
+    // ```ts
+    // @Matches(LANGUAGE_TAG, {     <- opens the list, and is the decorator
+    //   message: '…',
+    // })
+    // locale?: string;
+    // ```
+    //
+    // `depth > 0` on that first line, so the check below skipped it and the field
+    // came back with no decorators at all. The guard then reported a correctly
+    // decorated field as unvalidated — a false positive in the direction that teaches
+    // the next reader to ignore the guard, which is worse than the false negative it
+    // was built to prevent.
+    if (opensArgumentList) {
+      decorators.push(line);
+      continue;
+    }
+
     if (depth > 0) {
-      // Inside a decorator's argument list.
+      // Inside a decorator's argument list. `example:` and `message:` are arguments
+      // here, never property declarations.
       continue;
     }
 
@@ -141,8 +165,14 @@ function propertiesOf(name: string): Property[] {
       continue;
     }
 
-    // A blank line or a closing brace ends a decorator block.
-    if (line === '' || line.startsWith('}')) {
+    // A blank line ends a decorator block.
+    //
+    // A `}` does too, but only when it *closes a class or method*, not when it
+    // closes a decorator's argument list. `})` at depth 0 after `@Matches(LANGUAGE_TAG, {`
+    // closes that decorator, and clearing there discarded every decorator stacked
+    // above it — which is how `UpdateMailTemplateDto.locale` came back with none and
+    // the guard reported a correctly decorated field as unvalidated.
+    if (line === '') {
       decorators = [];
     }
   }
