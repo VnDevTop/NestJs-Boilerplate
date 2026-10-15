@@ -20,6 +20,7 @@ import {
 } from './entities/index.js';
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { PasswordHistoryService } from './password-history.service.js';
+import { PasswordPolicyService } from './password-policy.service.js';
 import { RefreshTokenService } from './refresh-token.service.js';
 
 const logger = new Logger('PasswordResetService');
@@ -47,6 +48,7 @@ export class PasswordResetService {
     private readonly refreshTokenService: RefreshTokenService,
     private readonly usersService: UsersService,
     private readonly passwordHistory: PasswordHistoryService,
+    private readonly passwordPolicy: PasswordPolicyService,
   ) {}
 
   private get store(): EntityManager {
@@ -156,15 +158,24 @@ export class PasswordResetService {
           );
         }
 
-        // The reuse check lives here rather than in the caller, because this is the
-        // first point where the user is known: it is the token row that names them.
-        // Throwing rolls the transaction back, so a rejected password leaves the
-        // token unspent and the user able to try again — the same property the
-        // format check gets by running before `consume`.
-        if (await this.passwordHistory.wasUsedBefore(user.id, newPassword)) {
-          throw new BadRequestException(
-            'This password has been used before. Choose one you have not used recently.',
-          );
+        // The policy is asked here rather than in the caller because this is the
+        // first point where the user is known: it is the token row that names them,
+        // and the reuse half of the policy needs that id. Throwing rolls the
+        // transaction back, so a rejected password leaves the token unspent and the
+        // user able to try again.
+        //
+        // The global half runs a second time — `AuthService.resetPassword` already
+        // called `check` before opening this transaction. Deliberate: that call
+        // rejects an obviously bad password without taking a row lock and running
+        // scrypt to find out, and this one is the authoritative answer because it is
+        // the only place that can ask about reuse.
+        const policy = await this.passwordPolicy.checkForUser(
+          newPassword,
+          user.id,
+        );
+
+        if (!policy.ok) {
+          throw new BadRequestException(policy.reasons.join(' '));
         }
 
         user.password = await hashPassword(newPassword);

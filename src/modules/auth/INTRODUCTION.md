@@ -45,8 +45,11 @@ auth
 | Account lockout, temporary | 5 failures, +1 min each, capped at 15, keyed by address in Redis, fails open                                     | thresholds hard-coded                                                                 |
 | Account lockout, permanent | 20 failures in 24 h, `users.lockedAt`, self-service unlock by mail                                               | `ACCOUNT_PERMANENT_LOCK_THRESHOLD`, `_WINDOW_HOURS`, `ACCOUNT_UNLOCK_TOKEN_TTL_HOURS` |
 
-Single enforcement choke point: `AuthService.assertPasswordAcceptable`, reached
-from both registration and password reset.
+Single enforcement choke point: `PasswordPolicyService`, reached from
+registration through `AuthService.assertPasswordAcceptable` and from password
+reset through `checkForUser` — the one that also asks whether the account has used
+it before. The reuse half needs an identity, and a reset token is the only thing
+that establishes one before the transaction runs.
 
 > `UsersService` is the only writer of `users.password`, on both the create and
 > the update path, and both hash a plaintext the client supplied. `register`,
@@ -187,12 +190,11 @@ a real gap in the code as it stands, with the file that proves it.
 | #   | Gap                                                                                                                                             | Where                        |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | 1   | No idle timeout and no absolute session lifetime                                                                                                | `refresh-token.entity.ts`    |
-| 2   | `PasswordPolicyService.checkForUser()` — the intended uniform policy entry point — **has no callers**                                           | `password-policy.service.ts` |
-| 3   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`           |
-| 4   | 2FA key derivation is a single unsalted SHA-256 rather than a work-hardened KDF                                                                 | `encryption.util.ts`         |
-| 5   | Recovery codes are SHA-256 + salt while passwords are scrypt                                                                                    | `recovery-code.util.ts`      |
-| 6   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()` |
-| 7   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`  |
+| 2   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`           |
+| 3   | 2FA key derivation is a single unsalted SHA-256 rather than a work-hardened KDF                                                                 | `encryption.util.ts`         |
+| 4   | Recovery codes are SHA-256 + salt while passwords are scrypt                                                                                    | `recovery-code.util.ts`      |
+| 5   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()` |
+| 6   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`  |
 
 These are ordered by how much they cost an operator who inherits the
 repository. The two that were fixed are gone from the list rather than ticked

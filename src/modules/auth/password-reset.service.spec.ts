@@ -67,9 +67,15 @@ function build(options: Parameters<typeof fakeManager>[0] = {}) {
     invalidateAuthCache: vi.fn().mockResolvedValue(undefined),
   };
 
-  // The history service answers "no" for everything here: what these tests are
-  // about is what happens to the token and the sessions once a password is
-  // accepted, and a refusal is covered by its own spec.
+  // The policy accepts everything here: what these tests are about is what
+  // happens to the token and the sessions once a password is accepted, and a
+  // refusal is covered by its own spec. It is a double rather than the real
+  // service because the real one consults the history, which is already a double
+  // below.
+  const passwordPolicy = {
+    checkForUser: vi.fn().mockResolvedValue({ ok: true, reasons: [] }),
+  };
+
   const passwordHistory = {
     record: vi.fn().mockResolvedValue(undefined),
     wasUsedBefore: vi.fn().mockResolvedValue(false),
@@ -81,6 +87,7 @@ function build(options: Parameters<typeof fakeManager>[0] = {}) {
     refreshTokenService as never,
     usersService as never,
     passwordHistory as never,
+    passwordPolicy as never,
   );
 
   return {
@@ -88,6 +95,7 @@ function build(options: Parameters<typeof fakeManager>[0] = {}) {
     manager,
     transaction,
     refreshTokenService,
+    passwordPolicy,
     usersService,
     passwordHistory,
     user,
@@ -238,9 +246,14 @@ describe('PasswordResetService.consume', () => {
     expect(passwordHistory.record.mock.calls[0][1]).not.toBe('a-new-password');
   });
 
-  it('rejects a password the user has used before, before spending the token', async () => {
-    const { service, passwordHistory, manager } = build();
-    passwordHistory.wasUsedBefore.mockResolvedValue(true);
+  it('rejects a password the policy refuses, before spending the token', async () => {
+    // Which is the reuse case among others: the policy decides, this service
+    // refuses and rolls back.
+    const { service, passwordHistory, manager, passwordPolicy } = build();
+    passwordPolicy.checkForUser.mockResolvedValue({
+      ok: false,
+      reasons: ['This password has been used before.'],
+    });
 
     await expect(
       service.consume('the-token', 'a-new-password'),
@@ -250,16 +263,30 @@ describe('PasswordResetService.consume', () => {
     expect(passwordHistory.record).not.toHaveBeenCalled();
   });
 
-  it('checks the history against the user the token names, not the caller', async () => {
+  it('reports every reason the policy gives, not only the first', async () => {
+    // A user who typed a password failing three rules should see three, or they
+    // find out one submit at a time and abandon the form half way.
+    const { service, passwordPolicy } = build();
+    passwordPolicy.checkForUser.mockResolvedValue({
+      ok: false,
+      reasons: ['too short', 'not used before'],
+    });
+
+    await expect(
+      service.consume('the-token', 'a-new-password'),
+    ).rejects.toThrow('too short not used before');
+  });
+
+  it('checks against the user the token names, not the caller', async () => {
     // The reset token is the only thing that establishes who is resetting, so a
     // check against anybody else would be checking the wrong history.
-    const { service, passwordHistory } = build();
+    const { service, passwordPolicy } = build();
 
     await service.consume('the-token', 'a-new-password');
 
-    expect(passwordHistory.wasUsedBefore).toHaveBeenCalledWith(
-      'user-1',
+    expect(passwordPolicy.checkForUser).toHaveBeenCalledWith(
       'a-new-password',
+      'user-1',
     );
   });
 
