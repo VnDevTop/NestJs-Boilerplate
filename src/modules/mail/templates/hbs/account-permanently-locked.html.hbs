@@ -1,0 +1,5 @@
+<p style="margin:0 0 16px;font-size:15px;line-height:1.6;">{{#if (isNull failures)}}Your account has been locked after too many failed sign-in attempts.{{else}}Your account has been locked after {{failures}} failed sign-in attempts.{{/if}} Every session has been signed out.</p>
+<p style="margin:0 0 4px;font-size:14px;color:#616e7c;">Reason</p>
+<p style="margin:0 0 20px;font-size:15px;line-height:1.6;">{{reason}}</p>
+{{actionLink unlockUrl "Unlock my account"}}
+<p style="margin:24px 0 0;font-size:13px;color:#52606d;">This link expires in {{expiresInHours}} hours and works once. Nobody else can use it, because it is sent only to the confirmed address on the account. {{#if (isNull failures)}}If these attempts were not yours, change your password once you are back in — somebody may have been guessing it.{{else}}If you did not try to sign in {{failures}} times, change your password once you are back in — somebody may have been guessing it.{{/if}}</p>

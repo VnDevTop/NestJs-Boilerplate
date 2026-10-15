@@ -1,8 +1,14 @@
 {
-  "$schema": "https://json.schemastore.org/nest-cli",
+  "$schema": "https://json.schemastore.org/nest-schematics",
   "collection": "@nestjs/schematics",
   "sourceRoot": "src",
   "compilerOptions": {
-    "deleteOutDir": true
+    "deleteOutDir": true,
+    "assets": [
+      {
+        "include": "modules/mail/templates/hbs/**/*.hbs",
+        "watchAssets": true
+      }
+    ]
   }
 }
