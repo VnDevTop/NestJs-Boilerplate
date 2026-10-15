@@ -192,7 +192,6 @@ a real gap in the code as it stands, with the file that proves it.
 | 1   | No idle timeout and no absolute session lifetime                                                                                                | `refresh-token.entity.ts`    |
 | 2   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`           |
 | 3   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()` |
-| 4   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`  |
 
 These are ordered by how much they cost an operator who inherits the
 repository. The two that were fixed are gone from the list rather than ticked

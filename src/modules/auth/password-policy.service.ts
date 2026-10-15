@@ -104,6 +104,19 @@ export class PasswordPolicyService {
           'configured rules only. Install it with: npm install zxcvbn',
       );
     }
+
+    if (!this.config.checkBreachList) {
+      // Warned rather than defaulted on. The check is a network call in the
+      // request path, which is a real reason to leave it to the operator — but a
+      // control nobody knows is off is not a control that was chosen, and this is
+      // the only moment an operator is guaranteed to be reading the log.
+      this.logger.warn(
+        'PASSWORD_CHECK_BREACH_LIST is false, so a password that appears in a ' +
+          'known breach corpus is accepted. Set it to true to check: the ' +
+          'password never leaves the server, only the first five characters of ' +
+          'its SHA-1 do.',
+      );
+    }
   }
 
   /** True when the optional strength estimator is installed. */

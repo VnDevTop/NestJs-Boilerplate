@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { passwordPolicyConfig } from '../../configs/password-policy.config.js';
@@ -74,6 +76,37 @@ const build = (
 
 /** A password meeting every default rule. */
 const GOOD = 'Correct-Horse-1';
+
+describe('what boot says about the controls that are off', () => {
+  // A control nobody knows is off is not a control that was chosen. The breach
+  // check stays opt-in because it is a network call in the request path, and the
+  // answer to "we should not change the default" is "but do say so", not silence.
+  const warnings = (): string[] =>
+    warnSpy.mock.calls.map((call: unknown[]) => String(call[0]));
+
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    // `spyOn` returns the existing spy when the method is already spied, so the
+    // call log carries over between these two tests unless it is cleared here.
+    warnSpy.mockClear();
+  });
+
+  it('warns that the breach check is off, and says how to turn it on', () => {
+    build(policy({ checkBreachList: false }));
+
+    expect(warnings().join(' ')).toMatch(/PASSWORD_CHECK_BREACH_LIST/);
+  });
+
+  it('says nothing when the breach check is on', () => {
+    // A warning on every boot in a deployment that did the right thing is how a
+    // warning stops being read.
+    build(policy({ checkBreachList: true }));
+
+    expect(warnings().join(' ')).not.toMatch(/PASSWORD_CHECK_BREACH_LIST/);
+  });
+});
 
 describe('the configured rules', () => {
   it('accepts a password meeting every rule', async () => {
