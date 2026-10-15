@@ -157,7 +157,7 @@ Administrative safeguards §164.308 are out of scope for a module: risk analysis
 | A.5.25 Assessment and decision on event authentication information | **met**     | lockout, per-account and per-device revocation                                            |
 | A.8.5 Secure authentication                                        | **met**     | second factor, rotation, reuse detection                                                  |
 | A.8.16 Monitoring activities                                       | **partial** | audit rows written for privileged writes; no alerting on auth events beyond mail          |
-| A.8.24 Use of cryptography                                         | **partial** | AES-256-GCM for one field; key derivation is a single unsalted SHA-256                    |
+| A.8.24 Use of cryptography                                         | **partial** | AES-256-GCM for one field, keyed by scrypt; nothing else at rest is encrypted             |
 | A.8.5 Secure authentication — session management                   | **partial** | no idle or absolute timeout                                                               |
 
 ### OWASP ASVS 4.0.3 (selected)
@@ -191,10 +191,9 @@ a real gap in the code as it stands, with the file that proves it.
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | 1   | No idle timeout and no absolute session lifetime                                                                                                | `refresh-token.entity.ts`    |
 | 2   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`           |
-| 3   | 2FA key derivation is a single unsalted SHA-256 rather than a work-hardened KDF                                                                 | `encryption.util.ts`         |
-| 4   | Recovery codes are SHA-256 + salt while passwords are scrypt                                                                                    | `recovery-code.util.ts`      |
-| 5   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()` |
-| 6   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`  |
+| 3   | Recovery codes are SHA-256 + salt while passwords are scrypt                                                                                    | `recovery-code.util.ts`      |
+| 4   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()` |
+| 5   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`  |
 
 These are ordered by how much they cost an operator who inherits the
 repository. The two that were fixed are gone from the list rather than ticked
