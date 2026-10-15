@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { AdminMailTemplatesController } from '../admin/mail-templates.controller.js';
 import { AdminRolesController } from '../admin/roles.controller.js';
 import { UsersController } from '../users/users.controller.js';
+import { AccountLockController } from '../auth/account-lock.controller.js';
+import { AuditInterceptor } from './audit.interceptor.js';
 
 /**
  * Every privileged route carries `@Audited()`.
@@ -95,12 +97,21 @@ const templateRoutes = routesOf(
   new AdminMailTemplatesController({} as never),
   'admin/mail-templates',
 );
+const accountRoutes = routesOf(
+  new AccountLockController({} as never, {} as never),
+  'auth/account',
+);
 // Listed explicitly rather than discovered from `AppModule`, because this file must
 // run without a database, a redis or a module graph — the same constraint that made
 // `app.module.spec.ts` build the graph with a stubbed data source rather than the
 // real one. A controller added here without a matching entry fails the existence
 // check below, which is the intended direction of that asymmetry.
-const routes = [...usersRoutes, ...roleRoutes, ...templateRoutes];
+const routes = [
+  ...usersRoutes,
+  ...roleRoutes,
+  ...templateRoutes,
+  ...accountRoutes,
+];
 
 /**
  * The privileged routes, and the action name each must carry.
@@ -118,6 +129,9 @@ const PRIVILEGED: Record<string, string> = {
   // the question an incident starts from.
   'admin/mail-templates/PUT :name': 'templates.mail.update',
   'admin/mail-templates/DELETE :name': 'templates.mail.reset',
+  // A right-to-erasure. The most sensitive event in a privacy workflow, and the one
+  // that had carried `@Audited` since it was written with nothing reading it.
+  'auth/account/POST erasure': 'users.erasure.requested',
 };
 
 describe('privileged routes', () => {
@@ -183,5 +197,58 @@ describe('privileged routes', () => {
     const actions = audited.map((route) => route.action);
 
     expect(new Set(actions).size).toBe(actions.length);
+  });
+});
+
+/**
+ * `@Audited` is only a request. Something has to be listening.
+ *
+ * Every assertion above reads handler metadata, and handler metadata is happy to
+ * describe an intention nobody acts on. `POST /auth/account/erasure` carried
+ * `@Audited({ action: 'users.erasure.requested' })` for its whole life, passed
+ * every check in the block above, and wrote no row — because the interceptor was
+ * bound on three controllers and not on that one, and nothing in the suite looked.
+ *
+ * So this block reads the binding itself. It is the assertion that turns a
+ * decorated route into a recorded one, and it is the one that would have failed
+ * the day the decorator was written.
+ */
+describe('controllers that audit', () => {
+  const controllers: [string, new (...args: never[]) => object][] = [
+    ['UsersController', UsersController],
+    ['AdminRolesController', AdminRolesController],
+    ['AdminMailTemplatesController', AdminMailTemplatesController],
+    ['AccountLockController', AccountLockController],
+  ];
+
+  /**
+   * `__interceptors__` is the key `UseInterceptors` writes. Reading it is the only
+   * way to see the binding without booting the application, which is the constraint
+   * this file is written under.
+   *
+   * Note the `Array.isArray` guard. `expect(undefined).toContain(x)` **passes**
+   * under vitest rather than throwing, which makes the obvious spelling of this
+   * assertion silently vacuous on exactly the case that matters — the controller
+   * that does not bind the interceptor at all, where the metadata is absent rather
+   * than wrong. Verified against vitest rather than assumed.
+   */
+  const binds = (controller: new (...args: never[]) => object): boolean => {
+    const bound = Reflect.getMetadata('__interceptors__', controller);
+
+    return Array.isArray(bound) && bound.includes(AuditInterceptor);
+  };
+
+  it('each bind the audit interceptor', () => {
+    for (const [name, controller] of controllers) {
+      expect(binds(controller), `${name} does not bind AuditInterceptor`).toBe(
+        true,
+      );
+    }
+  });
+
+  it('bind it before they are relied on for an erasure row', () => {
+    // Spelled out as its own test because it is the regression this file exists
+    // for. The one above is the general rule; this is the case that got away.
+    expect(binds(AccountLockController)).toBe(true);
   });
 });

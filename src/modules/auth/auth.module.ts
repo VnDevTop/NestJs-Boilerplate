@@ -34,6 +34,7 @@ import {
 import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
 import { MetricsModule } from '../../core/metrics/index.js';
 import { MailModule } from '../mail/mail.module.js';
+import { AuditModule } from '../audit/audit.module.js';
 import { LoginLockoutService } from './login-lockout.service.js';
 import { QueueModule } from '../queue/index.js';
 import { NotificationEventsModule } from '../notification/notification-events.module.js';
@@ -71,6 +72,10 @@ import { PasswordHistoryService } from './password-history.service.js';
     // two-factor change all raise one. Above the queue, like the mail enqueue, so
     // nothing here depends on a channel being reachable.
     NotificationEventsModule,
+    // For the audit interceptor `AccountLockController` binds, so the erasure
+    // request writes a row. `AuditModule` imports nothing but TypeORM, so this
+    // edge is one-directional and cannot close a cycle.
+    AuditModule,
     // The policy is defined next to the endpoints that enforce it, which is what
     // the config's own docblock has claimed since Phase 13 and what was not true
     // until now: the namespace existed and nothing read it.

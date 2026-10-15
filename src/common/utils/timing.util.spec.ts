@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   padResponse,
@@ -42,17 +42,31 @@ describe('padResponse', () => {
   });
 
   it('adds jitter on top of the floor', async () => {
-    const { waits, sleep } = fakeSleep();
+    // The clock is frozen because `padResponse` subtracts `Date.now()` from
+    // `startedAt` itself, with no seam to inject one. On a real clock this
+    // assertion is `125` only while zero milliseconds have elapsed, so it fails
+    // under load — which is exactly when a full parallel suite runs it — and
+    // passes on an idle machine. It read as a flake in `npm run check` and would
+    // keep reading as one, on a security control whose whole job is to make two
+    // branches indistinguishable in time.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
 
-    await padResponse({
-      startedAt: Date.now(),
-      floorMs: 100,
-      jitterMs: 50,
-      random: () => 0.5,
-      sleep,
-    });
+    try {
+      const { waits, sleep } = fakeSleep();
 
-    expect(waits[0]).toBe(125);
+      await padResponse({
+        startedAt: Date.now(),
+        floorMs: 100,
+        jitterMs: 50,
+        random: () => 0.5,
+        sleep,
+      });
+
+      expect(waits[0]).toBe(125);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('spreads the jitter across its range, so the wait is not a signature', async () => {
