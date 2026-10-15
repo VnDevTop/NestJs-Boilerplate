@@ -97,27 +97,20 @@ infrastructure rather than application code.
 
 ## Known gaps
 
-| #   | Gap                                                                                                                                                                                                                                                   | Where                              |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| 1   | **No tamper-evidence of any kind** — no trigger, no hash chain                                                                                                                                                                                        | `1791800000000-AddAuditLogs.ts`    |
-| 2   | **No admin route to read the trail**                                                                                                                                                                                                                  | `audit/README.md`                  |
-| 3   | `before` is always null, so prior state is unrecoverable from the trail                                                                                                                                                                               | `audit.interceptor.ts`             |
-| 4   | `error` is not passed through the text redactor                                                                                                                                                                                                       | `audit.service.ts`                 |
-| 5   | **Fixed.** `POST /auth/account/erasure` declared `@Audited` with no interceptor bound and `AuthModule` did not import `AuditModule`, so a right-to-erasure wrote no row. Both are in place, and `audit-policy.spec.ts` now asserts the binding itself | was `account-lock.controller.ts`   |
-| 6   | `POST /admin/retention/run` and `/dry-run` are unaudited — the two routes that can hard-delete every user row record only `trigger='admin'`, which carries no actor id                                                                                | `admin/retention.controller.ts`    |
-| 7   | Retention execution is not itself audited                                                                                                                                                                                                             | `maintenance/retention.service.ts` |
-| 8   | `refresh_tokens.jti` is not in `REDACTED_KEYS`                                                                                                                                                                                                        | `core/redact/redact.util.ts`       |
+| #   | Gap                                                                                                                                                                    | Where                              |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| 1   | **No tamper-evidence of any kind** — no trigger, no hash chain                                                                                                         | `1791800000000-AddAuditLogs.ts`    |
+| 2   | **No admin route to read the trail**                                                                                                                                   | `audit/README.md`                  |
+| 3   | `before` is always null, so prior state is unrecoverable from the trail                                                                                                | `audit.interceptor.ts`             |
+| 4   | `error` is not passed through the text redactor                                                                                                                        | `audit.service.ts`                 |
+| 5   | `POST /admin/retention/run` and `/dry-run` are unaudited — the two routes that can hard-delete every user row record only `trigger='admin'`, which carries no actor id | `admin/retention.controller.ts`    |
+| 6   | Retention execution is not itself audited                                                                                                                              | `maintenance/retention.service.ts` |
+| 7   | `refresh_tokens.jti` is not in `REDACTED_KEYS`                                                                                                                         | `core/redact/redact.util.ts`       |
 
-Gap 5 is fixed. It was worth doing first: an erasure request is the most
-sensitive event in a privacy workflow and it left no trace.
-
-The reason it survived is worth recording, because it is a shape this module
-will hit again. Every other assertion in `audit-policy.spec.ts` reads _handler
-metadata_, and handler metadata is happy to describe an intention nobody acts on.
-The erasure route had carried a correct `@Audited` all along and passed every
-one of them. The suite has since grown a second block that reads the
-`__interceptors__` binding on the controller class — which is the thing that was
-actually missing.
+Gap 1 and gap 2 are what a regulator means by audit controls, and neither is a
+library question. Tamper-evidence wants an append-only store the application
+does not own, and a read surface is a permission decision with a retention
+question behind it. Both are listed here because the absence is the finding.
 
 ## Where to go next
 

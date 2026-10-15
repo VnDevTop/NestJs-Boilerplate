@@ -48,10 +48,9 @@ auth
 Single enforcement choke point: `AuthService.assertPasswordAcceptable`, reached
 from both registration and password reset.
 
-> `UsersService.create` is the single writer of `users.password` and it hashes.
-> It did not, and `POST /users` — `@Roles(Admin, SuperAdmin)` +
-> `@Permissions(UserWrite)` — stored the submitted password in clear text. See
-> [users](../users/INTRODUCTION.md).
+> `UsersService` is the only writer of `users.password`, on both the create and
+> the update path, and both hash a plaintext the client supplied. `register`,
+> password reset and an operator reset all reach the same column.
 
 ### Second factor
 
@@ -185,22 +184,21 @@ None of these are code problems, and none are solvable inside this module:
 Written down because a document that lists only strengths is marketing. Each is
 a real gap in the code as it stands, with the file that proves it.
 
-| #   | Gap                                                                                                                                                          | Where                                                     |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
-| 1   | **Fixed** — admin-created users stored a cleartext password. `UsersService.create` is now the sole writer of the column and hashes it                        | was `users.service.ts` `create()`                         |
-| 2   | No idle timeout and no absolute session lifetime                                                                                                             | `refresh-token.entity.ts`                                 |
-| 3   | `PasswordPolicyService.checkForUser()` — the intended uniform policy entry point — **has no callers**                                                        | `password-policy.service.ts`                              |
-| 4   | `LOGIN_MAX_FAILED_ATTEMPTS` / `LOGIN_LOCKOUT_DURATION` are parsed and validated, then **never read**                                                         | `password-policy.config.ts` vs `login-lockout.service.ts` |
-| 5   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration              | `password.util.ts`                                        |
-| 6   | 2FA key derivation is a single unsalted SHA-256 rather than a work-hardened KDF                                                                              | `encryption.util.ts`                                      |
-| 7   | Recovery codes are SHA-256 + salt while passwords are scrypt                                                                                                 | `recovery-code.util.ts`                                   |
-| 8   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                                          | `auth.service.ts` `rotate()`                              |
-| 9   | **Fixed** — the erasure route carried `@Audited` with no interceptor bound and `AuthModule` did not import `AuditModule`, so a right-to-erasure wrote no row | was `account-lock.controller.ts`                          |
-| 10  | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                                | `password-policy.config.ts`                               |
+| #   | Gap                                                                                                                                             | Where                                                     |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| 1   | No idle timeout and no absolute session lifetime                                                                                                | `refresh-token.entity.ts`                                 |
+| 2   | `PasswordPolicyService.checkForUser()` — the intended uniform policy entry point — **has no callers**                                           | `password-policy.service.ts`                              |
+| 3   | `LOGIN_MAX_FAILED_ATTEMPTS` / `LOGIN_LOCKOUT_DURATION` are parsed and validated, then **never read**                                            | `password-policy.config.ts` vs `login-lockout.service.ts` |
+| 4   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`                                        |
+| 5   | 2FA key derivation is a single unsalted SHA-256 rather than a work-hardened KDF                                                                 | `encryption.util.ts`                                      |
+| 6   | Recovery codes are SHA-256 + salt while passwords are scrypt                                                                                    | `recovery-code.util.ts`                                   |
+| 7   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()`                              |
+| 8   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`                               |
 
-Gaps 1 and 9 are fixed; the rest stand. Both were the kind that reads fine in
-review: the create path hashed for its one careful caller and not the other, and
-the erasure route carried a correct `@Audited` that no interceptor ever read.
+These are ordered by how much they cost an operator who inherits the
+repository. The two that were fixed are gone from the list rather than ticked
+off, because a table of things that are fine is noise in a document whose only
+job is the things that are not.
 
 ## Where to go next
 

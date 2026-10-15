@@ -182,6 +182,71 @@ describe('create', () => {
   });
 });
 
+describe('update', () => {
+  it('hashes a password sent in the body rather than storing it', async () => {
+    // The client sends what the user typed. `create` took the same contract since
+    // the cleartext fix; an edit that quietly diverged would reintroduce the bug
+    // one route over, and `merge` assigns every key it is handed, so this is a
+    // real possibility rather than a hypothetical.
+    const h = harness({ rows: [user()] });
+
+    await h.service.update('u1', { password: 'Correct-Horse-1' } as never);
+
+    expect(h.merge).toHaveBeenCalledTimes(1);
+    const changes = h.merge.mock.calls[0]![1] as { password?: string };
+
+    expect(changes.password).toBeDefined();
+    expect(changes.password).not.toBe('Correct-Horse-1');
+    expect(changes.password).toMatch(/^[0-9a-f]{32}:[0-9a-f]{128}$/);
+  });
+
+  it('ends every session when the password changes', async () => {
+    // The half of the change that is easy to leave out. An administrator resetting
+    // a password somebody cannot reach their inbox from is closing a door the old
+    // key still opens; without the bump, every token minted under it keeps working
+    // for the rest of its lifetime and the reset is cosmetic.
+    const h = harness({ rows: [user({ sessionsVersion: 7 })] });
+
+    await h.service.update('u1', { password: 'Correct-Horse-1' } as never);
+
+    const changes = h.merge.mock.calls[0]![1] as { sessionsVersion?: number };
+
+    expect(changes.sessionsVersion).toBe(8);
+  });
+
+  it('leaves the version alone when the password is not part of the edit', async () => {
+    // Bumping unconditionally would sign the user out of every device each time an
+    // operator fixed a typo in a name, which is how a revocation control gets
+    // switched off by whoever it annoys.
+    const h = harness({ rows: [user({ sessionsVersion: 7 })] });
+
+    await h.service.update('u1', { firstName: 'Ada' } as never);
+
+    const changes = h.merge.mock.calls[0]![1] as {
+      sessionsVersion?: number;
+      firstName?: string;
+    };
+
+    expect(changes.sessionsVersion).toBeUndefined();
+    expect(changes.firstName).toBe('Ada');
+  });
+
+  it('never passes the raw password key through to the repository', async () => {
+    // Belt and braces on the destructuring: whatever `changes` was built as, the
+    // value that reaches `merge` is the digest.
+    const h = harness({ rows: [user()] });
+
+    await h.service.update('u1', {
+      firstName: 'Ada',
+      password: 'Correct-Horse-1',
+    } as never);
+
+    const changes = h.merge.mock.calls[0]![1] as Record<string, unknown>;
+
+    expect(Object.values(changes)).not.toContain('Correct-Horse-1');
+  });
+});
+
 describe('findAuthClaims', () => {
   it('reads through the cache under the user key', async () => {
     const h = harness();

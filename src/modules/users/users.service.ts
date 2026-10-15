@@ -297,6 +297,14 @@ export class UsersService {
    * Caught rather than allowed out as a 500: it is a conflict between two requests,
    * not a fault, and a caller that reads 409 knows to reload rather than to page
    * somebody.
+   *
+   * A `password` in the body is a plaintext password, hashed here exactly as
+   * `create` does — the client holds the raw string and the service owns the
+   * digest, so there is one writer of the column and one contract for it. It also
+   * bumps `sessionsVersion`, which is the part that is easy to leave out: an
+   * administrator resetting a password somebody cannot reach their inbox from is
+   * closing a door the old key still opens, and every session minted under that
+   * key would otherwise keep working for the rest of its lifetime.
    */
   async update(
     id: string,
@@ -316,7 +324,20 @@ export class UsersService {
       }
     }
 
-    const updatedUser = this.usersRepository.merge(user, updateUserDto);
+    // Destructured rather than merged as received. `merge` assigns every key it is
+    // handed, so passing the DTO through with `password` still on it would write
+    // the plaintext regardless of anything decided above — the one way this fix
+    // could silently not apply.
+    const { password, ...edits } = updateUserDto;
+
+    const changes: Partial<User> = { ...edits };
+
+    if (password !== undefined) {
+      changes.password = await hashPassword(password);
+      changes.sessionsVersion = user.sessionsVersion + 1;
+    }
+
+    const updatedUser = this.usersRepository.merge(user, changes);
 
     let savedUser: User;
 
