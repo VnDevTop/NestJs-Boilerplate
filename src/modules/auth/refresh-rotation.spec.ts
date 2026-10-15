@@ -54,6 +54,14 @@ function harness(
      */
     revokedReason?: RefreshTokenRevokedReason | null;
     expired?: boolean;
+    /**
+     * How long ago this session began, which is not the same as how long ago
+     * this token was minted. Equal on the first token of a chain, and different on
+     * every one after it — which is the whole reason the column exists.
+     */
+    sessionStartedAgoMs?: number;
+    /** `SESSION_ABSOLUTE_TTL_SECONDS`. Zero disables, as it does in production. */
+    absoluteTtlSeconds?: number;
   } = {},
 ) {
   const order: string[] = [];
@@ -69,6 +77,8 @@ function harness(
         : new Date(),
     revokedReason: options.revokedReason ?? null,
     expiresAt: new Date(Date.now() + (options.expired ? -1000 : 86_400_000)),
+    sessionStartedAt: new Date(Date.now() - (options.sessionStartedAgoMs ?? 0)),
+    createdAt: new Date(),
   };
 
   const issued = {
@@ -164,9 +174,21 @@ function harness(
     {
       lockOnRepeatedFailures: vi.fn(async () => undefined),
     } as never,
+    // Absent everywhere else in this file, so the ceiling is off unless a test
+    // asks for it. Switching it on by default here would mean every assertion
+    // about rotation below was also an assertion about session age.
+    { absoluteTtlSeconds: options.absoluteTtlSeconds ?? 0 } as never,
   );
 
-  return { service, refreshTokenService, deviceService, jwtService, order };
+  return {
+    service,
+    refreshTokenService,
+    deviceService,
+    jwtService,
+    order,
+    current,
+    issued,
+  };
 }
 
 const dto = { refreshToken: 'refresh-token-old' };
@@ -315,5 +337,112 @@ describe('the reuse signal', () => {
       RefreshTokenRevokedReason.ReuseDetected,
       expect.anything(),
     );
+  });
+});
+
+/**
+ * The session's own ceiling.
+ *
+ * `JWT_REFRESH_EXPIRES_IN` is a *sliding* window: every rotation mints a fresh
+ * token with a fresh expiry, so a client that refreshes before it lapses is never
+ * refused and one session can outlive any length of time. This is what stops that,
+ * and it only needs a number carried forward.
+ */
+describe('the absolute session timeout', () => {
+  const THIRTY_DAYS = 30 * 24 * 60 * 60;
+
+  it('refuses a session past its ceiling and issues nothing', async () => {
+    const h = harness({
+      absoluteTtlSeconds: THIRTY_DAYS,
+      sessionStartedAgoMs: (THIRTY_DAYS + 60) * 1000,
+    });
+
+    await expect(
+      h.service.refresh(dto as never, metadata as never),
+    ).rejects.toThrow('Refresh token expired');
+
+    expect(h.refreshTokenService.issue).not.toHaveBeenCalled();
+  });
+
+  it('revokes the token under its own reason, so the record explains itself', async () => {
+    const h = harness({
+      absoluteTtlSeconds: THIRTY_DAYS,
+      sessionStartedAgoMs: (THIRTY_DAYS + 60) * 1000,
+    });
+
+    await h.service
+      .refresh(dto as never, metadata as never)
+      .catch(() => undefined);
+
+    expect(h.refreshTokenService.revokeByJti).toHaveBeenCalledWith(
+      'jti-old',
+      RefreshTokenRevokedReason.AbsoluteTimeout,
+      null,
+      expect.anything(),
+    );
+  });
+
+  it('lets a session inside its ceiling through', async () => {
+    const h = harness({
+      absoluteTtlSeconds: THIRTY_DAYS,
+      sessionStartedAgoMs: (THIRTY_DAYS - 60) * 1000,
+    });
+
+    await expect(
+      h.service.refresh(dto as never, metadata as never),
+    ).resolves.toBeDefined();
+
+    expect(h.refreshTokenService.issue).toHaveBeenCalled();
+  });
+
+  it('carries the start forward, so using the session cannot reset the clock', async () => {
+    // The property that makes it a ceiling rather than another sliding window.
+    // If the replacement token were stamped `now`, every rotation would hand the
+    // session another full allowance and the limit would never be reached.
+    const h = harness({
+      absoluteTtlSeconds: THIRTY_DAYS,
+      sessionStartedAgoMs: (THIRTY_DAYS - 60) * 1000,
+    });
+
+    await h.service.refresh(dto as never, metadata as never);
+
+    expect(h.refreshTokenService.issue).toHaveBeenCalledWith(
+      'u1',
+      expect.anything(),
+      'd1',
+      expect.anything(),
+      h.current.sessionStartedAt,
+    );
+  });
+
+  it('is off at zero, which is how it is switched off', async () => {
+    const h = harness({
+      absoluteTtlSeconds: 0,
+      sessionStartedAgoMs: 10 * 365 * 24 * 60 * 60 * 1000,
+    });
+
+    await expect(
+      h.service.refresh(dto as never, metadata as never),
+    ).resolves.toBeDefined();
+  });
+
+  it('does not answer a stale client with the reuse sweep', async () => {
+    // The reason `AbsoluteTimeout` is not `Rotated`. A phone that was on a train
+    // for a month comes back and presents a token that has already been revoked
+    // under this reason; treating that as theft would revoke every session the
+    // user has, including the one they are signing in to. A user locking
+    // themselves out by leaving a device unattended is a denial of service the
+    // attacker gets for free.
+    const h = harness({
+      absoluteTtlSeconds: THIRTY_DAYS,
+      sessionStartedAgoMs: (THIRTY_DAYS + 60) * 1000,
+    });
+
+    await h.service
+      .refresh(dto as never, metadata as never)
+      .catch(() => undefined);
+
+    expect(h.refreshTokenService.revokeAllByUserId).not.toHaveBeenCalled();
+    expect(h.deviceService.revokeAllByUserId).not.toHaveBeenCalled();
   });
 });

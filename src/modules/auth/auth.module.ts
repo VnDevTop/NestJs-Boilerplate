@@ -27,6 +27,7 @@ import { TwoFactorService } from './two-factor.service.js';
 import { JwtStrategy } from './strategies/index.js';
 import { ConfigService } from '@nestjs/config';
 import { accountSecurityConfig } from '../../configs/account-security.config.js';
+import { sessionConfig } from '../../configs/session.config.js';
 import {
   passwordPolicyConfig,
   type PasswordPolicyConfig,
@@ -83,6 +84,10 @@ import { PasswordHistoryService } from './password-history.service.js';
     // For the permanent lockout. Same reasoning as the policy above: the rule is
     // defined where it is enforced.
     ConfigModule.forFeature(accountSecurityConfig),
+    // For the session's maximum age. Same reasoning again, and this one is
+    // enforced in exactly one place — the rotation — so there is no argument for
+    // putting it anywhere else.
+    ConfigModule.forFeature(sessionConfig),
     // For the breach lookup, which is the one network call the policy can make.
     // Only here so that an application which never sets
     // `PASSWORD_CHECK_BREACH_LIST` has no HTTP client in its graph for it.

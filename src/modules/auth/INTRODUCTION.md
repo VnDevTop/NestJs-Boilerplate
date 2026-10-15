@@ -79,11 +79,23 @@ Optional, off with `TWO_FACTOR_ENABLED=false`.
 | Rotation                  | inside a transaction with `pessimistic_write`, so concurrent refreshes produce one winner |
 | Reuse detection           | replaying a token revoked with reason `Rotated` revokes **every** session of that user    |
 | Revocation scopes         | account (`sv`), device (`dv`), session (`sid`), user row                                  |
-| Idle timeout              | **not implemented**                                                                       |
-| Absolute session lifetime | **not implemented** — a chain refreshed every 6 days lives indefinitely                   |
+| Absolute session lifetime | `SESSION_ABSOLUTE_TTL_SECONDS`, default 30 d — `sessionStartedAt`, checked at rotation    |
 
 Revocation is four counters compared per request, not a lookup, so it survives
 replicas. Each is scoped to something smaller than the one above it.
+
+**The ceiling is checked where a session is extended, not per request.** Only a
+rotation prolongs a session; between refreshes the access token expires on its
+own. So the check costs one comparison at `POST /auth/refresh-token` and nothing
+at all on the request path — no Redis write per request, and no dependency on a
+cache that fails open here. The residue is that an access token minted just before
+the deadline stays valid for up to `JWT_EXPIRES_IN`, which is the same trade every
+stateless access token makes and the reason OAuth's security BCP puts idle
+timeouts at refresh too.
+
+`sessionStartedAt` is carried forward by every rotation rather than read from
+`createdAt`, which slides. That is what makes it a ceiling instead of a second
+sliding window: using the session cannot buy it another allowance.
 
 ### Rate limiting
 
@@ -135,7 +147,7 @@ of the code.
 | Safeguard                                     | Status      | Evidence                                                                                                                                   |
 | --------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | §164.312(a)(2)(i) Unique user identification  | **met**     | `users.id` uuid; `sub` claim; every session and audit row attributes an actor                                                              |
-| §164.312(a)(2)(iii) Automatic logoff          | **absent**  | no idle timeout and no absolute session cap — a chain refreshed before expiry never ends                                                   |
+| §164.312(a)(2)(iii) Automatic logoff          | **partial** | an absolute session ceiling; **no idle timeout**, and an access token lives out its 15 minutes past the deadline                           |
 | §164.312(a)(2)(iv) Encryption and decryption  | **partial** | AES-256-GCM protects the TOTP secret only; `users.email` and all other identifiers are plaintext columns                                   |
 | §164.312(a)(2)(ii) Emergency access procedure | **absent**  | no break-glass identity, no elevated role, no justification field, no time-box                                                             |
 | §164.312(b) Audit controls                    | **partial** | see [audit](../audit/README.md) — rows are written, but append-only is convention only: no DB trigger, no hash chain, and no read surface  |
@@ -158,14 +170,14 @@ Administrative safeguards §164.308 are out of scope for a module: risk analysis
 | A.8.5 Secure authentication                                        | **met**     | second factor, rotation, reuse detection                                                  |
 | A.8.16 Monitoring activities                                       | **partial** | audit rows written for privileged writes; no alerting on auth events beyond mail          |
 | A.8.24 Use of cryptography                                         | **partial** | AES-256-GCM for one field, keyed by scrypt; nothing else at rest is encrypted             |
-| A.8.5 Secure authentication — session management                   | **partial** | no idle or absolute timeout                                                               |
+| A.8.5 Secure authentication — session management                   | **partial** | absolute ceiling enforced at rotation; no idle timeout                                    |
 
 ### OWASP ASVS 4.0.3 (selected)
 
 | Requirement             | Status      | Evidence                                                                                             |
 | ----------------------- | ----------- | ---------------------------------------------------------------------------------------------------- |
 | V2 Authentication       | **met**     |                                                                                                      |
-| V3 Session management   | **partial** | rotation and revocation met; idle timeout and re-authentication absent                               |
+| V3 Session management   | **partial** | rotation, revocation and an absolute ceiling met; idle timeout and re-authentication absent          |
 | V4 Access control       | **met**     |                                                                                                      |
 | V8 Data protection      | **partial** | redaction list covers credentials; see [audit](../audit/README.md) for the columns it does not cover |
 | V12 Files and resources | n/a         | no upload endpoint                                                                                   |
@@ -187,11 +199,11 @@ None of these are code problems, and none are solvable inside this module:
 Written down because a document that lists only strengths is marketing. Each is
 a real gap in the code as it stands, with the file that proves it.
 
-| #   | Gap                                                                                                                                             | Where                        |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| 1   | No idle timeout and no absolute session lifetime                                                                                                | `refresh-token.entity.ts`    |
-| 2   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`           |
-| 3   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()` |
+| #   | Gap                                                                                                                                             | Where                                               |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| 1   | No idle timeout: a session nobody touches is only ended by the refresh token's own window                                                       | `refresh_tokens.createdAt` already holds the answer |
+| 2   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`                                  |
+| 3   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()`                        |
 
 These are ordered by how much they cost an operator who inherits the
 repository. The two that were fixed are gone from the list rather than ticked
