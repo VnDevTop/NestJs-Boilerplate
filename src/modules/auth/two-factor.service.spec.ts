@@ -347,10 +347,13 @@ async function setupWithRecoveryCode() {
     await import('../../common/utils/index.js');
 
   const codes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
-  const hash = hashRecoveryCode(PLAIN_RECOVERY_CODE);
+  // Awaited: the digest is scrypt now, so the harness has to pay the same cost
+  // the service does rather than storing a promise where a string belongs.
+  const hash = await hashRecoveryCode(PLAIN_RECOVERY_CODE);
+  const hashed = await Promise.all(codes.map((code) => hashRecoveryCode(code)));
 
   return harness({
-    record: { recoveryCodes: [...codes.slice(1).map(hashRecoveryCode), hash] },
+    record: { recoveryCodes: [...hashed, hash] },
   });
 }
 

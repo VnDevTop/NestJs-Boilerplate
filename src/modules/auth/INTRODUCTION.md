@@ -64,8 +64,8 @@ Optional, off with `TWO_FACTOR_ENABLED=false`.
   verified on read; key from `TWO_FACTOR_ENCRYPTION_KEY`.
 - Single-use: the last accepted counter is persisted, so a code replayed inside
   its own window is rejected.
-- Ten recovery codes, Crockford base32, SHA-256 + salt, shown once, removed as
-  spent.
+- Ten recovery codes, Crockford base32, scrypt with a per-code salt, shown once,
+  removed as spent.
 - Five failures lock verification for 15 minutes.
 - `POST /auth/login` answers **HTTP 200 with a challenge token**, not a 401, so
   an enabled second factor is not a discovery oracle.
@@ -191,9 +191,8 @@ a real gap in the code as it stands, with the file that proves it.
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | 1   | No idle timeout and no absolute session lifetime                                                                                                | `refresh-token.entity.ts`    |
 | 2   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`           |
-| 3   | Recovery codes are SHA-256 + salt while passwords are scrypt                                                                                    | `recovery-code.util.ts`      |
-| 4   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()` |
-| 5   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`  |
+| 3   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()` |
+| 4   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`  |
 
 These are ordered by how much they cost an operator who inherits the
 repository. The two that were fixed are gone from the list rather than ticked

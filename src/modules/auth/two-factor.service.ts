@@ -152,8 +152,8 @@ export class TwoFactorService {
     record.lastUsedCounter = totp.counter() - delta;
     record.failedAttempts = 0;
     record.lockedUntil = null;
-    record.recoveryCodes = plainCodes.map((plain: string) =>
-      hashRecoveryCode(plain),
+    record.recoveryCodes = await Promise.all(
+      plainCodes.map((plain: string) => hashRecoveryCode(plain)),
     );
 
     await this.twoFactorRepository.save(record);
@@ -174,7 +174,10 @@ export class TwoFactorService {
     // matters for the duration of this call.
     if (
       !this.isCodeAccepted(record, code) &&
-      !this.isRecoveryCode(record, code)
+      // Awaited rather than tested synchronously: a Promise is truthy, so
+      // `!this.isRecoveryCode(...)` would have accepted every wrong code ever
+      // typed. The scrypt derivation behind it is what makes this async.
+      !(await this.isRecoveryCode(record, code))
     ) {
       throw new UnauthorizedException('Invalid verification code');
     }
@@ -197,7 +200,7 @@ export class TwoFactorService {
 
     this.assertNotLocked(record);
 
-    if (this.consumeRecoveryCode(record, code)) {
+    if (await this.consumeRecoveryCode(record, code)) {
       await this.twoFactorRepository.save(record);
 
       return;
@@ -335,16 +338,31 @@ export class TwoFactorService {
     return true;
   }
 
-  private isRecoveryCode(record: TwoFactorSecret, code: string): boolean {
-    return record.recoveryCodes.some((stored: string) =>
-      verifyRecoveryCode(code, stored),
-    );
+  private async isRecoveryCode(
+    record: TwoFactorSecret,
+    code: string,
+  ): Promise<boolean> {
+    for (const stored of record.recoveryCodes) {
+      if (await verifyRecoveryCode(code, stored)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
-  private consumeRecoveryCode(record: TwoFactorSecret, code: string): boolean {
-    const index = record.recoveryCodes.findIndex((stored: string) =>
-      verifyRecoveryCode(code, stored),
-    );
+  private async consumeRecoveryCode(
+    record: TwoFactorSecret,
+    code: string,
+  ): Promise<boolean> {
+    let index = -1;
+
+    for (let i = 0; i < record.recoveryCodes.length; i += 1) {
+      if (await verifyRecoveryCode(code, record.recoveryCodes[i]!)) {
+        index = i;
+        break;
+      }
+    }
 
     if (index < 0) {
       return false;
