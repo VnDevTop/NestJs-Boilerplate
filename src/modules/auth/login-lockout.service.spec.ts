@@ -174,7 +174,11 @@ describe('LoginLockoutService', () => {
       }
 
       // Time moved past the block while the key was still in the store.
-      for (const key of [...h.store.keys()]) {
+      //
+      // No defensive copy of the keys: `store.set` on a key that already exists
+      // does not change a Map's key set, so the iterator is not disturbed. The
+      // copy was a habit from iterating an array that could be appended to.
+      for (const key of h.store.keys()) {
         if (!key.includes(':fail:')) {
           h.store.set(key, String(Date.now() - 1000));
         }
