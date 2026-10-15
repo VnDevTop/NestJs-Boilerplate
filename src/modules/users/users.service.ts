@@ -15,6 +15,8 @@ import {
 import type { CacheConfig } from '../../configs/index.js';
 import { ConfigService } from '@nestjs/config';
 
+import { hashPassword } from '../../common/utils/index.js';
+
 import { NotificationEventsService } from '../notification/notification-events.service.js';
 import { NotificationPreferencesService } from '../notification/notification-preferences.service.js';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto/index.js';
@@ -100,7 +102,30 @@ export class UsersService {
     return this.configService.getOrThrow<CacheConfig>('cache').authUserTtl;
   }
 
-  async create(createUserDto: CreateUserDto): Promise<UserResponseDto> {
+  /**
+   * The single writer of `users.password`, and it hashes.
+   *
+   * `createUserDto.password` is a plaintext password. This method used to write
+   * the string it was given straight to the repository, and that survived review
+   * because its one careful caller pre-hashed first: `AuthService.register` had
+   * to hold the digest anyway, to record it in the password history.
+   *
+   * `POST /users` was the other caller and it had no such reason, so an
+   * administrator creating an account persisted the submitted password in clear
+   * text — a live credential in the one column the rest of the system assumes
+   * holds a scrypt digest.
+   *
+   * It failed quietly, which is why the suite did not catch it.
+   * `verifyPassword` splits the stored value on `:` and returns false when there
+   * is no second part, so the account simply could never sign in: the row was
+   * created, the response was 200, and nothing ever asked that user to
+   * authenticate. A test that only asserted "created" would pass.
+   *
+   * Returns the entity rather than the response DTO because `register` needs the
+   * digest for the history row. Returning the entity where a DTO was returned is
+   * deliberate — the alternative is hashing twice, and scrypt is slow on purpose.
+   */
+  async create(createUserDto: CreateUserDto): Promise<User> {
     const existingUser = await this.findByEmail(createUserDto.email);
 
     if (existingUser) {
@@ -109,7 +134,7 @@ export class UsersService {
 
     const user = this.usersRepository.create({
       email: createUserDto.email,
-      password: createUserDto.password,
+      password: await hashPassword(createUserDto.password),
       firstName: createUserDto.firstName ?? null,
       lastName: createUserDto.lastName ?? null,
       role: createUserDto.role,
@@ -122,7 +147,7 @@ export class UsersService {
     // No invalidation, because there is nothing to invalidate: the id is a fresh
     // uuid, so no entry for it has ever been written and the only one that could
     // be a "no such user" placeholder that this uuid cannot have been asked about.
-    return UserResponseDto.fromEntity(savedUser);
+    return savedUser;
   }
 
   async findAll(): Promise<UserResponseDto[]> {

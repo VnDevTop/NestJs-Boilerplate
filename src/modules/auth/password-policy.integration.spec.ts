@@ -29,6 +29,20 @@ const USER = {
   isEmailVerified: false,
 };
 
+/**
+ * What `UsersService.create` returns: the entity, carrying the digest it wrote.
+ *
+ * Register reads the hash back off this rather than computing its own, so a mock
+ * that omitted `password` would make the history assertion below pass on
+ * `undefined` rather than on a hash.
+ */
+const STORED_USER = {
+  ...USER,
+  // Shaped like the real `salt:derivedKey`, and deliberately not a recognisable
+  // encoding of the plaintext, so the assertions can tell the two apart.
+  password: 'a1b2c3d4e5f60718:0f1e2d3c4b5a69788796a5b4c3d2e1f0',
+};
+
 const METADATA = { deviceName: 'Firefox', ipAddress: '203.0.113.9' };
 
 interface Harness {
@@ -67,7 +81,7 @@ function harness(
     }
   }
 
-  const create = vi.fn(async () => ({ ...USER }));
+  const create = vi.fn(async () => ({ ...STORED_USER }));
   const consume = vi.fn(async () => undefined);
 
   const service = new TestableAuthService(
@@ -156,7 +170,7 @@ describe('the password history', () => {
     h.create.mockImplementation(async () => {
       order.push('create');
 
-      return { ...USER };
+      return { ...STORED_USER };
     });
 
     (

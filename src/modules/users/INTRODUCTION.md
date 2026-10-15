@@ -91,19 +91,21 @@ retention schedule you have decided on.
 
 ## Known gaps
 
-| #   | Gap                                                                                                                                                                                                                                      | Where                         |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| 1   | **`POST /users` stores the submitted password in cleartext** — no `hashPassword`, no policy check, no history entry. The route is `@Roles(Admin, SuperAdmin)` + `@Permissions(UserWrite)`, so this is reachable by a super administrator | `users.service.ts` `create()` |
-| 2   | `GET /users/:id` has no role guard: any authenticated user can read another user's profile including email                                                                                                                               | `users.controller.ts`         |
-| 3   | `GET /users` requires a role but no `UserRead` permission, which exists in the catalogue                                                                                                                                                 | `users.controller.ts`         |
-| 4   | `PATCH /users/:id` can change `role`, `isActive` or `isManager` without bumping `sessionsVersion`; the change reaches the caller on the next request only because the auth cache entry is dropped                                        | `users.service.ts` `update()` |
-| 5   | The export writes **no audit row** — reading a subject's whole record is unrecorded                                                                                                                                                      | `export/export.service.ts`    |
-| 6   | `findAll()` is unpaginated; a `PaginationQueryDto` exists and is unused                                                                                                                                                                  | `users.service.ts`            |
-| 7   | Email is not normalised to lower case on write, contradicting `users/README.md`                                                                                                                                                          | `CreateUserDto`               |
-| 8   | Names carry no `@MaxLength`, so a >100 char name surfaces a database error as a 500                                                                                                                                                      | `create-user.dto.ts`          |
+| #   | Gap                                                                                                                                                                                               | Where                             |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| 1   | **Fixed.** `POST /users` stored the submitted password in clear text. `UsersService.create` is now the single writer of `users.password` and hashes, with `users.service.spec.ts` pinning it      | was `users.service.ts` `create()` |
+| 2   | `GET /users/:id` has no role guard: any authenticated user can read another user's profile including email                                                                                        | `users.controller.ts`             |
+| 3   | `GET /users` requires a role but no `UserRead` permission, which exists in the catalogue                                                                                                          | `users.controller.ts`             |
+| 4   | `PATCH /users/:id` can change `role`, `isActive` or `isManager` without bumping `sessionsVersion`; the change reaches the caller on the next request only because the auth cache entry is dropped | `users.service.ts` `update()`     |
+| 5   | The export writes **no audit row** — reading a subject's whole record is unrecorded                                                                                                               | `export/export.service.ts`        |
+| 6   | `findAll()` is unpaginated; a `PaginationQueryDto` exists and is unused                                                                                                                           | `users.service.ts`                |
+| 7   | Email is not normalised to lower case on write, contradicting `users/README.md`                                                                                                                   | `CreateUserDto`                   |
+| 8   | Names carry no `@MaxLength`, so a >100 char name surfaces a database error as a 500                                                                                                               | `create-user.dto.ts`              |
 
-Gap 1 is a plain-text credential in a database column and is the most urgent
-item in this repository. It is also the one that would fail an audit on its own.
+Gap 1 was a plain-text credential in a database column, and it was the single
+most urgent item here. It is fixed: hashing now happens in `UsersService.create`,
+which is the only writer of the column, and `register` reads the digest back off
+the returned entity rather than hashing a second time.
 
 ## Where to go next
 

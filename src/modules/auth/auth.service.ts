@@ -13,7 +13,6 @@ import { JwtPayload, RequestUser } from '../../common/interfaces/index.js';
 import { MetricsService } from '../../core/metrics/index.js';
 import {
   getRequestId,
-  hashPassword,
   padResponse,
   verifyPassword,
 } from '../../common/utils/index.js';
@@ -127,11 +126,13 @@ export class AuthService {
     // has already charged somebody scrypt for the privilege of being told no.
     await this.assertPasswordAcceptable(registerDto.password);
 
-    const passwordHash = await hashPassword(registerDto.password);
-
+    // The plaintext goes in and `UsersService.create` hashes it. Register used to
+    // hash here and pass the digest, because it needed the digest for the history
+    // row below — which is exactly why the service got away with not hashing, and
+    // why its other caller stored a cleartext password.
     const user = await this.usersService.create({
       email: registerDto.email,
-      password: passwordHash,
+      password: registerDto.password,
       firstName: registerDto.firstName,
       lastName: registerDto.lastName,
     });
@@ -140,9 +141,13 @@ export class AuthService {
     // because `create` is not one. The ordering is the point: a history row whose
     // user does not exist is an orphan the cascade cannot clean up, whereas a
     // missing history row costs a user the ability to reuse this one password.
+    //
+    // The digest is read back off the entity rather than computed again here. One
+    // scrypt call per registration, and the hash recorded is provably the one that
+    // was stored.
     await this.passwordHistory.record(
       user.id,
-      passwordHash,
+      user.password,
       PASSWORD_CHANGE_REASON.Register,
     );
 
