@@ -63,10 +63,11 @@ during exactly the incident you want it for.
 `recoveryCodes` or `authorization` key is replaced with `[redacted]` before the
 row is written, with depth and cycle caps so a hostile body cannot overflow.
 
-**This does not cover the other columns.** `actorEmail`, `ipAddress`,
-`userAgent` and `error` are stored as-is. `error` is the exception message,
-truncated to 500 characters, never passed through the text redactor — so a
-token embedded in an exception message lands verbatim.
+`error` goes through the text redactor before it is clipped — the reverse order
+would keep the first 500 characters, which is exactly where a token in a query
+string sits. `actorEmail`, `ipAddress` and `userAgent` are stored as-is: they are
+personal data by definition, and a redactor that removed them would make the trail
+useless for the incident it exists for.
 
 ## Standards alignment
 
@@ -102,10 +103,8 @@ infrastructure rather than application code.
 | 1   | **No tamper-evidence of any kind** — no trigger, no hash chain                                                                                                         | `1791800000000-AddAuditLogs.ts`    |
 | 2   | **No admin route to read the trail**                                                                                                                                   | `audit/README.md`                  |
 | 3   | `before` is always null, so prior state is unrecoverable from the trail                                                                                                | `audit.interceptor.ts`             |
-| 4   | `error` is not passed through the text redactor                                                                                                                        | `audit.service.ts`                 |
-| 5   | `POST /admin/retention/run` and `/dry-run` are unaudited — the two routes that can hard-delete every user row record only `trigger='admin'`, which carries no actor id | `admin/retention.controller.ts`    |
-| 6   | Retention execution is not itself audited                                                                                                                              | `maintenance/retention.service.ts` |
-| 7   | `refresh_tokens.jti` is not in `REDACTED_KEYS`                                                                                                                         | `core/redact/redact.util.ts`       |
+| 4   | `POST /admin/retention/run` and `/dry-run` are unaudited — the two routes that can hard-delete every user row record only `trigger='admin'`, which carries no actor id | `admin/retention.controller.ts`    |
+| 5   | Retention execution is not itself audited                                                                                                                              | `maintenance/retention.service.ts` |
 
 Gap 1 and gap 2 are what a regulator means by audit controls, and neither is a
 library question. Tamper-evidence wants an append-only store the application

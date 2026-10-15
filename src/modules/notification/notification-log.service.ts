@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 
 import { MetricsService } from '../../core/metrics/index.js';
+import { redactText } from '../../core/redact/index.js';
 import { NotificationLog } from './entities/index.js';
 import type { NotificationLogWriter } from './notification.service.js';
 import type { LogEntry } from './types/index.js';
@@ -53,8 +54,12 @@ export class NotificationLogService implements NotificationLogWriter {
         delivered: entry.delivered,
         statusCode: entry.statusCode ?? null,
         attempts: entry.attempts,
-        error: clip(entry.error, ERROR_LIMIT),
-        body: clip(entry.body, BODY_LIMIT),
+        // Both go through `redactText`. The body is rendered event text carrying
+        // addresses and device labels, and the error is whatever a webhook
+        // transport raised — which, for a malformed URL, is the URL itself with
+        // the secret still in it.
+        error: clipRedacted(entry.error, ERROR_LIMIT),
+        body: clipRedacted(entry.body, BODY_LIMIT),
       });
     } catch (error) {
       this.logger.error(
@@ -88,4 +93,9 @@ function clip(value: string | undefined, limit: number): string | null {
   }
 
   return value.length <= limit ? value : `${value.slice(0, limit)}…`;
+}
+
+/** Redact first, then clip: the reverse keeps the prefix a token sits in. */
+function clipRedacted(value: string | undefined, limit: number): string | null {
+  return value === undefined ? null : clip(redactText(value), limit);
 }

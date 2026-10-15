@@ -26,7 +26,25 @@ describe('postJson', () => {
   it('refuses a malformed url', async () => {
     await expect(
       postJson(httpReturning(200, ''), { url: 'not-a-url', body: {} }),
-    ).rejects.toThrow(/Invalid url/);
+    ).rejects.toThrow(/Invalid webhook url/);
+  });
+
+  it('never puts the url in that message, because a webhook url is the credential', async () => {
+    // Slack and Discord incoming webhooks carry the bot token in the path. This
+    // message is caught by the notification service into an `error` field, and
+    // that field is a database column — so echoing the input here wrote a live
+    // credential into `notification_logs`.
+    // A bad port, so `new URL` genuinely throws rather than quietly normalising.
+    const webhook = 'https://hooks.slack.com:not-a-port/services/T1/B1/x';
+
+    const error = await postJson(httpReturning(200, ''), {
+      url: webhook,
+      body: {},
+    }).catch((e: Error) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain('/services/');
+    expect((error as Error).message).not.toContain('slack.com');
   });
 
   it('posts the body to the url', async () => {

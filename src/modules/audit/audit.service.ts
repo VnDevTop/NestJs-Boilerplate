@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryDeepPartialEntity, Repository } from 'typeorm';
 
 import { AuditLog, type AuditSnapshot } from './entities/index.js';
-import { redactValue } from '../../core/redact/index.js';
+import { redactText, redactValue } from '../../core/redact/index.js';
 
 /**
  * Who did it. Snapshotted, not joined — see the entity.
@@ -117,7 +117,11 @@ export class AuditService {
         requestId: context.requestId,
         outcome: entry.outcome,
         statusCode: entry.statusCode ?? null,
-        error: entry.error?.slice(0, 500) ?? null,
+        // Redacted before the clip, not after. Clipping first is the obvious order
+        // and it is wrong: it keeps the first 500 characters, which is precisely
+        // where a token in a query string sits. An exception message reaches here
+        // verbatim from whatever raised it, and those routinely carry a URL.
+        error: entry.error ? redactText(entry.error).slice(0, 500) : null,
       };
 
       // One cast, at the boundary. TypeORM's `QueryDeepPartialEntity` distributes

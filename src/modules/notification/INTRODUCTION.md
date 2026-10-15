@@ -81,6 +81,13 @@ records `error: 'muted by the recipient'` with `attempts: 0`. A skipped alert is
 therefore visible rather than invisible. Columns: event, channel, user, recipient,
 delivered, status, attempts, `requestId` (indexed), error, body.
 
+`error` and `body` are redacted and only then clipped, in that order — clipping
+first keeps the first 500 characters, which is where a credential in a url sits.
+Three pinned patterns cover the shapes where the credential _is_ the path:
+`hooks.slack.com/services/…`, `discord.com/api/webhooks/…` and
+`api.telegram.org/bot…`. They are pinned to those hosts so an ordinary url in a
+log line keeps its path, which is usually the part a reader wanted.
+
 Retention: 30 days.
 
 ## Security controls
@@ -111,18 +118,16 @@ Not a compliance claim — see [../auth/INTRODUCTION.md](../auth/INTRODUCTION.md
 
 ## Known gaps
 
-| #   | Gap                                                                                                                                                                                                     | Where                                        |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| 1   | **Webhook credentials can reach `notification_logs.error`** — `postJson`'s parse failure interpolates the full URL, secret included, into an error message that is stored                               | `core/optional/transports/json-poster.ts:41` |
-| 2   | `notification_logs.body` and `.error` are **not redacted** — they hold emails, device labels, IPs                                                                                                       | `notification-log.service.ts`                |
-| 3   | **A user can mute security events about their own account**, including `auth.account.locked`, because every per-user event honours the opt-out. There is no "security events are non-mutable" carve-out | `notification-preferences.service.ts`        |
-| 4   | Nothing reads `notification_logs` through the API — `recent()` and `forNotification()` exist with no route behind them                                                                                  | `notification-log.service.ts`                |
-| 5   | A failed preference lookup delivers anyway — by design, but a mute is not guaranteed under a partial outage                                                                                             | `notification.service.ts`                    |
-| 6   | Preferences cache at the auth TTL (~60 s), so a mute is not immediate                                                                                                                                   | `notification-preferences.service.ts`        |
-| 7   | A redelivery of a subject-less event can deliver twice — the dedupe key carries a fresh uuid unless the caller passes `subjectId`                                                                       | `notification-events.service.ts`             |
-| 8   | The email channel is enqueued twice, once directly and once by the mail job it delegates to                                                                                                             | `email.channel.ts`                           |
-| 9   | `NOTIFICATION_THROW_ON_FAILURE` left `true` in production turns a broken webhook into a failing job, and nothing warns                                                                                  | `notification.config.ts`                     |
-| 10  | A malformed Telegram topic pair is silently dropped                                                                                                                                                     | `notification.config.ts`                     |
+| #   | Gap                                                                                                                                                                                                     | Where                                 |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| 1   | **A user can mute security events about their own account**, including `auth.account.locked`, because every per-user event honours the opt-out. There is no "security events are non-mutable" carve-out | `notification-preferences.service.ts` |
+| 2   | Nothing reads `notification_logs` through the API — `recent()` and `forNotification()` exist with no route behind them                                                                                  | `notification-log.service.ts`         |
+| 3   | A failed preference lookup delivers anyway — by design, but a mute is not guaranteed under a partial outage                                                                                             | `notification.service.ts`             |
+| 4   | Preferences cache at the auth TTL (~60 s), so a mute is not immediate                                                                                                                                   | `notification-preferences.service.ts` |
+| 5   | A redelivery of a subject-less event can deliver twice — the dedupe key carries a fresh uuid unless the caller passes `subjectId`                                                                       | `notification-events.service.ts`      |
+| 6   | The email channel is enqueued twice, once directly and once by the mail job it delegates to                                                                                                             | `email.channel.ts`                    |
+| 7   | `NOTIFICATION_THROW_ON_FAILURE` left `true` in production turns a broken webhook into a failing job, and nothing warns                                                                                  | `notification.config.ts`              |
+| 8   | A malformed Telegram topic pair is silently dropped                                                                                                                                                     | `notification.config.ts`              |
 
 Gap 3 deserves a decision rather than a fix. An opt-out that a subject can
 exercise over the alerts telling them their account was attacked is arguably

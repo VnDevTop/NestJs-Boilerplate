@@ -69,6 +69,10 @@ No foreign key to `users` — deliberately, so the evidence that a message was
 attempted outlives the account. Retention is 30 days by default, framed as a
 data-retention decision because the recipient column is personal data.
 
+`error` passes through the text redactor before it is clipped. Provider error
+bodies quote the request that produced them, and a request to a webhook-shaped
+endpoint carries the credential in its url.
+
 ## Template safety
 
 A database-stored template is operator-authored, so it is treated as untrusted
@@ -108,15 +112,14 @@ gated, audited, and why editing is versioned rather than free-form.
 
 ## Known gaps
 
-| #   | Gap                                                                                                                                                   | Where                                |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| 1   | **`mail_logs.error` is not redacted** — a provider error body can contain a token, an SMTP auth string or an address, stored verbatim up to 500 chars | `mail-log.service.ts`                |
-| 2   | A configured-but-uninstalled provider degrades to memory silently — logged at `error`, but delivery becomes a no-op                                   | `mail.service.ts`                    |
-| 3   | SES and SendGrid accept **no timeout configuration**                                                                                                  | transports                           |
-| 4   | `updatedBy` is always null, so template version history has no editor                                                                                 | `admin/mail-templates.controller.ts` |
-| 5   | SMTP `STARTTLS` is not required in code                                                                                                               | `smtp.transport.ts`                  |
-| 6   | There is no DKIM/SPF guidance anywhere in the repo — deliverability and spoofing resistance are entirely the operator's problem                       | —                                    |
-| 7   | The mail path awaits the enqueue and propagates a queue rejection, unlike the notification path which swallows it                                     | `mail.service.ts`                    |
+| #   | Gap                                                                                                                             | Where                                |
+| --- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| 1   | A configured-but-uninstalled provider degrades to memory silently — logged at `error`, but delivery becomes a no-op             | `mail.service.ts`                    |
+| 2   | SES and SendGrid accept **no timeout configuration**                                                                            | transports                           |
+| 3   | `updatedBy` is always null, so template version history has no editor                                                           | `admin/mail-templates.controller.ts` |
+| 4   | SMTP `STARTTLS` is not required in code                                                                                         | `smtp.transport.ts`                  |
+| 5   | There is no DKIM/SPF guidance anywhere in the repo — deliverability and spoofing resistance are entirely the operator's problem | —                                    |
+| 6   | The mail path awaits the enqueue and propagates a queue rejection, unlike the notification path which swallows it               | `mail.service.ts`                    |
 
 ## Where to go next
 

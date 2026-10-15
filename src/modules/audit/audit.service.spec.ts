@@ -260,6 +260,31 @@ describe('writing the row', () => {
     });
   });
 
+  it('redacts a credential out of the error text', async () => {
+    // Clipping first is the obvious order and it is wrong: it keeps the first 500
+    // characters, which is exactly where a token in a query string sits. The
+    // message arrives verbatim from whatever raised it.
+    const h = harness();
+
+    await h.service.record(
+      {
+        actor: { id: null, email: null, type: 'anonymous' },
+        action: 'auth.login',
+        targetType: 'user',
+        targetId: 'u1',
+        outcome: 'failure',
+        statusCode: 401,
+        error: 'reset failed for /auth/reset-password?token=super-secret-value',
+      },
+      context,
+    );
+
+    const { error } = rowOf(h.insert) as { error: string };
+
+    expect(error).not.toContain('super-secret-value');
+    expect(error).toContain('[redacted]');
+  });
+
   it('records failures as well as successes', async () => {
     // The half most systems skip. A permission that was refused is evidence; a
     // permission that was never asked for is not.

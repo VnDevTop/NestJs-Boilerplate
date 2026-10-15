@@ -44,6 +44,40 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe('what the redactor does before the clip', () => {
+  it('removes a credential from the error text', async () => {
+    const h = harness();
+
+    await h.service.record({
+      ...ENTRY,
+      delivered: false,
+      error:
+        'post failed for https://hooks.slack.com/services/T0/B0/XXXXsecretXXXX',
+    });
+
+    const written = h.insert.mock.calls[0]![0] as { error: string };
+
+    // The host and `/services/` survive — they are the anchor that tells a reader
+    // which integration produced the line. Everything after them is the secret.
+    expect(written.error).toContain('https://hooks.slack.com/services/');
+    expect(written.error).not.toContain('T1/B1/x');
+  });
+
+  it('removes a credential query parameter from the body', async () => {
+    const h = harness();
+
+    await h.service.record({
+      ...ENTRY,
+      body: 'Reset link: https://app.example.com/reset?token=abc123def456',
+    });
+
+    const written = h.insert.mock.calls[0]![0] as { body: string };
+
+    expect(written.body).not.toContain('abc123def456');
+    expect(written.body).toContain('[redacted]');
+  });
+});
+
 describe('record', () => {
   it('writes the row the delivery needs to be reconstructed', async () => {
     const h = harness();

@@ -70,6 +70,32 @@ function harness() {
 }
 
 type WriteEntry = Parameters<MailLogWriter['record']>[0];
+describe('the error column', () => {
+  it('redacts a credential the provider quoted back', async () => {
+    // SMTP and HTTP providers echo the request that failed, and a request to a
+    // webhook-shaped endpoint carries the secret in its url.
+    const h = harness();
+
+    await h.service.record({
+      mailId: 'm1',
+      template: 'welcome',
+      to: 'ada@example.com',
+      transport: 'sendgrid',
+      delivered: false,
+      attempt: 1,
+      error:
+        '401 from https://api.example.com/v3/mail/send?api_key=sk-live-abc123',
+    });
+
+    // Read the argument rather than the harness's own accumulator: the harness
+    // stores what it was handed, so asking it would test the harness.
+    const written = h.insert.mock.calls[0]![0] as MailLog;
+
+    expect(written.error).not.toContain('sk-live-abc123');
+    expect(written.error).toContain('[redacted]');
+  });
+});
+
 describe('a successful send', () => {
   it('records everything needed to answer the question later', async () => {
     const h = harness();
