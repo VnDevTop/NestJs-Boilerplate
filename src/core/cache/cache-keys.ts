@@ -7,6 +7,14 @@ export const CACHE_NAMESPACE = {
   Role: 'role',
   Device: 'device',
   Token: 'token',
+  /**
+   * Mail template source, added by Phase 22.
+   *
+   * One key per template *and locale*, so a deployment that later resolves a second
+   * locale does not serve the `en` row for it, and so a `KEYS` scan says which
+   * template somebody is asking about.
+   */
+  Mail: 'mail',
 } as const;
 
 export type CacheNamespace =
