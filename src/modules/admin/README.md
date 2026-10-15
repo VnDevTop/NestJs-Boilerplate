@@ -1,3 +1,6 @@
+> **Start with [INTRODUCTION.md](INTRODUCTION.md)** — operator surfaces, and where authorisation is narrowest. This file is the detailed reference for _why_ each decision is what
+> it is.
+
 # Admin
 
 Operator-only routes, kept in their own module so the scope is obvious from the

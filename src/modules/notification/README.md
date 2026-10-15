@@ -1,3 +1,6 @@
+> **Start with [INTRODUCTION.md](INTRODUCTION.md)** — operator alerts, channels and per-user opt-out. This file is the detailed reference for _why_ each decision is what
+> it is.
+
 # Notifications
 
 Operational alerts to Telegram, Slack, Discord, an operator mailbox or the log.

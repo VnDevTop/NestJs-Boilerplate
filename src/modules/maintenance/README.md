@@ -1,3 +1,6 @@
+> **Start with [INTRODUCTION.md](INTRODUCTION.md)** — nightly retention, batching, and the rehearsal mode. This file is the detailed reference for _why_ each decision is what
+> it is.
+
 # Maintenance
 
 Housekeeping that runs on its own: deleting rows that can no longer be useful.

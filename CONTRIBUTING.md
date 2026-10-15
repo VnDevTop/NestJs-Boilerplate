@@ -5,23 +5,29 @@ the bar is mostly about clarity rather than cleverness.
 
 ## Getting set up
 
+The full guide is [docs/installation.md](docs/installation.md). The short
+version:
+
 ```bash
 git clone https://github.com/VnDevTop/NestJs-Boilerplate.git
-cd NestJs-Boilerplate
+cd NestJs-BoilerPlate
 npm install          # also installs the git hooks through the prepare script
 cp .env.example .env
+docker compose up --build   # postgres, valkey, migrations, and the app
 ```
 
-You need Node 22 or newer. Then a database and a cache:
+Or, with your own database and cache already running:
 
 ```bash
-docker compose up -d postgres valkey
+npm install
+cp .env.example .env        # then fill in DATABASE_URL and CACHE_URL
 npm run migration:run
-npm run seed         # prints a generated admin password once
+npm run seed                # prints a generated admin password once
 npm run start:dev
 ```
 
-The app is on `http://localhost:3000/api/v1`, the docs on `/docs`.
+You need Node 22 or newer. The app is on `http://localhost:3000/api/v1`, the
+docs on `/docs`.
 
 ## Before you push
 
@@ -149,3 +155,19 @@ failing test or a log line with the request id is worth more than a description.
 
 Security issues should not go through the public tracker. See
 [SECURITY.md](SECURITY.md).
+
+## Agent-assisted contributions
+
+Parts of this repository were written with [OpenCode](https://opencode.ai), and
+that is credited in the README rather than left to be inferred from the commit
+style. Nothing about that lowers the bar for a pull request.
+
+- The reasoning in a commit body is the agent's, not a human's retrospective.
+  Treat it as a first draft to review, not a decision already made.
+- An agent cannot tell you _why_ a design is the way it is. Ask.
+- The same applies to `PLAN.md`: its security notes are arguments, not proofs,
+  and the review of them is the contribution.
+
+Running the agent yourself is fine. The pre-commit hooks, `npm run check` and
+the CI workflow are the same for a human and for a tool — nothing in this
+repository detects who or what made the change, and nothing should.

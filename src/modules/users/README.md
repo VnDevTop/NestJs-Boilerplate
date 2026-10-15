@@ -1,3 +1,6 @@
+> **Start with [INTRODUCTION.md](INTRODUCTION.md)** — the user domain and the data-subject rights that attach to it. This file is the detailed reference for _why_ each decision is what
+> it is.
+
 # Users
 
 The user domain and the only place that owns the `users` table.
@@ -35,13 +38,13 @@ it even by accident.
 
 ## Authorisation on the routes
 
-| Route | Guard |
-| --- | --- |
-| `POST /users` | `@Roles(Admin, SuperAdmin)` |
-| `GET /users` | `@Roles(Admin, SuperAdmin)` |
-| `PATCH /users/:id` | `@Roles(Admin, SuperAdmin)` |
+| Route               | Guard                       |
+| ------------------- | --------------------------- |
+| `POST /users`       | `@Roles(Admin, SuperAdmin)` |
+| `GET /users`        | `@Roles(Admin, SuperAdmin)` |
+| `PATCH /users/:id`  | `@Roles(Admin, SuperAdmin)` |
 | `DELETE /users/:id` | `@Roles(Admin, SuperAdmin)` |
-| `GET /users/:id` | authenticated only |
+| `GET /users/:id`    | authenticated only          |
 
 ## Open decision
 

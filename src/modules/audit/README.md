@@ -1,3 +1,6 @@
+> **Start with [INTRODUCTION.md](INTRODUCTION.md)** — what is recorded, what is not, and what cannot be proven. This file is the detailed reference for _why_ each decision is what
+> it is.
+
 # Audit
 
 Who did what, to which row, from where, in which request.
