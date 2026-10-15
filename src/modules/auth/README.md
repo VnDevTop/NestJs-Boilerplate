@@ -1,5 +1,10 @@
 # Auth
 
+> **Start with [INTRODUCTION.md](INTRODUCTION.md)** — the consolidated feature
+> summary, the mapping to HIPAA §164.312 / ISO 27001 / OWASP ASVS, and the list
+> of gaps a standards audit would find. This file is the detailed reference for
+> _why_ each decision is what it is.
+
 Sessions: sign in, refresh, devices and two-factor. The largest module, because
 the interesting parts of session handling are not the password check.
 

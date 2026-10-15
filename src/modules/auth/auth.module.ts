@@ -27,6 +27,7 @@ import { TwoFactorService } from './two-factor.service.js';
 import { JwtStrategy } from './strategies/index.js';
 import { ConfigService } from '@nestjs/config';
 import { accountSecurityConfig } from '../../configs/account-security.config.js';
+import { sessionConfig } from '../../configs/session.config.js';
 import {
   passwordPolicyConfig,
   type PasswordPolicyConfig,
@@ -34,6 +35,7 @@ import {
 import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
 import { MetricsModule } from '../../core/metrics/index.js';
 import { MailModule } from '../mail/mail.module.js';
+import { AuditModule } from '../audit/audit.module.js';
 import { LoginLockoutService } from './login-lockout.service.js';
 import { QueueModule } from '../queue/index.js';
 import { NotificationEventsModule } from '../notification/notification-events.module.js';
@@ -71,6 +73,10 @@ import { PasswordHistoryService } from './password-history.service.js';
     // two-factor change all raise one. Above the queue, like the mail enqueue, so
     // nothing here depends on a channel being reachable.
     NotificationEventsModule,
+    // For the audit interceptor `AccountLockController` binds, so the erasure
+    // request writes a row. `AuditModule` imports nothing but TypeORM, so this
+    // edge is one-directional and cannot close a cycle.
+    AuditModule,
     // The policy is defined next to the endpoints that enforce it, which is what
     // the config's own docblock has claimed since Phase 13 and what was not true
     // until now: the namespace existed and nothing read it.
@@ -78,6 +84,10 @@ import { PasswordHistoryService } from './password-history.service.js';
     // For the permanent lockout. Same reasoning as the policy above: the rule is
     // defined where it is enforced.
     ConfigModule.forFeature(accountSecurityConfig),
+    // For the session's maximum age. Same reasoning again, and this one is
+    // enforced in exactly one place — the rotation — so there is no argument for
+    // putting it anywhere else.
+    ConfigModule.forFeature(sessionConfig),
     // For the breach lookup, which is the one network call the policy can make.
     // Only here so that an application which never sets
     // `PASSWORD_CHECK_BREACH_LIST` has no HTTP client in its graph for it.

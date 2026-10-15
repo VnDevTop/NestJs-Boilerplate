@@ -71,11 +71,18 @@ export class RefreshTokenService {
     return this.dataSource.transaction(handler);
   }
 
+  /**
+   * @param sessionStartedAt carried forward by a rotation so the chain keeps one
+   *   start time. Defaults to now, which is correct for a new session and wrong
+   *   for every token after the first — `rotate()` passes the current value
+   *   explicitly, and forgetting to is how a ceiling silently stops applying.
+   */
   async issue(
     userId: string,
     metadata: TokenMetadata,
     deviceId: string | null = null,
     manager: EntityManager = this.store,
+    sessionStartedAt: Date = new Date(),
   ): Promise<IssuedRefreshToken> {
     const jti = randomUUID();
 
@@ -93,6 +100,7 @@ export class RefreshTokenService {
       userId,
       jti,
       expiresAt: new Date((exp ?? 0) * 1000),
+      sessionStartedAt,
       revokedAt: null,
       revokedReason: null,
       replacedById: null,

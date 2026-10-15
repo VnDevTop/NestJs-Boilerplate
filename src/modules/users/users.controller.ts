@@ -67,8 +67,14 @@ export class UsersController {
   @Post()
   @ApiOperation({ summary: 'Create a user' })
   @ApiOkResponse({ type: UserResponseDto })
-  create(@Body() createUserDto: CreateUserDto): Promise<UserResponseDto> {
-    return this.usersService.create(createUserDto);
+  // The service returns the entity, because it is the only writer of
+  // `users.password` and `register` needs the digest it produced for the
+  // password history. Mapping to the response DTO here keeps the hash off the
+  // wire and out of the audit row's `after` snapshot.
+  async create(@Body() createUserDto: CreateUserDto): Promise<UserResponseDto> {
+    const user = await this.usersService.create(createUserDto);
+
+    return UserResponseDto.fromEntity(user);
   }
 
   @Roles(Role.Admin, Role.SuperAdmin)

@@ -23,10 +23,7 @@ import type { AppConfig } from '../../configs/app.config.js';
 import type { User } from '../users/entities/index.js';
 import { UsersService } from '../users/users.service.js';
 import { AccountUnlockToken } from './entities/index.js';
-import {
-  LOCKOUT_THRESHOLD,
-  LoginLockoutService,
-} from './login-lockout.service.js';
+import { LoginLockoutService } from './login-lockout.service.js';
 import { MailService } from '../mail/index.js';
 import {
   dedupeKey,
@@ -132,12 +129,20 @@ export class AccountLockService {
     // Zero, or at or below the temporary threshold: disabled.
     //
     // The second half is a guard against a configuration rather than a state. At or
-    // below `LOCKOUT_THRESHOLD` the permanent lock would fire on the very attempt
-    // that starts the temporary block, and the temporary block lifts on its own — so
-    // the account would be locked and unlocked minutes apart with an email in
-    // between, which is an outage wearing a lockout's clothes. Treating it as off is
-    // quieter than locking and immediately ignoring ourselves.
-    if (threshold <= LOCKOUT_THRESHOLD || failures !== threshold) {
+    // below the temporary threshold the permanent lock would fire on the very
+    // attempt that starts the temporary block, and the temporary block lifts on its
+    // own — so the account would be locked and unlocked minutes apart with an email
+    // in between, which is an outage wearing a lockout's clothes. Treating it as
+    // off is quieter than locking and immediately ignoring ourselves.
+    //
+    // Asked of `loginLockout` rather than read from the `LOCKOUT_THRESHOLD` export,
+    // because the export is now only the default: an operator who raised
+    // `LOGIN_MAX_FAILED_ATTEMPTS` to 10 and left `ACCOUNT_PERMANENT_LOCK_THRESHOLD`
+    // at 20 gets a working temporary lock, and comparing against a hard-coded 5
+    // would have disabled the permanent one entirely.
+    const temporaryThreshold = this.loginLockout.threshold;
+
+    if (threshold <= temporaryThreshold || failures !== threshold) {
       return;
     }
 

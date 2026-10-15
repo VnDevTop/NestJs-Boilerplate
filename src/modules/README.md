@@ -7,11 +7,34 @@ modules
 ├── auth/       sign in, sessions, devices, two-factor, permissions, lockout
 ├── users/      the user domain and its permissions
 ├── admin/      operator-only routes
+├── audit/      who did what, to which row, from where
 ├── mail/       transactional email, queued, swappable transport
 ├── queue/      background jobs, with an in-process fallback
 ├── maintenance/ nightly retention, batching, dry run
 └── notification/ operator alerts to Telegram, Slack, Discord, email, log
 ```
+
+Each module has two documents. `INTRODUCTION.md` is the consolidated summary: the
+feature list, the mapping to HIPAA §164.312 / ISO 27001 / OWASP ASVS, and an
+honest gap table. `README.md` is the detailed reference explaining _why_ each
+decision is what it is.
+
+| Module                                       | Introduction                                         |
+| -------------------------------------------- | ---------------------------------------------------- |
+| [auth](auth/INTRODUCTION.md)                 | identity, sessions, authorisation, standards mapping |
+| [users](users/INTRODUCTION.md)               | the user domain, data-subject rights                 |
+| [admin](admin/INTRODUCTION.md)               | operator surfaces and narrow authorisation           |
+| [audit](audit/INTRODUCTION.md)               | the privileged-action trail                          |
+| [mail](mail/INTRODUCTION.md)                 | templates, transports, delivery records              |
+| [queue](queue/INTRODUCTION.md)               | drivers, retry, idempotency                          |
+| [maintenance](maintenance/INTRODUCTION.md)   | retention, batching, rehearsal                       |
+| [notification](notification/INTRODUCTION.md) | operator alerts and opt-out                          |
+
+**The standards mappings are technical, not compliance claims.** A control being
+present is one input to an assessment; HIPAA compliance additionally requires
+administrative and physical safeguards, policies, training, a risk analysis and
+a Business Associate Agreement, none of which are software. Where a control is
+partial or absent, the table says so.
 
 ## Rules
 

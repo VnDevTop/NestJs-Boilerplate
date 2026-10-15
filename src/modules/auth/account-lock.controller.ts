@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
@@ -36,6 +37,7 @@ import { RequestErasureDto } from './dto/request-erasure.dto.js';
 import { UsersService } from '../users/users.service.js';
 import { RequestUnlockDto } from './dto/request-unlock.dto.js';
 import { AccountLockService } from './account-lock.service.js';
+import { AuditInterceptor } from '../audit/audit.interceptor.js';
 
 /**
  * The permanent lockout's three routes, together.
@@ -52,6 +54,19 @@ import { AccountLockService } from './account-lock.service.js';
  */
 @ApiTags('Auth')
 @Controller('auth/account')
+// Bound at the controller, like `UsersController`, because it costs nothing on the
+// routes that carry no `@Audited`: the interceptor returns `next.handle()`
+// untouched when the metadata is absent, without reading the request or the
+// database.
+//
+// This binding is load-bearing rather than decorative. `POST /erasure` has
+// carried `@Audited` since it was written, and nothing ever read the metadata,
+// because the interceptor was never attached — so a right-to-erasure, the most
+// sensitive event in a privacy workflow, left no audit row at all. The decorator
+// was documentation of an intention that no test could catch: `audit-policy.spec`
+// reads handler metadata and asserts the action names are right, and it passes
+// just as happily on metadata that will never be consumed.
+@UseInterceptors(AuditInterceptor)
 export class AccountLockController {
   constructor(
     private readonly accountLock: AccountLockService,

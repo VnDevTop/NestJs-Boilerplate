@@ -38,7 +38,15 @@ export async function postJson(
   try {
     url = new URL(options.url);
   } catch {
-    throw new Error(`Invalid url: ${options.url}`);
+    // The url itself, never. Slack and Discord incoming webhooks carry the bot
+    // credential in the path, and this message travels — the notification service
+    // catches it into an `error` field, and that field is a database column.
+    // Saying nothing about the input is enough: a url that will not parse is one
+    // of the settings, and an operator has two.
+    throw new Error(
+      'Invalid webhook url: expected an absolute https url. ' +
+        'If this is Slack or Discord, check the webhook URL for a stray character.',
+    );
   }
 
   if (url.protocol !== 'https:') {

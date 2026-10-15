@@ -36,8 +36,19 @@ describe('a key that names a credential', () => {
     'cookie',
     'apiKey',
     'signature',
+    'jti',
   ])('has %s in the list', (key) => {
     expect(REDACTED_KEYS.has(key.toLowerCase())).toBe(true);
+  });
+
+  it('carries the refresh token id, which is the half of the revocation key', () => {
+    // `token:revoked:<jti>` is how a session is killed, so a jti is not an access
+    // credential — but it is the piece somebody with a log can use to enumerate
+    // which sessions exist and which were cut. The row that carries it is
+    // `{ jti: ... }`, so this is the name redaction matches on.
+    const redacted = redactValue({ jti: '0f8a-4c21-9b', userId: 'u1' });
+
+    expect(redacted).toEqual({ jti: REDACTED, userId: 'u1' });
   });
 
   it('is matched whatever the casing, because a header arrives however it arrives', () => {
@@ -174,6 +185,38 @@ describe('scrubbing a sentence', () => {
     expect(redactText('Set-Cookie: session=abc; HttpOnly')).toBe(
       `Set-Cookie: ${REDACTED}`,
     );
+  });
+
+  it.each([
+    [
+      'a slack webhook',
+      'post failed for https://hooks.slack.com/services/T1/B1/x',
+    ],
+    [
+      'a discord webhook',
+      'post failed for https://discord.com/api/webhooks/1/y',
+    ],
+    [
+      'a telegram bot',
+      'post failed for https://api.telegram.org/bot1:1/sendMessage',
+    ],
+  ])('redacts %s, where the credential is the path', (_label, input) => {
+    // None of the patterns above can see these: there is no `key=value`, no
+    // header and no bearer token, just a url that is itself the secret. They reach
+    // logs through exception messages from the transports that post to them.
+    const scrubbed = redactText(input);
+
+    expect(scrubbed).not.toBe(input);
+    expect(scrubbed).toContain(REDACTED);
+  });
+
+  it('keeps the path of an ordinary url, which is what the reader wanted', () => {
+    // The reason those three patterns are pinned to their hosts. Redacting every
+    // url path would make this list fire on ordinary prose, and a redactor that
+    // cries wolf is one people switch off.
+    expect(
+      redactText('migrated 12 rows at /api/v1/users/me/export?format=csv'),
+    ).toBe('migrated 12 rows at /api/v1/users/me/export?format=csv');
   });
 
   it('leaves ordinary text alone, because a redaction that fires on prose is a redaction nobody reads', () => {

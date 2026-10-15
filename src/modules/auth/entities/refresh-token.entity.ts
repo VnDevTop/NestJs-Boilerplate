@@ -32,6 +32,18 @@ export class RefreshToken {
   @Column({ type: 'timestamptz' })
   expiresAt!: Date;
 
+  /**
+   * When this *session* began, carried forward by every rotation.
+   *
+   * Not the same as `createdAt`, which is the time of this particular token. The
+   * two are equal on the first token of a chain and differ on every one after it,
+   * which is what makes this column the answer to "how old is this session" and
+   * `createdAt` the answer to "when was this token minted".
+   */
+  @Index('IDX_refresh_tokens_session_started', ['userId', 'sessionStartedAt'])
+  @Column({ type: 'timestamptz' })
+  sessionStartedAt!: Date;
+
   @Column({ type: 'timestamptz', nullable: true })
   revokedAt!: Date | null;
 

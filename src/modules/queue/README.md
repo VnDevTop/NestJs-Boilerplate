@@ -1,3 +1,6 @@
+> **Start with [INTRODUCTION.md](INTRODUCTION.md)** — the two drivers, the retry policy and the fail-open posture. This file is the detailed reference for _why_ each decision is what
+> it is.
+
 # Queue
 
 Background work: mail now, notifications and retention next. A request enqueues

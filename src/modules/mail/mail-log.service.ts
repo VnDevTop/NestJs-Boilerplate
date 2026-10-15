@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { redactText } from '../../core/redact/index.js';
+
 import { MailLog } from './entities/index.js';
 
 /** Long enough to identify the provider's complaint, short enough to index cheaply. */
@@ -80,7 +82,12 @@ export class MailLogService implements MailLogWriter {
         statusCode: entry.statusCode ?? null,
         attempts: Math.max(1, entry.attempt),
         permanent: entry.permanent ?? false,
-        error: entry.error?.slice(0, ERROR_LIMIT) ?? null,
+        // Redacted before the clip, for the reason given in `audit.service`:
+        // clipping first preserves exactly the prefix a token lives in. Provider
+        // error bodies quote the request that produced them.
+        error: entry.error
+          ? redactText(entry.error).slice(0, ERROR_LIMIT)
+          : null,
         // Nullable rather than omitted: a send from the retention job or a
         // scheduled digest has no request, and the column has to say so rather
         // than leaving the lookup unable to distinguish "no request" from "old

@@ -11,16 +11,32 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Pinned rather than `ubuntu-latest`, on purpose.
+#
+# GitHub announces that the `ubuntu-latest` label migrates to Ubuntu 26
+# starting 19 October 2026, which would move every job here without a commit.
+# A pinned label is the same image on a Tuesday and on a Saturday, so a CI
+# failure is a change in this repository rather than a change in the runner.
+#
+# Bump it deliberately, as its own commit, when the image you are pinned to is
+# itself retired — which is the moment a pin becomes the problem.
+env:
+  NODE_VERSION: 24
+
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      # `checkout@v7` and `setup-node@v7` are the first majors that run on
+      # Node 24. The v4s this replaced target Node 20, which GitHub has
+      # deprecated: they still work, forced onto a newer runtime, and warn on
+      # every single run. A warning on every run is a warning nobody reads.
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
       - name: Install
@@ -39,7 +55,7 @@ jobs:
         run: npm run build
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: verify
 
     # The suite starts its own postgres and redis through testcontainers, which
@@ -47,11 +63,11 @@ jobs:
     # second way to get the same two processes and one more thing to keep in step
     # with `test/e2e/global-setup.ts`.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
       - name: Install
@@ -65,18 +81,20 @@ jobs:
         run: npm run test:e2e
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: verify
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      # buildx v4 and build-push v7 are the Node 24 majors; v3 and v6 are the
+      # Node 20 ones GitHub deprecated.
+      - uses: docker/setup-buildx-action@v4
 
       # Build only: publishing needs registry credentials this template does not
       # assume, so pushing is left to whoever owns the registry.
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false

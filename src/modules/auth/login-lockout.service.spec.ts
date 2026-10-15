@@ -9,7 +9,12 @@ import {
 import type { RedisClientService } from '../queue/redis-client.service.js';
 
 function harness(
-  options: { getClientThrows?: boolean; getRejects?: boolean } = {},
+  options: {
+    getClientThrows?: boolean;
+    getRejects?: boolean;
+    maxFailedAttempts?: number;
+    lockoutDuration?: number;
+  } = {},
 ) {
   const store = new Map<string, string>();
 
@@ -42,9 +47,16 @@ function harness(
     ? vi.fn().mockRejectedValue(new Error('redis is unreachable'))
     : vi.fn().mockResolvedValue(client);
 
-  const service = new LoginLockoutService({
-    getClient,
-  } as unknown as RedisClientService);
+  const service = new LoginLockoutService(
+    { getClient } as unknown as RedisClientService,
+    {
+      // The shipped defaults, stated explicitly rather than left undefined, so a
+      // change to `password-policy.config.ts` shows up here as a failing
+      // expectation instead of silently moving what these tests exercise.
+      maxFailedAttempts: options.maxFailedAttempts ?? LOCKOUT_THRESHOLD,
+      lockoutDuration: options.lockoutDuration ?? LOCKOUT_MAX_MINUTES,
+    } as never,
+  );
 
   return { service, client, store, getClient };
 }
@@ -56,6 +68,62 @@ describe('LoginLockoutService', () => {
 
   beforeEach(() => {
     h = harness();
+  });
+
+  describe('the configured threshold', () => {
+    // The gap this file gained: `LOGIN_MAX_FAILED_ATTEMPTS` and
+    // `LOGIN_LOCKOUT_DURATION` were parsed, validated and advertised while this
+    // service used hard-coded numbers, so an operator who tuned them got the
+    // shipped defaults and nothing to say so.
+
+    it('blocks at the configured count rather than the default', async () => {
+      const t = harness({ maxFailedAttempts: 3 });
+
+      for (let i = 0; i < 2; i++) {
+        expect((await t.service.recordFailure(EMAIL)).blocked).toBe(false);
+      }
+
+      expect((await t.service.recordFailure(EMAIL)).blocked).toBe(true);
+    });
+
+    it('leaves the default count below it alone', async () => {
+      // The mirror of the test above: at the shipped five, three failures are not
+      // enough, so raising the threshold genuinely moves the boundary rather than
+      // disabling the check that used to fire.
+      const t = harness({ maxFailedAttempts: 10 });
+
+      for (let i = 0; i < LOCKOUT_THRESHOLD; i++) {
+        await t.service.recordFailure(EMAIL);
+      }
+
+      expect((await t.service.inspect(EMAIL)).blocked).toBe(false);
+    });
+
+    it('caps the block at the configured duration', () => {
+      // Three minutes is below the shipped fifteen, so it only bites once the one
+      // minute ramp has climbed past it — which is the whole reason the cap is a
+      // separate setting from the base. Counts below that still get the ramp.
+      const t = harness({ lockoutDuration: 3 });
+
+      expect(t.service.blockSeconds(LOCKOUT_THRESHOLD)).toBe(60);
+      expect(t.service.blockSeconds(LOCKOUT_THRESHOLD + 10)).toBe(3 * 60);
+      expect(t.service.blockSeconds(10_000)).toBe(3 * 60);
+    });
+
+    it('is switched off entirely at zero, and counts nothing while off', async () => {
+      // Documented as the off switch on `maxFailedAttempts`, so it has to be a real
+      // switch rather than a threshold nothing can reach.
+      const t = harness({ maxFailedAttempts: 0 });
+
+      expect(t.service.disabled).toBe(true);
+
+      for (let i = 0; i < 50; i++) {
+        expect((await t.service.recordFailure(EMAIL)).blocked).toBe(false);
+      }
+
+      expect(t.client.incr).not.toHaveBeenCalled();
+      expect((await t.service.inspect(EMAIL)).blocked).toBe(false);
+    });
   });
 
   describe('blockSeconds', () => {
@@ -174,7 +242,11 @@ describe('LoginLockoutService', () => {
       }
 
       // Time moved past the block while the key was still in the store.
-      for (const key of [...h.store.keys()]) {
+      //
+      // No defensive copy of the keys: `store.set` on a key that already exists
+      // does not change a Map's key set, so the iterator is not disturbed. The
+      // copy was a habit from iterating an array that could be appended to.
+      for (const key of h.store.keys()) {
         if (!key.includes(':fail:')) {
           h.store.set(key, String(Date.now() - 1000));
         }

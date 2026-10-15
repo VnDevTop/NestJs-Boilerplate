@@ -2,10 +2,28 @@
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
 </p>
 <p align="center">
+  <a href="https://github.com/VnDevTop/NestJs-Boilerplate/actions/workflows/ci.yml"><img src="https://github.com/VnDevTop/NestJs-Boilerplate/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/VnDevTop/NestJs-Boilerplate"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
   <a href="https://github.com/VnDevTop/NestJs-Boilerplate"><img src="https://img.shields.io/badge/node-%3E%3D22-5FA04E" alt="Node 22+" /></a>
-  <a href="https://github.com/VnDevTop/NestJs-Boilerplate/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI" /></a>
+  <a href="https://github.com/VnDevTop/NestJs-Boilerplate"><img src="https://img.shields.io/badge/typescript-5.7-3178C6" alt="TypeScript" /></a>
+  <a href="https://github.com/VnDevTop/NestJs-Boilerplate"><img src="https://img.shields.io/badge/tests-1962%20unit%20%2B%2037%20e2e-5FA04E" alt="Tests" /></a>
 </p>
+
+<!--
+  One live badge, not three per-job ones, and the reason is worth recording
+  because the obvious version is wrong twice over:
+
+  - GitHub's `badge.svg?job=<name>` ignores the parameter — every job returns
+    the same SVG for the workflow, so three badges would be three copies of one
+    answer. Verified by fetching two and diffing them.
+  - A shields.io label pinned per job would be a static image that never
+    changes colour, which is the original sin: it reads "passing" on a red
+    build, and a status badge is read precisely when somebody is deciding
+    whether to trust the repository.
+
+  GitHub renders one status per workflow, so a workflow-wide badge is the most
+  truthful thing available without generating per-job images in a job.
+-->
 
 # NestJS Boilerplate
 
@@ -133,6 +151,9 @@ routers spell a wildcard differently.
 
 ## Quick start
 
+Full detail, including what to change before you deploy, is in
+[docs/installation.md](docs/installation.md). This is the short version.
+
 ### With Docker
 
 ```bash
@@ -254,6 +275,7 @@ looking. The `docs/` folder is also published as a site at
 | [ROADMAP.md](ROADMAP.md)                                       | what is shipped, open decisions, and enhancement plans    |
 | [CHANGELOG.md](CHANGELOG.md)                                   | what each change did and why, per commit                  |
 | [docs/](docs/)                                                 | the guides, also published as a site                      |
+| [docs/installation.md](docs/installation.md)                   | installing it, the two gotchas, and how to verify it      |
 | [docs/production.md](docs/production.md)                       | rate limiting, headers, CORS, logging, health, Docker, CI |
 | [docs/optional-integrations.md](docs/optional-integrations.md) | how an optional dependency stays out of the install       |
 | [docs/runbook.md](docs/runbook.md)                             | what to do when mail, redis or the queue misbehave        |
@@ -264,7 +286,7 @@ looking. The `docs/` folder is also published as a site at
 | [src/core/cache](src/core/cache/README.md)                     | coalescing, stale while revalidate, invalidation          |
 | [src/core/health](src/core/health/README.md)                   | liveness vs readiness                                     |
 | [src/core/logger](src/core/logger/README.md)                   | development colours vs production JSON                    |
-| [src/modules](src/modules/README.md)                           | module rules and the full route list                      |
+| [src/modules](src/modules/README.md)                           | module rules, and an index of the per-module summaries    |
 | [src/modules/auth](src/modules/auth/README.md)                 | sessions, rotation, devices, two-factor                   |
 | [src/modules/users](src/modules/users/README.md)               | the user domain and its authorisation                     |
 | [src/modules/admin](src/modules/admin/README.md)               | operator-only routes                                      |
@@ -312,6 +334,18 @@ Recorded rather than left to be discovered. See
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Commit messages follow Conventional
 Commits and are checked before the commit is created.
+
+## Credits
+
+- **[VnDevTop](https://github.com/VnDevTop)** — design and review.
+- **[OpenCode](https://opencode.ai)** — the coding agent that implemented Phase 22
+  (configurable email templates) and fixed the Phase 21 test suite.
+
+Worth saying plainly rather than leaving it to be discovered from the commit
+style: recent phases were written by an agent, and the reasoning in each commit
+body is the agent's rather than a human's retrospective. Treat it as a first
+draft to review, not a finished decision — particularly the security notes in
+`PLAN.md`, which are arguments, not proofs.
 
 ## License
 

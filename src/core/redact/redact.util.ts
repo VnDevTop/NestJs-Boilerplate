@@ -27,6 +27,12 @@ export const REDACTED_KEYS: ReadonlySet<string> = new Set(
     'resetToken',
     'verificationToken',
     'unlockToken',
+    // The refresh token's unique id. Not a credential on its own, but the one
+    // half of `token:revoked:<jti>` — the Redis key that decides whether a
+    // session is dead. Anyone holding it can confirm which sessions exist and
+    // when they were cut, which is reconnaissance rather than access. The row
+    // it lives on is `{ jti: ... }`, so key-based redaction is what catches it.
+    'jti',
     // Two-factor.
     'secret',
     'twoFactorSecret',
@@ -168,6 +174,32 @@ const TEXT_PATTERNS: readonly { pattern: RegExp; replacement: string }[] = [
   {
     pattern: /\b(set-cookie|cookie)(\s*:\s*)[^\n]+/gi,
     replacement: `$1$2${REDACTED}`,
+  },
+  // Webhook and bot URLs, where the credential is the path rather than a
+  // parameter, so nothing above can see it:
+  //
+  //   https://hooks.slack.com/services/T…/B…/…
+  //   https://discord.com/api/webhooks/…/…
+  //   https://api.telegram.org/bot…/…
+  //
+  // These are the three shapes the notification channels post to, and each one is
+  // a complete credential that anybody can post to. They arrive in exception
+  // messages — a transport that echoes the url it was given — and those messages
+  // are caught into an `error` field, which is a database column. The patterns
+  // are pinned to those hosts so an ordinary url in a log line keeps its path,
+  // which is usually the part the reader wanted.
+  {
+    pattern: /\b(https:\/\/hooks\.slack\.com\/services\/)[^\s"'<>]+/gi,
+    replacement: `$1${REDACTED}`,
+  },
+  {
+    pattern:
+      /\b(https:\/\/(?:[a-z0-9-]+\.)*discord(?:app)?\.com\/api\/webhooks\/)[^\s"'<>]+/gi,
+    replacement: `$1${REDACTED}`,
+  },
+  {
+    pattern: /\b(https:\/\/api\.telegram\.org\/bot)[^\s"'<>]+/gi,
+    replacement: `$1${REDACTED}`,
   },
 ];
 

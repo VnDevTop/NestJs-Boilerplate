@@ -13,11 +13,11 @@ import { JwtPayload, RequestUser } from '../../common/interfaces/index.js';
 import { MetricsService } from '../../core/metrics/index.js';
 import {
   getRequestId,
-  hashPassword,
   padResponse,
   verifyPassword,
 } from '../../common/utils/index.js';
 import type { AppConfig } from '../../configs/app.config.js';
+import { SESSION, type SessionConfig } from '../../configs/session.config.js';
 import { MailService } from '../mail/index.js';
 import {
   dedupeKey,
@@ -57,7 +57,7 @@ import { PASSWORD_CHANGE_REASON } from './entities/index.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { PasswordResetService } from './password-reset.service.js';
 import { User } from '../users/entities/index.js';
-import { UserDevice } from './entities/index.js';
+import { RefreshToken, UserDevice } from './entities/index.js';
 import { TwoFactorService } from './two-factor.service.js';
 import {
   AuthToken,
@@ -107,6 +107,18 @@ export class AuthService {
     private readonly passwordPolicy: PasswordPolicyService,
     private readonly passwordHistory: PasswordHistoryService,
     private readonly accountLock: AccountLockService,
+    // Zero, not the shipped thirty days. A collaborator that only exists to
+    // enforce a policy must not impose one by being omitted: every harness that
+    // builds this service without a fifteenth argument gets the feature switched
+    // off, which is the honest default for a test double. Anything testing the
+    // ceiling passes a value.
+    //
+    // Declared *before* `metrics` on purpose. A defaulted parameter cannot be
+    // skipped, so anything after one of these can only be supplied by supplying
+    // every argument before it too — which is a trap to leave lying in a
+    // constructor this long.
+    @Inject(SESSION)
+    private readonly sessionConfig: SessionConfig = { absoluteTtlSeconds: 0 },
     // Default-constructed so every existing harness that builds `AuthService` with
     // fourteen collaborators still builds. With `prom-client` absent it is a no-op,
     // which is the state this runs in.
@@ -127,11 +139,13 @@ export class AuthService {
     // has already charged somebody scrypt for the privilege of being told no.
     await this.assertPasswordAcceptable(registerDto.password);
 
-    const passwordHash = await hashPassword(registerDto.password);
-
+    // The plaintext goes in and `UsersService.create` hashes it. Register used to
+    // hash here and pass the digest, because it needed the digest for the history
+    // row below — which is exactly why the service got away with not hashing, and
+    // why its other caller stored a cleartext password.
     const user = await this.usersService.create({
       email: registerDto.email,
-      password: passwordHash,
+      password: registerDto.password,
       firstName: registerDto.firstName,
       lastName: registerDto.lastName,
     });
@@ -140,9 +154,13 @@ export class AuthService {
     // because `create` is not one. The ordering is the point: a history row whose
     // user does not exist is an orphan the cascade cannot clean up, whereas a
     // missing history row costs a user the ability to reuse this one password.
+    //
+    // The digest is read back off the entity rather than computed again here. One
+    // scrypt call per registration, and the hash recorded is provably the one that
+    // was stored.
     await this.passwordHistory.record(
       user.id,
-      passwordHash,
+      user.password,
       PASSWORD_CHANGE_REASON.Register,
     );
 
@@ -1076,13 +1094,36 @@ export class AuthService {
         return { status: 'expired' };
       }
 
+      // The session's own ceiling, and the check that makes `JWT_REFRESH_EXPIRES_IN`
+      // a sliding window rather than a limit on how long a session may last. The
+      // refresh token's own expiry slides on every rotation, so a client that
+      // refreshes before it lapses is never refused — there was no count of
+      // rotations anywhere that could stop it.
+      //
+      // Here rather than in the strategy because the strategy only sees the access
+      // token, and this is the one moment a session is actually extended. Between
+      // refreshes the access token expires on its own within minutes, so nothing is
+      // left running past the deadline by checking it here.
+      if (this.absoluteTimeoutExceeded(current)) {
+        await this.refreshTokenService.revokeByJti(
+          current.jti,
+          RefreshTokenRevokedReason.AbsoluteTimeout,
+          null,
+          manager,
+        );
+
+        return { status: 'expired' };
+      }
+
       // The rotated token stays on the same device, so a session never hops
-      // between devices on refresh.
+      // between devices on refresh. The session start is carried forward, so the
+      // ceiling is a property of the chain and not of any one token in it.
       const { token, record } = await this.refreshTokenService.issue(
         current.userId,
         tokenMetadata,
         current.deviceId,
         manager,
+        current.sessionStartedAt,
       );
 
       await this.refreshTokenService.revokeByJti(
@@ -1100,6 +1141,29 @@ export class AuthService {
         supersededSessionId: current.jti,
       };
     });
+  }
+
+  /**
+   * Whether this session has outlived `SESSION_ABSOLUTE_TTL_SECONDS`.
+   *
+   * Zero disables it. The comparison is against `sessionStartedAt`, which is
+   * carried forward by every rotation, so the answer cannot be reset by using the
+   * session — which is the entire difference between a ceiling and a rolling
+   * window.
+   */
+  private absoluteTimeoutExceeded(record: RefreshToken): boolean {
+    const limit = this.sessionConfig.absoluteTtlSeconds;
+
+    if (limit <= 0) {
+      return false;
+    }
+
+    // A session with no recorded start is older than any limit, not newer. The
+    // column is `NOT NULL` and backfilled, so this is unreachable in practice —
+    // and if it is ever reached, failing towards refusing is the side to err on.
+    const startedAt = record.sessionStartedAt ?? record.createdAt;
+
+    return Date.now() - startedAt.getTime() > limit * 1000;
   }
 
   private toTokenMetadata(metadata: DeviceMetadata): TokenMetadata {

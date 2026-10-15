@@ -1,3 +1,6 @@
+> **Start with [INTRODUCTION.md](INTRODUCTION.md)** — templates, transports, and the record of every attempt. This file is the detailed reference for _why_ each decision is what
+> it is.
+
 # Mail
 
 Rendering, transport selection, delivery, and the record of what was delivered.

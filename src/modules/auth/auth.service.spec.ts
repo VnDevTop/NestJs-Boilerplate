@@ -117,12 +117,10 @@ async function harness(options: Overrides = {}) {
     } as never,
     usersService as never,
     {
-      issue: vi
-        .fn()
-        .mockResolvedValue({
-          token: 'refresh-token',
-          record: { jti: 'jti-1' },
-        }),
+      issue: vi.fn().mockResolvedValue({
+        token: 'refresh-token',
+        record: { jti: 'jti-1' },
+      }),
       runInTransaction: vi.fn(),
     } as never,
     {
@@ -143,10 +141,15 @@ async function harness(options: Overrides = {}) {
     passwordPolicy as never,
     { record: vi.fn(), wasUsedBefore: vi.fn(async () => false) } as never,
     { lockOnRepeatedFailures: vi.fn(async () => undefined) } as never,
+    // The session ceiling, off. Nothing in this file is about session age, and a
+    // collaborator that only exists to enforce a policy should not impose one
+    // because a test forgot to say.
+    { absoluteTtlSeconds: 0 } as never,
     // The metric counter. A spy rather than the real one, so a test can assert the
     // pair of counters that make a failure rate meaningful. It is the last
     // constructor argument, and its default only applies when the argument is
-    // `undefined`, so it has to be passed explicitly.
+    // `undefined`, so it has to be passed explicitly — which is also why the
+    // argument before it can no longer be skipped.
     metrics as never,
   );
 

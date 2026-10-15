@@ -81,6 +81,11 @@ function harness(options: { rows?: (User | null)[] } = {}) {
       rows.shift() ?? null,
   );
   const save = vi.fn(async (value: Partial<User>) => value as User);
+  // TypeORM stamps the generated uuid on the way in, and `create` callers read it
+  // off the return value, so the double has to supply one.
+  const create = vi.fn(
+    async (value: Partial<User>) => ({ ...value, id: 'u1' }) as User,
+  );
   const softDelete = vi.fn().mockResolvedValue({ affected: 1 });
   const merge = vi.fn((user: User, dto: Partial<User>) => ({
     ...user,
@@ -91,14 +96,23 @@ function harness(options: { rows?: (User | null)[] } = {}) {
   const notify = vi.fn(async () => ({ notificationId: 'n1', queued: true }));
 
   const service = new UsersService(
-    { findOne, save, softDelete, merge } as never,
+    { findOne, create, save, softDelete, merge } as never,
     cache as never,
     { getOrThrow: () => CONFIG } as never,
     { notify } as never,
     { forget: vi.fn(async () => undefined) } as never,
   );
 
-  return { service, cache, findOne, save, softDelete, merge, notify };
+  return {
+    service,
+    cache,
+    findOne,
+    create,
+    save,
+    softDelete,
+    merge,
+    notify,
+  };
 }
 
 /** A row with the lock fields set, for the cases that need one. */
@@ -107,6 +121,131 @@ function user(overrides: Partial<User> = {}): User {
 }
 
 const CACHE_KEY = authUserKey('u1');
+
+describe('create', () => {
+  /**
+   * This is the one test that would have caught a cleartext password on
+   * `POST /users`, and it is here now rather than at the time because asserting
+   * "a user was created" is what the suite already did, and it passes on a
+   * stored plaintext.
+   *
+   * The bug was quiet in a way worth recording. `verifyPassword` splits the stored
+   * value on `:` and returns false when there is no second part, so an account
+   * created with a plaintext password could never sign in. Nothing rejected the
+   * create, nothing 500'd, and no test ever had that account authenticate.
+   */
+  it('stores a hash rather than the submitted password', async () => {
+    const h = harness({ rows: [] });
+
+    await h.service.create({
+      email: 'new@x.com',
+      password: 'Correct-Horse-1',
+    } as never);
+
+    expect(h.create).toHaveBeenCalledTimes(1);
+    const persisted = h.create.mock.calls[0]![0] as { password: string };
+
+    expect(persisted.password).not.toBe('Correct-Horse-1');
+    expect(persisted.password).not.toContain('Correct-Horse-1');
+    expect(persisted.password).toMatch(/^[0-9a-f]{32}:[0-9a-f]{128}$/);
+  });
+
+  it('returns the entity, so the caller can record the digest it wrote', async () => {
+    // `AuthService.register` needs the hash for the password history row. Reading
+    // it off the return value is what keeps this to one scrypt call per signup.
+    const h = harness({ rows: [] });
+
+    const created = await h.service.create({
+      email: 'new@x.com',
+      password: 'Correct-Horse-1',
+    } as never);
+
+    expect(created.id).toBe('u1');
+    expect(created.password).toBeTruthy();
+    expect(created.password).not.toBe('Correct-Horse-1');
+  });
+
+  it('refuses a duplicate address without hashing anything', async () => {
+    // Ordering, because the same scrypt cost applies: finding the conflict first
+    // means a retry of a request that already succeeded is cheap.
+    const h = harness({ rows: [ROW] });
+
+    await expect(
+      h.service.create({
+        email: 'a@x.com',
+        password: 'Correct-Horse-1',
+      } as never),
+    ).rejects.toThrow('Email already exists');
+
+    expect(h.create).not.toHaveBeenCalled();
+    expect(h.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('update', () => {
+  it('hashes a password sent in the body rather than storing it', async () => {
+    // The client sends what the user typed. `create` took the same contract since
+    // the cleartext fix; an edit that quietly diverged would reintroduce the bug
+    // one route over, and `merge` assigns every key it is handed, so this is a
+    // real possibility rather than a hypothetical.
+    const h = harness({ rows: [user()] });
+
+    await h.service.update('u1', { password: 'Correct-Horse-1' } as never);
+
+    expect(h.merge).toHaveBeenCalledTimes(1);
+    const changes = h.merge.mock.calls[0]![1] as { password?: string };
+
+    expect(changes.password).toBeDefined();
+    expect(changes.password).not.toBe('Correct-Horse-1');
+    expect(changes.password).toMatch(/^[0-9a-f]{32}:[0-9a-f]{128}$/);
+  });
+
+  it('ends every session when the password changes', async () => {
+    // The half of the change that is easy to leave out. An administrator resetting
+    // a password somebody cannot reach their inbox from is closing a door the old
+    // key still opens; without the bump, every token minted under it keeps working
+    // for the rest of its lifetime and the reset is cosmetic.
+    const h = harness({ rows: [user({ sessionsVersion: 7 })] });
+
+    await h.service.update('u1', { password: 'Correct-Horse-1' } as never);
+
+    const changes = h.merge.mock.calls[0]![1] as { sessionsVersion?: number };
+
+    expect(changes.sessionsVersion).toBe(8);
+  });
+
+  it('leaves the version alone when the password is not part of the edit', async () => {
+    // Bumping unconditionally would sign the user out of every device each time an
+    // operator fixed a typo in a name, which is how a revocation control gets
+    // switched off by whoever it annoys.
+    const h = harness({ rows: [user({ sessionsVersion: 7 })] });
+
+    await h.service.update('u1', { firstName: 'Ada' } as never);
+
+    const changes = h.merge.mock.calls[0]![1] as {
+      sessionsVersion?: number;
+      firstName?: string;
+    };
+
+    expect(changes.sessionsVersion).toBeUndefined();
+    expect(changes.firstName).toBe('Ada');
+  });
+
+  it('never passes the raw password key through to the repository', async () => {
+    // Belt and braces on the destructuring: whatever `changes` was built as, the
+    // value that reaches `merge` is the digest.
+    const h = harness({ rows: [user()] });
+
+    await h.service.update('u1', {
+      firstName: 'Ada',
+      password: 'Correct-Horse-1',
+    } as never);
+
+    const changes = h.merge.mock.calls[0]![1] as Record<string, unknown>;
+
+    expect(Object.values(changes)).not.toContain('Correct-Horse-1');
+  });
+});
 
 describe('findAuthClaims', () => {
   it('reads through the cache under the user key', async () => {

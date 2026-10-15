@@ -1,4 +1,13 @@
-export const HASH_PREFIX = 'sha256';
+/**
+ * Prefix on a stored recovery code digest, naming the derivation.
+ *
+ * Read back on verify, so an older `sha256$` value from a previous deployment
+ * still works and ages out as codes are spent rather than needing a migration.
+ */
+export const HASH_PREFIX = 'scrypt';
+
+/** The pre-scrypt format. Verified, never written. */
+export const LEGACY_RECOVERY_HASH_PREFIX = 'sha256';
 
 export const RECOVERY_CODE_COUNT = 10;
 export const RECOVERY_CODE_LENGTH = 10;

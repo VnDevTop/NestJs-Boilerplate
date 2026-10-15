@@ -137,6 +137,13 @@ function createEnvSchema(strict: boolean) {
         JWT_REFRESH_SECRET: secret,
         JWT_EXPIRES_IN: z.string().optional(),
         JWT_REFRESH_EXPIRES_IN: z.string().optional(),
+        // Zero disables the ceiling, which is why this is nonnegative rather than
+        // positive. A negative value is a typo, not an instruction.
+        SESSION_ABSOLUTE_TTL_SECONDS: z.coerce
+          .number()
+          .int()
+          .nonnegative()
+          .optional(),
 
         TWO_FACTOR_ENABLED: z.enum(['true', 'false']).optional(),
         TWO_FACTOR_ENCRYPTION_KEY: z.string().min(1).optional(),
