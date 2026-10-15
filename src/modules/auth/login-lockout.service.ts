@@ -1,6 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 
+import type { ConfigType } from '@nestjs/config';
+
+import { passwordPolicyConfig } from '../../configs/password-policy.config.js';
 import { RedisClientService } from '../queue/redis-client.service.js';
 
 /**
@@ -25,12 +28,27 @@ import { RedisClientService } from '../queue/redis-client.service.js';
  * is probably already costing somebody revenue.
  */
 
-/** Failures before the first block. */
+/**
+ * Failures before the first block, unless `LOGIN_MAX_FAILED_ATTEMPTS` says
+ * otherwise.
+ *
+ * The export is the *default*, kept for the specs that pin the shipped values and
+ * for `AccountLockService`, which compares the permanent threshold against it. The
+ * running value is read from `passwordPolicy` in the constructor below.
+ */
 export const LOCKOUT_THRESHOLD = 5;
 
 /** The first block, and the step added for each failure past the threshold. */
 export const LOCKOUT_BASE_MINUTES = 1;
 export const LOCKOUT_STEP_MINUTES = 1;
+
+/**
+ * The ceiling on a block, unless `LOGIN_LOCKOUT_DURATION` says otherwise.
+ *
+ * A ceiling rather than a fixed duration: the ramp from one minute is what keeps a
+ * burst of five typos from costing an account fifteen minutes, and a hard cap is
+ * what stops one sustained attack parking it for hours.
+ */
 export const LOCKOUT_MAX_MINUTES = 15;
 
 /** How long a failure count survives with no further attempts. */
@@ -72,10 +90,48 @@ const ALLOWED: LockoutState = {
 export class LoginLockoutService {
   private readonly logger = new Logger(LoginLockoutService.name);
 
-  constructor(private readonly redis: RedisClientService) {}
+  constructor(
+    private readonly redis: RedisClientService,
+    @Inject(passwordPolicyConfig.KEY)
+    private readonly config: ConfigType<typeof passwordPolicyConfig>,
+  ) {}
+
+  /**
+   * Failures before a block, and the ceiling on how long one lasts.
+   *
+   * Read from `passwordPolicy` rather than from the constants above, which is what
+   * makes `LOGIN_MAX_FAILED_ATTEMPTS` and `LOGIN_LOCKOUT_DURATION` mean something.
+   * They were parsed, validated and advertised in `.env.example` while this
+   * service used hard-coded numbers, so an operator who tuned them to suit their
+   * deployment got the shipped defaults and no indication of it.
+   *
+   * The constants are the fallback for a value the schema could not produce:
+   * `LOGIN_MAX_FAILED_ATTEMPTS` is validated as a non-negative integer, so zero is
+   * reachable and is the documented way to switch the lockout off.
+   */
+  get threshold(): number {
+    return Number.isFinite(this.config.maxFailedAttempts)
+      ? this.config.maxFailedAttempts
+      : LOCKOUT_THRESHOLD;
+  }
+
+  private get maxMinutes(): number {
+    return Number.isFinite(this.config.lockoutDuration)
+      ? this.config.lockoutDuration
+      : LOCKOUT_MAX_MINUTES;
+  }
+
+  /** Whether the temporary lockout is switched off entirely. */
+  get disabled(): boolean {
+    return this.threshold <= 0;
+  }
 
   /** Whether this address may attempt a login right now. */
   async inspect(email: string): Promise<LockoutState> {
+    if (this.disabled) {
+      return ALLOWED;
+    }
+
     const key = this.key(email);
     const client = await this.client();
 
@@ -120,6 +176,10 @@ export class LoginLockoutService {
    * generate a notification per request.
    */
   async recordFailure(email: string): Promise<LockoutState> {
+    if (this.disabled) {
+      return ALLOWED;
+    }
+
     const key = this.key(email);
     const client = await this.client();
 
@@ -134,7 +194,7 @@ export class LoginLockoutService {
         await client.expire(this.failureKey(email), FAILURE_TTL_SECONDS);
       }
 
-      if (failures < LOCKOUT_THRESHOLD) {
+      if (failures < this.threshold) {
         return { ...ALLOWED, failures };
       }
 
@@ -190,12 +250,15 @@ export class LoginLockoutService {
    * ceiling. The ceiling is the important part: an unbounded multiplier lets one
    * sustained attack park an account for hours, which is a denial of service
    * dressed up as a defence.
+   *
+   * `LOGIN_LOCKOUT_DURATION` is that ceiling, not a fixed length — see the docblock
+   * on `LOCKOUT_MAX_MINUTES` for why the ramp and the cap are one setting between
+   * them.
    */
   blockSeconds(failures: number): number {
     const minutes = Math.min(
-      LOCKOUT_MAX_MINUTES,
-      LOCKOUT_BASE_MINUTES +
-        (failures - LOCKOUT_THRESHOLD) * LOCKOUT_STEP_MINUTES,
+      this.maxMinutes,
+      LOCKOUT_BASE_MINUTES + (failures - this.threshold) * LOCKOUT_STEP_MINUTES,
     );
 
     return Math.max(1, minutes) * 60;

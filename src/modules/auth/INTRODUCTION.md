@@ -184,16 +184,15 @@ None of these are code problems, and none are solvable inside this module:
 Written down because a document that lists only strengths is marketing. Each is
 a real gap in the code as it stands, with the file that proves it.
 
-| #   | Gap                                                                                                                                             | Where                                                     |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| 1   | No idle timeout and no absolute session lifetime                                                                                                | `refresh-token.entity.ts`                                 |
-| 2   | `PasswordPolicyService.checkForUser()` — the intended uniform policy entry point — **has no callers**                                           | `password-policy.service.ts`                              |
-| 3   | `LOGIN_MAX_FAILED_ATTEMPTS` / `LOGIN_LOCKOUT_DURATION` are parsed and validated, then **never read**                                            | `password-policy.config.ts` vs `login-lockout.service.ts` |
-| 4   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`                                        |
-| 5   | 2FA key derivation is a single unsalted SHA-256 rather than a work-hardened KDF                                                                 | `encryption.util.ts`                                      |
-| 6   | Recovery codes are SHA-256 + salt while passwords are scrypt                                                                                    | `recovery-code.util.ts`                                   |
-| 7   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()`                              |
-| 8   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`                               |
+| #   | Gap                                                                                                                                             | Where                        |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| 1   | No idle timeout and no absolute session lifetime                                                                                                | `refresh-token.entity.ts`    |
+| 2   | `PasswordPolicyService.checkForUser()` — the intended uniform policy entry point — **has no callers**                                           | `password-policy.service.ts` |
+| 3   | scrypt cost parameters are neither configurable nor stored per hash — a non-PHC `salt:hex` format, so cost cannot be raised without a migration | `password.util.ts`           |
+| 4   | 2FA key derivation is a single unsalted SHA-256 rather than a work-hardened KDF                                                                 | `encryption.util.ts`         |
+| 5   | Recovery codes are SHA-256 + salt while passwords are scrypt                                                                                    | `recovery-code.util.ts`      |
+| 6   | Reuse detection fires only for tokens revoked with reason `Rotated`                                                                             | `auth.service.ts` `rotate()` |
+| 7   | Weak controls are off by default: `PASSWORD_CHECK_BREACH_LIST=false`, zxcvbn not a dependency                                                   | `password-policy.config.ts`  |
 
 These are ordered by how much they cost an operator who inherits the
 repository. The two that were fixed are gone from the list rather than ticked

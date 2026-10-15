@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AccountLockService } from './account-lock.service.js';
+import { LOCKOUT_THRESHOLD } from './login-lockout.service.js';
 import type { AccountSecurityConfig } from '../../configs/account-security.config.js';
 import type { User } from '../users/entities/index.js';
 
@@ -126,7 +127,14 @@ function harness(
       lockAccount,
       unlockAccount,
     } as never,
-    { reset: vi.fn(async () => undefined) } as never,
+    {
+      reset: vi.fn(async () => undefined),
+      // The temporary threshold, which this service now asks for rather than
+      // reading off a constant. Stated explicitly because a double returning
+      // `undefined` would make every threshold comparison false and quietly turn
+      // the permanent lockout off for the whole file.
+      threshold: LOCKOUT_THRESHOLD,
+    } as never,
     { buildUrl: (path: string) => `https://app.example.com${path}` } as never,
     { getOrThrow: () => ({ name: 'Example' }) } as never,
     options.config ?? policy(),
