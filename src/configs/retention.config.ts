@@ -65,6 +65,15 @@ export interface RetentionAges {
    * an audit trail kept for a month is not an audit trail.
    */
   auditLogs: number;
+  /**
+   * Days before a superseded mail template version is removed.
+   *
+   * Reuses the audit window rather than adding a knob of its own. The two tables
+   * answer the same question — "what did this say, and who changed it" — and a
+   * template history that outlived the audit trail would be keeping wording nobody
+   * can attribute.
+   */
+  mailTemplateVersions: number;
 }
 
 export const DEFAULT_AGES: RetentionAges = {
@@ -76,6 +85,7 @@ export const DEFAULT_AGES: RetentionAges = {
   notificationLogs: 30,
   loginAttempts: 7,
   auditLogs: 365,
+  mailTemplateVersions: 365,
 };
 
 const days = (value: string | undefined, key: keyof RetentionAges): number =>
@@ -120,5 +130,9 @@ export const retentionConfig = registerAs('retention', (): RetentionConfig => ({
       'loginAttempts',
     ),
     auditLogs: days(process.env.RETENTION_AUDIT_LOGS_DAYS, 'auditLogs'),
+    mailTemplateVersions: days(
+      process.env.RETENTION_MAIL_TEMPLATE_VERSIONS_DAYS,
+      'mailTemplateVersions',
+    ),
   },
 }));

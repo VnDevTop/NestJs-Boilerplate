@@ -168,6 +168,27 @@ export const RETENTION_TARGETS: readonly RetentionTarget[] = [
     cascades: [],
   },
   {
+    // Phase 22. The superseded versions a template edit replaced.
+    //
+    // Without this the table is the only one in the schema that grows without bound
+    // and is never read in a loop, which is the shape of a table somebody finds at
+    // 3am with a full disk.
+    //
+    // On the version's own age rather than on `createdAt`. A row is written at save
+    // time, but the wording it holds may be years old — an operator editing a
+    // template that has sat unchanged since it was first seeded writes a history row
+    // for a version that is already past any sensible window, and keeping it because
+    // it was written today would keep the oldest wording in the table forever.
+    id: 'mail-template-versions',
+    table: 'mail_template_versions',
+    description:
+      'superseded mail template versions, once past the retention window',
+    ageKey: 'mailTemplateVersions',
+    ageDays: 0,
+    buildPredicate: (cutoff) => `"createdAt" < '${cutoff.toISOString()}'`,
+    cascades: [],
+  },
+  {
     // Phase 19. It moved out of `DEFERRED_TARGETS` when the entity arrived.
     //
     // A year, not the week everything else gets. `RETENTION_AUDIT_LOGS_DAYS`
