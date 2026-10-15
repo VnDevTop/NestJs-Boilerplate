@@ -4,6 +4,7 @@ import { RequestMethod } from '@nestjs/common';
 
 import { describe, expect, it } from 'vitest';
 
+import { AdminMailTemplatesController } from '../admin/mail-templates.controller.js';
 import { AdminRolesController } from '../admin/roles.controller.js';
 import { UsersController } from '../users/users.controller.js';
 
@@ -90,7 +91,16 @@ const roleRoutes = routesOf(
   new AdminRolesController({} as never),
   'admin/roles',
 );
-const routes = [...usersRoutes, ...roleRoutes];
+const templateRoutes = routesOf(
+  new AdminMailTemplatesController({} as never),
+  'admin/mail-templates',
+);
+// Listed explicitly rather than discovered from `AppModule`, because this file must
+// run without a database, a redis or a module graph — the same constraint that made
+// `app.module.spec.ts` build the graph with a stubbed data source rather than the
+// real one. A controller added here without a matching entry fails the existence
+// check below, which is the intended direction of that asymmetry.
+const routes = [...usersRoutes, ...roleRoutes, ...templateRoutes];
 
 /**
  * The privileged routes, and the action name each must carry.
@@ -104,6 +114,10 @@ const PRIVILEGED: Record<string, string> = {
   'users/PATCH :id': 'users.update',
   'users/DELETE :id': 'users.delete',
   'admin/roles/PUT :role/permissions': 'roles.permissions.replace',
+  // Phase 22. A template is the wording of a security message, so who changed it is
+  // the question an incident starts from.
+  'admin/mail-templates/PUT :name': 'templates.mail.update',
+  'admin/mail-templates/DELETE :name': 'templates.mail.reset',
 };
 
 describe('privileged routes', () => {

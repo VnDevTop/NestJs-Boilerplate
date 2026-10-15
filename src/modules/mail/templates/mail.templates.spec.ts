@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import { escapeHtml } from './layout.js';
@@ -19,6 +23,17 @@ import type { TemplateDataByName, TemplateName } from './template.registry.js';
  * `escapeHtml`, this fails for that template rather than for the one the author
  * happened to be looking at.
  */
+
+/**
+ * The repository root, three levels up from `src/modules/mail/templates`.
+ *
+ * Used to read `nest-cli.json`, which lives outside `src` and so is not reachable by
+ * walking up from this file with a fixed number of `..` that has to be right.
+ */
+const NEST_CLI = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../..',
+);
 
 /** Valid in a name, a device label, an ip field and a reason sentence. */
 const HOSTILE = '<script>alert("x")</script>&\'"';
@@ -161,6 +176,41 @@ describe('the templates that do not carry an action', () => {
 
     expect(text).toContain('too many failed sign-in attempts');
     expect(text).not.toContain('null');
+  });
+});
+
+describe('the shipped files', () => {
+  it('are copied into the build, because a compiled app reads them from disk', () => {
+    // The one property of this design that nothing else checks.
+    //
+    // `loadShippedTemplate` resolves the directory relative to its own module, which
+    // is `src` under vitest and `dist` under `node dist/main`. TypeScript compiles
+    // `.ts` and ignores `.hbs`, so the files exist in the first and not the second
+    // unless `nest build` copies them — which is what the `assets` entry in
+    // `nest-cli.json` does. A wrong path there produces a build that succeeds, a
+    // container that boots, and a first send that fails with "no template for
+    // welcome", so the entry is checked here rather than in a deployment.
+    const config = JSON.parse(
+      readFileSync(resolve(NEST_CLI, 'nest-cli.json'), 'utf8'),
+    ) as {
+      // Declared so the top-level check below type-checks. It is asserted to be
+      // `undefined` on purpose, and a type that does not mention the key is the
+      // clearest way to say "this must not exist".
+      assets?: unknown;
+      compilerOptions?: {
+        assets?: { include?: string }[];
+      };
+    };
+
+    const includes = (config.compilerOptions?.assets ?? []).map(
+      (asset) => asset.include,
+    );
+
+    // Under `compilerOptions`, not at the top level: `copyAssets` reads
+    // `compilerOptions.assets` and silently copies nothing for a top-level key,
+    // which is where this was wrong the first time.
+    expect(config.assets).toBeUndefined();
+    expect(includes).toContain('modules/mail/templates/hbs/**/*.hbs');
   });
 });
 

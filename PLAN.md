@@ -1311,7 +1311,7 @@ Known limits:
 
 ## Phase 22: Configurable Email Templates
 
-Status: Pending
+Status: Done
 
 Goal:
 
@@ -1323,33 +1323,26 @@ has no template dependency at all. This phase trades both for editability.
 
 Tasks:
 
-- [ ] Add `handlebars` as a dependency, and say plainly in the README that the
+- [x] Add `handlebars` as a dependency, and say plainly in the README that the
       no-dependency property of Phase 14 is what is being given up
-- [ ] Create the `email_templates` entity: name, locale, subject, text, html,
+- [x] Create the `email_templates` entity: name, locale, subject, text, html,
       version, `updatedBy`, timestamps
-- [ ] Ship the six Phase 14 templates as `.hbs` files, and seed the table from
-      them so a fresh clone has every template present
-- [ ] Make the database row the override and the `.hbs` file the fallback, so an
+- [x] Ship the templates as `.hbs` files, and seed the table from them so a
+      fresh clone has every template present
+- [x] Make the database row the override and the `.hbs` file the fallback, so an
       app with an empty table still sends every mail
-- [ ] Render through `CacheService.wrap()` under a new `CACHE_NAMESPACE.Mail`
+- [x] Render through `CacheService.wrap()` under a new `CACHE_NAMESPACE.Mail`
       key, so a hot template expiring under load does not stampede the table
-- [ ] Invalidate the cache entry on every template write, so an edit takes
+- [x] Invalidate the cache entry on every template write, so an edit takes
       effect on the next send rather than after a TTL
-- [ ] Add `GET/PUT /admin/mail-templates/:name` behind a permission, writing an
+- [x] Add `GET/PUT /admin/mail-templates/:name` behind a permission, writing an
       audit entry through the Phase 19 audit log
-- [ ] Reject a stored template containing the triple-brace form, since raw
+- [x] Reject a stored template containing the triple-brace form, since raw
       interpolation of a user-controlled field is stored XSS in the mail client
-- [ ] Keep the per-template data contract: the admin form lists the allowed
+- [x] Keep the per-template data contract: the admin form lists the allowed
       fields, so an editor cannot add a variable no call site supplies
-- [ ] Preview a stored template against sample data before saving it
-- [ ] Purge template versions older than the Phase 16 retention window
-
-Implementation note: a stored template is untrusted input even though only an
-admin writes it. Handlebars escapes the double-brace form and not the
-triple-brace one, so a template that opts out of escaping turns a first name
-into script in a mail client. The narrow rule is that the triple-brace sequence
-is rejected in anything read from the database, while a `.hbs` file in the
-repository is trusted because it went through review.
+- [x] Preview a stored template against sample data before saving it
+- [x] Purge template versions older than the Phase 16 retention window
 
 Expected outcome:
 
@@ -1358,13 +1351,92 @@ Expected outcome:
 - A template can still be reviewed in a diff, because the file remains the
   fallback and the seed.
 
-Expected commit:
+Commits:
 
 ```text
-feat: add database-managed email templates
+fae4088  feat: add handlebars and ship the templates as hbs files
+7468bb7  feat: add the email template tables
+b9a8920  feat: resolve a template from the database with the file as fallback
+adc6227  feat: add the mail template admin routes
+e38a345  feat: seed the template table from the shipped files
+ccf9628  feat: purge superseded mail template versions
+429055c  test: cover the template override against a real database
+
 ```
 
----
+Decisions worth carrying forward, because each is a refusal of something:
+
+- **The `.hbs` files stay the fallback rather than becoming only the seed.** A row
+  that copies the file's contents into the table would freeze the wording, and a
+  later release's fix would not reach a deployment that had been seeded. An absent
+  row meaning "shipped" is what makes the phase additive and makes
+  `DELETE /admin/mail-templates/:name` mean something.
+- **The shell stays in code.** `layout.ts` wraps both parts after rendering, so an
+  operator editing a body cannot remove the "replies are not read" footer, and cannot
+  produce a template with an html part and no text part.
+- **A broken stored template falls back rather than failing.** It logs at `error`
+  and renders the shipped file. The alternative is one operator's mistake becoming a
+  500 on every registration in the deployment — the same asymmetry as a provider
+  outage, and for the same reason.
+- **The seeder inserts and never overwrites.** A second run cannot undo an edit made
+  deliberately, which is the one outcome an operator would not forgive. A fresh clone
+  has no rows, so it always gets the files.
+- **The version history is written in the same transaction as the update.** A
+  history row recorded outside it describes a save that then failed, which is how a
+  history table stops being trustworthy.
+- **The history table is purged on its own window, defaulting to the audit one.**
+  A template history that outlived the audit trail would be keeping wording nobody
+  could attribute.
+
+Five things this phase found rather than built:
+
+- **`Handlebars.escapeExpression` corrupts a url.** It is the html escaper and
+  encodes `=` as `&#x3D;`, so `?token=a&b=1` in an `href` reaches the mail client
+  as `?token&#x3D;a&amp;b&#x3D;1` — and the token no longer matches what the server
+  issued. Every verification and reset link in the application would have been dead,
+  and the only symptom would have been a support ticket saying the link does not
+  work. Caught by a test asserting the rendered `href` and reading the entity back.
+- **`knownHelpersOnly` does not refuse an unknown helper at compile time.** It throws
+  at _render_, and `save` compiles without rendering — so a stored template naming a
+  helper that does not exist would have been written and then failed on every send.
+  `assertKnownHelpers` scans the source and closes that window before the write.
+- **The first version of that scan refused every shipped template.** It treated every
+  `{{name}}` as a helper call, when handlebars resolves that as a _variable_. The
+  scan now distinguishes `{{name}}` from `{{name arg}}`, `{{#name}}` and `(name
+arg)`, and the set of helpers the shipped corpus actually uses — `actionLink`,
+  `isNull`, `bodyLines`, `bodyLinesText`, plus `if`/`each` — is asserted rather than
+  assumed.
+- **`nest build` did not copy the `.hbs` files.** They went in a top-level `assets`
+  key in `nest-cli.json`, which `copyAssets` does not read; it reads
+  `compilerOptions.assets`. The build succeeded, the container booted, and the first
+  send failed with "no template for welcome". Fixed in the first commit rather than a
+  late `fix:`, because a `.hbs` file that no build copies is dead weight and six
+  intermediate commits would each have been undeployable. Asserted by a test, because
+  nothing else would have noticed.
+- **The DTO guard had a false positive, in the direction that teaches a reader to
+  ignore it.** `request-dto-validation.spec.ts` scans source with paren counting, and
+  the `}` closing a decorator's argument list (`@Matches(LANGUAGE_TAG, {`) was
+  treated as closing a class and discarded every decorator stacked above it. A
+  correctly decorated `locale` came back undecorated and the guard reported it. It
+  still catches the real bug — verified by stripping the validator and watching it
+  fail — but the scanner now records a decorator that opens an argument list before
+  the depth check skips it.
+
+Known limits:
+
+- **Only `en` is ever resolved.** The `locale` column exists and is keyed into the
+  cache and the unique index, but no send asks for a second locale, so a row in any
+  other locale is stored and previewable and never sent. Recorded rather than built,
+  because the schema was needed for it and half of it is better than none.
+- **Templates are no longer type-checked.** A renamed field in a `.hbs` file is a
+  runtime failure. `template-fields.ts` is a `satisfies` map against the data
+  interfaces, which catches a _new_ field going unlisted but not a stale `.hbs`.
+- **A template edited in the database and then reset keeps its history row.** That
+  is the point of the table, but it means a reset is not a deletion of the operator's
+  work — only the live copy goes.
+- **`updatedBy` is denormalised and nullable**, with no foreign key, so the record of
+  who changed a password reset email outlives the operator. The audit entry carries
+  the same fact while the account exists.
 
 ## Follow-up Candidates
 
@@ -1408,29 +1480,29 @@ lands after the harness in Phase 12 is solid.
 
 ## Progress Tracking
 
-| Phase     | Name                                           | Status  |
-| --------- | ---------------------------------------------- | ------- |
-| Phase 0   | Project Architecture Skeleton                  | Done    |
-| Phase 1   | Base Application Foundation                    | Done    |
-| Phase 2   | Users Module                                   | Done    |
-| Phase 3   | Auth Module - Basic JWT                        | Done    |
-| Phase 4   | Authorization - RBAC and Manager Scope         | Done    |
-| Phase 5   | Admin Module Foundation                        | Done    |
-| Phase 6   | API Documentation                              | Done    |
-| Phase 7   | Refresh Tokens                                 | Done    |
-| Phase 8   | Device Authentication                          | Done    |
-| Phase 9   | Two-Factor Authentication                      | Done    |
-| Phase 10  | Cache and Performance                          | Done    |
-| Phase 11  | Production Hardening                           | Done    |
-| Phase 12  | Optional Integration Foundation                | Done    |
-| Phase 13  | Configuration Expansion                        | Done    |
-| Phase 14  | Outbound Email                                 | Done    |
-| Phase 15  | Background Job Queue                           | Done    |
-| Phase 16  | Data Retention and Cleanup                     | Done    |
-| Phase 17a | Permission-based Authorization                 | Done    |
-| Phase 17b | Authentication and Authorization through Cache | Done    |
-| Phase 18  | Notifications                                  | Done    |
-| Phase 19  | Account Security Features                      | Done    |
-| Phase 20  | Operational Hardening                          | Done    |
-| Phase 21  | Testing Depth and Documentation                | Done    |
-| Phase 22  | Configurable Email Templates                   | Pending |
+| Phase     | Name                                           | Status |
+| --------- | ---------------------------------------------- | ------ |
+| Phase 0   | Project Architecture Skeleton                  | Done   |
+| Phase 1   | Base Application Foundation                    | Done   |
+| Phase 2   | Users Module                                   | Done   |
+| Phase 3   | Auth Module - Basic JWT                        | Done   |
+| Phase 4   | Authorization - RBAC and Manager Scope         | Done   |
+| Phase 5   | Admin Module Foundation                        | Done   |
+| Phase 6   | API Documentation                              | Done   |
+| Phase 7   | Refresh Tokens                                 | Done   |
+| Phase 8   | Device Authentication                          | Done   |
+| Phase 9   | Two-Factor Authentication                      | Done   |
+| Phase 10  | Cache and Performance                          | Done   |
+| Phase 11  | Production Hardening                           | Done   |
+| Phase 12  | Optional Integration Foundation                | Done   |
+| Phase 13  | Configuration Expansion                        | Done   |
+| Phase 14  | Outbound Email                                 | Done   |
+| Phase 15  | Background Job Queue                           | Done   |
+| Phase 16  | Data Retention and Cleanup                     | Done   |
+| Phase 17a | Permission-based Authorization                 | Done   |
+| Phase 17b | Authentication and Authorization through Cache | Done   |
+| Phase 18  | Notifications                                  | Done   |
+| Phase 19  | Account Security Features                      | Done   |
+| Phase 20  | Operational Hardening                          | Done   |
+| Phase 21  | Testing Depth and Documentation                | Done   |
+| Phase 22  | Configurable Email Templates                   | Done   |

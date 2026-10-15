@@ -4,8 +4,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { MetricsModule } from '../../core/metrics/index.js';
 import { mailConfig, type MailConfig } from '../../configs/mail.config.js';
-import { MailLog } from './entities/index.js';
+import {
+  EmailTemplate,
+  MailLog,
+  MailTemplateVersion,
+} from './entities/index.js';
 import { MailLogService } from './mail-log.service.js';
+import { MailTemplateStore } from './mail-template.store.js';
 import {
   MAIL_TRANSPORT,
   MailService,
@@ -29,10 +34,16 @@ import type { MailTransport } from './transports/transport.interface.js';
   // `TypeOrmModule.forFeature([MailLog])` for the delivery record. The table is
   // the answer to "the user says they got nothing", and it has to be written from
   // the worker that sent the message rather than from the request that asked.
+  //
+  // The two template tables join it in Phase 22: `EmailTemplate` is the operator's
+  // override for a shipped `.hbs` file and `MailTemplateVersion` is what a save
+  // replaced. Both are optional in the sense that matters — an empty
+  // `email_templates` table renders the shipped files — but the repositories have to
+  // exist for the store to ask the question at all.
   imports: [
     ConfigModule.forFeature(mailConfig),
     MetricsModule,
-    TypeOrmModule.forFeature([MailLog]),
+    TypeOrmModule.forFeature([MailLog, EmailTemplate, MailTemplateVersion]),
   ],
   providers: [
     {
@@ -43,6 +54,10 @@ import type { MailTransport } from './transports/transport.interface.js';
     },
     MailService,
     MailLogService,
+    // Phase 22. Injected by `MailService`, so every send resolves its template
+    // through here rather than through a module-level function — that is what makes
+    // an operator's edit take effect without a deploy.
+    MailTemplateStore,
   ],
   /**
    * `MAIL_TRANSPORT` is exported because the health indicator asks the transport
@@ -51,6 +66,13 @@ import type { MailTransport } from './transports/transport.interface.js';
    * module that injects a provider needs the module that provides it in its
    * imports, and a token that is not exported is invisible there.
    */
-  exports: [MailService, MailLogService, MAIL_TRANSPORT],
+  exports: [
+    MailService,
+    MailLogService,
+    MAIL_TRANSPORT,
+    // Exported for the admin route, which reads and writes templates and would
+    // otherwise have to reach into this module's internals.
+    MailTemplateStore,
+  ],
 })
 export class MailModule {}

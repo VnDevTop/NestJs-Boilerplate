@@ -1,6 +1,7 @@
 import type { DataSource } from 'typeorm';
 
 import { AdminSeeder, type Seeder } from './admin.seeder.js';
+import { MailTemplateSeeder } from './mail-template.seeder.js';
 import { PermissionSeeder } from './permission.seeder.js';
 
 /**
@@ -11,8 +12,17 @@ import { PermissionSeeder } from './permission.seeder.js';
  * Permissions first: the admin user is created before its role has any grants,
  * which is fine, because a role gains its permissions by seed order rather than
  * by the account existing.
+ *
+ * Templates last, because they are the only seeder that reads the filesystem: it is
+ * the one most likely to fail on a packaging fault, and running it after the
+ * permissions means a deployment with a broken asset list still ends up with a
+ * usable administrator rather than with nothing.
  */
-export const SEEDERS: Seeder[] = [new PermissionSeeder(), new AdminSeeder()];
+export const SEEDERS: Seeder[] = [
+  new PermissionSeeder(),
+  new AdminSeeder(),
+  new MailTemplateSeeder(),
+];
 
 export async function runSeeders(dataSource: DataSource): Promise<void> {
   for (const seeder of SEEDERS) {

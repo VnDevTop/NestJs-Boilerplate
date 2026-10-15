@@ -1,11 +1,15 @@
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { getRepositoryToken } from '@nestjs/typeorm';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppConfig } from '../../configs/app.config.js';
 import type { MailConfig } from '../../configs/mail.config.js';
 import { MetricsService } from '../../core/metrics/index.js';
+import { CacheService } from '../../core/cache/index.js';
+import { MailTemplateStore } from './mail-template.store.js';
+import { EmailTemplate, MailTemplateVersion } from './entities/index.js';
 import {
   MAIL_TRANSPORT,
   MailService,
@@ -87,7 +91,33 @@ function build(
   // A real `MetricsService` rather than a fake: with `prom-client` absent it is a
   // no-op, and that is the state this suite most likely runs in. Asserting against
   // a fake would test the fake.
-  return new MailService(transport, new MetricsService(), configService);
+  //
+  // A real `MailTemplateStore` too, over a repository that always misses. Phase 22
+  // made the shipped `.hbs` files the fallback for an empty table, so a store with no
+  // rows renders exactly what Phase 14's plain functions rendered — which is what
+  // lets these assertions about subject lines and text parts keep meaning what they
+  // meant before. A stubbed store would be an object shaped like a dependency rather
+  // than the dependency, and this suite is about what actually gets rendered.
+  return new MailService(
+    transport,
+    new MetricsService(),
+    configService,
+    new MailTemplateStore(
+      {
+        findOneBy: async () => null,
+        delete: async () => undefined,
+        manager: {},
+      } as never,
+      { find: async () => [] } as never,
+      new CacheService(
+        {
+          get: async () => undefined,
+          wrap: async (_k: string, l: () => Promise<unknown>) => l(),
+        } as never,
+        {} as never,
+      ),
+    ),
+  );
 }
 
 const welcomeData = { firstName: 'Ada', appName: 'Example' };
@@ -360,6 +390,28 @@ describe('MailService as a Nest provider', () => {
         // runs in.
         MetricsService,
         MailService,
+        // Phase 22 added a fourth constructor dependency. Declaring it here rather
+        // than reaching for `useMocker` is the point: a testing module that does not
+        // name a dependency fails to compile with a message naming it, and this one
+        // caught the gap the first time it ran.
+        MailTemplateStore,
+        // `getRepositoryToken`, not the entity class: `@InjectRepository` resolves
+        // through a generated token, so providing the class satisfies nothing. The
+        // error names the token, which is the only reason this was quick to find.
+        {
+          provide: getRepositoryToken(EmailTemplate),
+          useValue: { findOneBy: async () => null },
+        },
+        {
+          provide: getRepositoryToken(MailTemplateVersion),
+          useValue: { find: async () => [] },
+        },
+        {
+          provide: CacheService,
+          useValue: {
+            wrap: async <T>(_key: string, loader: () => Promise<T>) => loader(),
+          },
+        },
         {
           provide: ConfigService,
           useValue: {

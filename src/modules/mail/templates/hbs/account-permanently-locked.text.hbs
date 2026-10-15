@@ -1,0 +1,7 @@
+{{#if (isNull failures)}}Your account has been locked after too many failed sign-in attempts.{{else}}Your account has been locked after {{failures}} failed sign-in attempts.{{/if}} Every session has been signed out.
+
+Reason: {{reason}}
+
+Unlock my account: {{unlockUrl}}
+
+This link expires in {{expiresInHours}} hours and works once. {{#if (isNull failures)}}If these attempts were not yours, change your password once you are back in — somebody may have been guessing it.{{else}}If you did not try to sign in {{failures}} times, change your password once you are back in — somebody may have been guessing it.{{/if}}

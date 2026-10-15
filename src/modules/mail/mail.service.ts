@@ -6,10 +6,12 @@ import { ConfigService } from '@nestjs/config';
 import { MetricsService } from '../../core/metrics/index.js';
 import type { AppConfig } from '../../configs/app.config.js';
 import type { MailConfig } from '../../configs/mail.config.js';
-import {
-  renderTemplate,
-  type TemplateDataByName,
-  type TemplateName,
+import { MailTemplateStore, renderShipped } from './mail-template.store.js';
+import { loadShippedTemplate } from './templates/shipped-templates.js';
+import type {
+  RenderedMail,
+  TemplateDataByName,
+  TemplateName,
 } from './templates/template.registry.js';
 import { MemoryMailTransport } from './transports/memory.transport.js';
 import { SendgridMailTransport } from './transports/sendgrid.transport.js';
@@ -82,6 +84,7 @@ export class MailService {
     @Inject(MAIL_TRANSPORT) private readonly transport: MailTransport,
     private readonly metrics: MetricsService,
     private readonly configService: ConfigService,
+    private readonly templates: MailTemplateStore,
   ) {}
 
   private get mailConfig(): MailConfig {
@@ -103,6 +106,11 @@ export class MailService {
    * `TName` ties the payload to the template, so passing welcome data to
    * `verify-email` does not compile. The return carries the mail id, which is
    * what makes a delivery traceable from the log to a provider id.
+   *
+   * Rendering goes through `MailTemplateStore` rather than the registry's pure
+   * `renderTemplate`, because Phase 22 made a template an operator-editable row with
+   * the shipped file as its fallback. That is an asynchronous read with a cache in
+   * front of it, which is why this is no longer a synchronous lookup.
    */
   async sendTemplate<TName extends TemplateName>(
     to: string,
@@ -110,7 +118,7 @@ export class MailService {
     data: TemplateDataByName[TName],
     options: SendTemplateOptions = {},
   ): Promise<SendMailResult> {
-    const rendered = renderTemplate(name, data);
+    const rendered = await this.render(name, data);
     const { subjectPrefix } = this.mailConfig;
     const prefix = options.subjectPrefix ?? subjectPrefix;
 
@@ -131,6 +139,47 @@ export class MailService {
     };
 
     return this.deliver(message, name);
+  }
+
+  /**
+   * Renders a template, falling back to the shipped file if the stored one is broken.
+   *
+   * The fallback is the point. A stored template that will not compile is an
+   * operator's mistake, and the alternative — propagating it — turns one bad edit
+   * into a 500 on every registration and every password reset in the deployment,
+   * which is a far worse outcome than sending the wording that shipped in the image.
+   * The error is logged at `error` with the template name so the mistake is findable.
+   *
+   * `loadShippedTemplate` is used directly rather than going through the store,
+   * because the store's answer is the row that is already known to be bad. Asking it
+   * again would return the same broken source.
+   */
+  private async render<TName extends TemplateName>(
+    name: TName,
+    data: TemplateDataByName[TName],
+  ): Promise<RenderedMail> {
+    try {
+      return await this.templates.render(name, data);
+    } catch (error) {
+      const shipped = loadShippedTemplate(name);
+
+      if (!shipped) {
+        // No file to fall back to, so there is nothing safe to do but fail. The
+        // message names the cause rather than surfacing a handlebars stack trace to
+        // whoever is registering.
+        throw new Error(
+          `The ${name} template could not be rendered and no shipped copy exists: ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
+      logger.error(
+        `The stored ${name} template could not be rendered, so the shipped one was ` +
+          `used instead. The edit needs fixing. ${error instanceof Error ? error.message : String(error)}`,
+      );
+
+      return renderShipped(name, data);
+    }
   }
 
   /**

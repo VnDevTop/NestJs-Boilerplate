@@ -32,6 +32,7 @@ describe('retention policy contents', () => {
       'audit_logs',
       'email_verification_tokens',
       'mail_logs',
+      'mail_template_versions',
       'notification_logs',
       'password_reset_tokens',
       'refresh_tokens',

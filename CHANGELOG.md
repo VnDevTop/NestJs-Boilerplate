@@ -15,6 +15,46 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: add database-managed email templates
+
+Phase 22. Intended commit: `feat: add database-managed email templates`
+
+**Tasks**
+
+- [x] `handlebars` as a dependency, with the cost of that stated in the README
+- [x] `email_templates`: name, locale, subject, text, html, version, `updatedBy`
+- [x] The nine templates shipped as `.hbs` files, seeded into the table
+- [x] The database row is the override and the `.hbs` file the fallback
+- [x] Rendered through `CacheService.wrap` under `CACHE_NAMESPACE.Mail`
+- [x] Cache invalidated on every write, after the commit
+- [x] `GET/PUT/DELETE /admin/mail-templates/:name` behind `mail-template:*`, audited
+- [x] The triple-brace form refused in anything read from the database
+- [x] The per-template data contract exposed as the allowed-field list
+- [x] A preview rendered against sample data, storing nothing
+- [x] `mail_template_versions`, purged on the retention window
+
+**What it gives up**
+
+The templates are no longer type-checked and `handlebars` is the first dependency
+the mail path has for rendering rather than delivery. Both are real costs and
+`src/modules/mail/README.md` says so next to the code that pays them.
+
+**What it found**
+
+- **`Handlebars.escapeExpression` corrupts a url.** It encodes `=` as `&#x3D;`, so a
+  `?token=a&b=1` in an `href` reaches the mail client as `?token&#x3D;a&amp;b&#x3D;1`.
+  Every verification and reset link would have been dead, found by asserting the
+  rendered `href` and reading the entity back.
+- **`knownHelpersOnly` throws at render, not at compile**, and `save` does not
+  render — so a stored template naming an unknown helper would have been written and
+  then broken every send.
+- **`nest build` did not copy the `.hbs` files.** A top-level `assets` key in
+  `nest-cli.json` is read by nothing; `compilerOptions.assets` is the one that works.
+  The build succeeded and the first send failed.
+- **The DTO guard reported a correct field as undecorated**, because the `}` closing a
+  decorator's argument list was treated as closing a class. Still catches the real
+  bug, verified by stripping the validator and watching it fail.
+
 ## feat: add multi-channel notifications
 
 Phase 18. Intended commit: `feat: add multi-channel notifications`

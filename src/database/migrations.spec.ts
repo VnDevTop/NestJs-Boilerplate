@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { ENTITIES } from './data-source.js';
 import '../modules/audit/entities/index.js';
 import '../modules/notification/entities/index.js';
+import '../modules/mail/entities/index.js';
 
 /**
  * Hand-written DDL can drift from the entities and nothing else would notice:
@@ -33,6 +34,10 @@ const MIGRATIONS: { file: string; tables: string[] }[] = [
     tables: ['notification_logs', 'notification_preferences'],
   },
   { file: '1791800000000-AddAuditLogs.ts', tables: ['audit_logs'] },
+  {
+    file: '1792200000000-AddEmailTemplates.ts',
+    tables: ['email_templates', 'mail_template_versions'],
+  },
 ];
 
 /**
@@ -144,6 +149,8 @@ const ENTITY_CLASS_NAMES: Record<string, string> = {
   audit_logs: 'AuditLog',
   notification_logs: 'NotificationLog',
   notification_preferences: 'NotificationPreference',
+  email_templates: 'EmailTemplate',
+  mail_template_versions: 'MailTemplateVersion',
 };
 
 function className(table: string): string | undefined {

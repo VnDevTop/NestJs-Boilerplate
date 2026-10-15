@@ -64,6 +64,7 @@ describe('retentionConfig', () => {
       notificationLogs: 30,
       loginAttempts: 7,
       auditLogs: 365,
+      mailTemplateVersions: 365,
     });
   });
 
