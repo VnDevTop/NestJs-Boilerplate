@@ -304,7 +304,6 @@ Recorded rather than left to be discovered. See
 
 - `GET /users/:id` has no role guard: any authenticated user can read another
   user's profile, email included. The password hash is withheld.
-- Listing routes return every matching row, with no pagination yet.
 - A dead cache costs latency rather than correctness. Each request waits out
   `CACHE_CONNECT_TIMEOUT` for the failed read and again for the failed write.
 - A role's permissions changed directly in the database are invisible to the

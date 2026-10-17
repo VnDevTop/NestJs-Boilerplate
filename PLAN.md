@@ -65,20 +65,27 @@ that pages and a tenant column that exists. This group is the floor.
 
 ### Phase 23: Cursor pagination
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 Goal: no listing route returns an unbounded result set.
 
-- [ ] Cursor pagination on `(createdAt, id)` for every route that can grow
-- [ ] `meta: { nextCursor, hasMore }` in the existing response envelope
-- [ ] Filter and sort DTOs with an **allow-list**, because sorting by an arbitrary
+- [x] Cursor pagination on `(createdAt, id)` for every route that can grow
+- [x] `meta: { nextCursor, hasMore }` in the existing response envelope
+- [x] Filter and sort DTOs with an **allow-list**, because sorting by an arbitrary
       column name is SQL injection with a different name
-- [ ] `GET /users` and the admin listings migrated
-- [ ] `PaginationQueryDto` either wired in or deleted — an unused DTO reads as a
-      plan and is not one
+- [x] `GET /users` and the admin listings migrated
+- [x] `PaginationQueryDto` either wired in or deleted — an unused DTO reads as a
+      plan and is not one. Deleted.
 
 Done when a concurrent insert between two page requests cannot make a row appear
-on both pages or on neither.
+on both pages or on neither. **Met, and asserted as a test** rather than argued in
+a comment: `cursor-pagination.spec.ts` pages a set with a row inserted between two
+reads and checks that every original row appears exactly once and the new one not
+at all.
+
+Carried into Phase 24: the boundary is generic over the sort column, so a route
+sorting by something other than `createdAt` needs nothing new — only an index
+that leads with that column and carries the id after it.
 
 ### Phase 24: A reusable query criteria object
 
@@ -122,7 +129,7 @@ Goal: one query language, reusable by every searchable entity.
 infrastructure.
 
 - [ ] `ast.ts`: `BooleanQuery | FieldQuery | RangeQuery | PhraseQuery |
-  WildcardQuery | ExistsQuery | BoostQuery | MatchAllQuery`
+WildcardQuery | ExistsQuery | BoostQuery | MatchAllQuery`
 - [ ] Tokenizer and recursive-descent parser
 - [ ] Supported: `term`, `field:value`, `"phrase"`, `AND OR NOT`, parentheses,
       `[a TO b]` inclusive, `{a TO b}` exclusive, `>`, `<`, `>=`, `<=`, `wild*`,
@@ -135,7 +142,7 @@ infrastructure.
 Status: Planned
 
 - [ ] `SearchFieldRegistry`: field → `{ type, searchable, filterable, sortable,
-  weight, column }`
+weight, column }`
 - [ ] The **allow-list** is the injection boundary. An undeclared field is
       `UnknownFieldError` listing the valid names, never silently dropped
 - [ ] The translator emits **parameterized values only**, and never interpolates
@@ -229,7 +236,7 @@ than another customer's data.
       without `FORCE`, the table owner bypasses it and TypeORM connects as the
       owner
 - [ ] `USING ("tenantId" = current_setting('app.tenant_id', true))`, with `WITH
-  CHECK` so an insert cannot write into another tenant
+CHECK` so an insert cannot write into another tenant
 - [ ] The application role documented as **not** a superuser, because a superuser
       bypasses every policy
 - [ ] A second, non-superuser role for the app, created by the migration
@@ -714,7 +721,7 @@ exists means writing the same retry logic twice.
 | Phase 20  | Operational Hardening                          | Done    |
 | Phase 21  | Testing Depth and Documentation                | Done    |
 | Phase 22  | Configurable Email Templates                   | Done    |
-| Phase 23  | Cursor pagination                              | Planned |
+| Phase 23  | Cursor pagination                              | Done    |
 | Phase 24  | A reusable query criteria object               | Planned |
 | Phase 25  | Job progress and cancellation                  | Planned |
 | Phase 26  | An audit read surface                          | Planned |

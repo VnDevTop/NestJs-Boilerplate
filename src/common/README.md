@@ -6,13 +6,13 @@ Reusable building blocks. Nothing here may know about a business module.
 common
 ├── constants     metadata keys, header names, app wide limits
 ├── decorators    @Public, @CurrentUser, @Roles, @ManagerOnly, @Permissions, @DeviceName
-├── dto           PaginationQueryDto and other shared shapes
 ├── enums         Role
 ├── filters       AllExceptionsFilter, HttpExceptionFilter
 ├── guards        JwtAuthGuard, RolesGuard, ManagerGuard, PermissionsGuard
 ├── interceptors  ResponseTransformInterceptor
 ├── interfaces    ApiResponse, JwtPayload, RequestUser
 ├── middlewares   RequestIdMiddleware
+├── pagination    cursor encoding, the sort allow-list, the keyset page reader
 ├── pipes         global validation pipe
 └── utils         password, encryption, recovery codes, user agent, request id
 ```
@@ -58,6 +58,87 @@ client mistake, and logging every one buries the failures that matter.
 
 `ResponseTransformInterceptor` wraps successful responses in the standard
 `ApiResponse` envelope, so the shape is decided in one place.
+
+A listing route returns a `PaginatedResultDto` and the interceptor lifts its
+`meta` to the top of the envelope:
+
+```json
+{
+  "success": true,
+  "data": [],
+  "meta": { "nextCursor": null, "hasMore": false, "limit": 20 },
+  "timestamp": "2026-10-03T03:17:01.234Z"
+}
+```
+
+`data` is the array the route has always returned, so a client reading `data`
+needs no change; `meta` is the new part. A route that is not paged has no `meta`
+at all — absent rather than null, so it cannot be confused with an empty page.
+
+## Pagination
+
+`pagination/` is the floor the rest of the plan stands on: every group after this
+one stores data, and every one of them needs a list route that pages. It knows no
+entity, and it holds four decisions.
+
+| File                             | Decision                                                            |
+| -------------------------------- | ------------------------------------------------------------------- |
+| `cursor.ts`                      | the boundary is opaque base64url, versioned, and a bad one is a 400 |
+| `sort.ts`                        | sorting is an allow-list map; the request never reaches a column    |
+| `cursor-pagination-query.dto.ts` | `limit`, `cursor`, `sort`, `order` — and no `page`                  |
+| `cursor-pagination.ts`           | keyset paging, one row past the limit, both values bound            |
+
+**Keyset, not offset.** `LIMIT n OFFSET m` makes the database count and discard
+`m` rows per page, so page 900 reads nine hundred rows to return twenty — and
+because that count happens inside the statement, a row inserted between two
+requests can appear on both pages or on neither. A cursor names the boundary it
+stopped at, so an insert ahead of the reader cannot move it. This is asserted as a
+test in `cursor-pagination.spec.ts`, not only described here.
+
+**The boundary is `(sortColumn, id)`, compared as a tuple.** `createdAt` is not
+unique — many rows share a timestamp — and Postgres owes no ordering to equal keys,
+so a boundary on the sort value alone would either re-read or skip the rows that
+tie with it. The id is the tie-break, and it is also what makes `hasMore` and the
+next cursor unambiguous.
+
+**`hasMore`, not a total.** One row past the limit answers it for free; `COUNT(*)`
+answers it by reading every matching row, and goes stale between pages anyway.
+
+**A malformed cursor is refused.** Ignoring it would answer a request for page four
+with page one: a correct-looking response to the wrong question, which a client
+renders as "no results".
+
+### Adding a listing route
+
+1. Declare the sortable columns as a map from request name to column:
+
+   ```ts
+   export const ORDER_SORT_FIELDS = {
+     createdAt: 'createdAt',
+     reference: 'reference',
+   } as const satisfies SortFieldMap<'createdAt' | 'reference'>;
+   ```
+
+   Every one of them must be `NOT NULL` — a cursor carries its boundary as a
+   string, and `null` would have to be encoded as something the decoder reads as
+   malformed. That restriction is the reason `nullable` columns are absent from
+   these maps, and it is why adding one is a deliberate change rather than a line.
+
+2. Extend `CursorPaginationQueryDto` with the filters, as declared properties.
+   A DTO that accepted a `{ [column]: value }` bag and passed it to TypeORM would
+   let a caller read any column the entity has, `password` included.
+
+3. `resolveSort(query.sort, query.order, FIELDS, 'createdAt')`, then hand the
+   query builder to `paginateByCursor`, and return `PaginatedResultDto.of(items,
+meta)`.
+
+4. Add an index that leads with the sort column and carries the id immediately
+   after it — `(createdAt, id)`. Ascending only; Postgres scans an index backwards
+   for the other direction.
+
+The only thing this buys that matters is the last one: **Phase 24 is a no-op for
+every route that follows this one.** Adding a list route after this phase needs no
+new pagination code.
 
 ## Utilities worth knowing
 
