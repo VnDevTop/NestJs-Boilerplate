@@ -4,8 +4,9 @@ What this template already does, and the enhancements worth building on top of
 it. Written for someone about to add features, so each item says what it involves
 and what it costs, not just what it is.
 
-[PLAN.md](PLAN.md) is the phase by phase record of what was built.
-[CHANGELOG.md](CHANGELOG.md) is what each change did and why.
+[PLAN.md](PLAN.md) is the phase by phase plan for what comes next, Phases 23
+through 101.
+[CHANGELOG.md](CHANGELOG.md) is what has already been built and why.
 
 ---
 
@@ -43,13 +44,19 @@ starting point rather than a scaffold to fill in.
 Not features. Each is a decision that has not been made, and the cost of leaving
 it unmade is the point.
 
-| Decision                                            | Why it matters                                                                                                                    |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Restrict `GET /users/:id` to the owner or an admin  | Any authenticated user can read another user's profile, email included                                                            |
-| Paginate the listing routes                         | `GET /users` and the admin dashboard return every matching row                                                                    |
-| Who may read the audit trail                        | It is written for every privileged action, and there is no route that reads it back                                               |
-| Replace the account-lockout thresholds in config    | A permanent lockout is a denial-of-service surface; only confirmed accounts can be locked, and that is code rather than a setting |
-| Whether the audit writer should ever fail a request | It never does, so the trail can have holes. Failing closed trades that for an application that cannot write anything              |
+| Decision                                            | Why it matters                                                                                                                    | Phase |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| Restrict `GET /users/:id` to the owner or an admin  | Any authenticated user can read another user's profile, email included                                                            | —     |
+| Paginate the listing routes                         | `GET /users` and the admin dashboard return every matching row                                                                    | 23    |
+| Who may read the audit trail                        | It is written for every privileged action, and there is no route that reads it back                                               | 26    |
+| Replace the account-lockout thresholds in config    | A permanent lockout is a denial-of-service surface; only confirmed accounts can be locked, and that is code rather than a setting | —     |
+| Whether the audit writer should ever fail a request | It never does, so the trail can have holes. Failing closed trades that for an application that cannot write anything              | —     |
+
+The first is still unmade and is a product decision rather than a missing feature:
+the users README records it as open, and closing it by adding a guard is a one-line
+change somebody has to decide is right. The lockout thresholds answer is Phase 32's
+neighbour — the temporary ones now read config, and the permanent ones stay code on
+purpose.
 
 ---
 
@@ -231,43 +238,39 @@ Both plans above needed one, and it is worth having on its own.
 - The handler re-checks its own precondition, because state can change between
   the enqueue and the run.
 
-### 7. The rest, in rough order
+### 7. The planned second half
 
-Each earns its place in a real project. None is a template's job to build.
+Phases 23–101 in [PLAN.md](PLAN.md), grouped by what they depend on rather than by
+what they are. Several items in the list below were once "the rest, in rough
+order" and now have a phase number against them.
 
-- **Pagination and filtering.** Cursor pagination for anything that can grow
-  without bound. Offset pagination skips and duplicates rows when the underlying
-  data changes mid page.
-- **File uploads.** Direct to object storage with a signed URL, so a large file
-  never passes through the API process. Size and type validated on the signature
-  request, not after the upload.
-- **Audit log.** Who changed what, when, and from where. Append only, kept out of
-  the tables it records, and queryable separately from the operational database.
-  Written by an interceptor, so a new route is covered by default.
-- **Account lockout.** Distinct from rate limiting, which limits a route. This
-  limits an account, survives the counter being reset, and notifies the owner
-  when it trips.
-- **Permissions beyond roles.** `PermissionsGuard` is a placeholder. Roles cover
-  the common case; a permission table and a decision about where permissions are
-  assigned are what make it real.
-- **Webhook signing and replay protection.** The same signing work the
-  notification plan needs, for the outbound direction.
-- **GDPR style data export and erasure.** A machine readable export, and an
-  erasure that says what is deleted, anonymised, or kept for a legal reason.
-- **Feature flags.** A kill switch for the risky path is worth more than a
-  rollback, and it is cheaper to add before you need it.
-- **Zero downtime migrations.** Expand, backfill, contract. A migration that
-  renames a column in one step is an outage waiting for a deploy.
-- **Read replica routing.** Worth it once reads dominate, and not before.
-- **Localisation.** Message catalogues rather than concatenated strings, from the
-  start, because extracting them later is painful.
-- **API client generation.** Generate a typed client from the OpenAPI document
-  the project already publishes, so the schema stops drifting.
-- **Multi-tenancy.** Every table keyed by tenant, enforced in the repository
-  rather than remembered per query. Far cheaper to start with than to retrofit.
-- **Distributed locks.** Redis based, for the cases where a database row lock is
-  not enough. The refresh rotation does not need one, which is why it uses a row
-  lock.
+| Group | Phases | What it buys                                                                                                                                                                                   |
+| ----- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | 23–31  | Cursor pagination, a reusable query criteria object, job progress and cancellation, an audit read surface, and a Lucene query language with a Postgres translator                              |
+| 2     | 32–41  | Multi-tenancy: a tenant column from the start, a registry, repository scoping, row-level security on every table, per-tenant permissions, and a three-mode CI matrix that proves the isolation |
+| 3     | 42–44  | One shared HTTP client with an error taxonomy, a circuit breaker and a retry budget, replacing the hand-rolled calls already in the codebase                                                   |
+| 4     | 45–52  | Outbound and inbound webhooks, HMAC signing, an SSRF guard, service-to-service tokens, a domain event catalogue and an outbox                                                                  |
+| 5     | 53–58  | Object storage with presigned URLs, streaming Excel export, resumable chunked import, and import presets                                                                                       |
+| 6     | 59–65  | A payment provider abstraction with Stripe as the default adapter, an internal ledger, reconciliation, and entitlement-to-permission                                                           |
+| 7     | 66–68  | Server-sent events for progress and push, with WebSocket only if measured to be necessary                                                                                                      |
+| 8     | 69–73  | A report registry, scheduled delivery, an OpenSearch translator over the same AST, and index sync through the outbox                                                                           |
+| 9     | 74–79  | Backup and restore with a drill, audit tamper-evidence, a migration linter, and fixes to the gaps already recorded                                                                             |
+| 10    | 80–85  | Typed client generation, deprecation headers, an OpenAPI breaking-change check, seed factories, a dev compose profile and feature flags                                                        |
+| 11    | 86–91  | API keys, OIDC social login, passkeys, SAML, consent records and i18n                                                                                                                          |
+| 12    | 92–97  | Schema-per-tenant in full — the riskiest block in the plan, and stated as such                                                                                                                 |
+| 13    | 98–101 | Contract tests, extended mutation testing, load tests and chaos tests                                                                                                                          |
+
+Three items from the old "rough order" list are deliberately **not** in that table
+and the reasons have not changed:
+
+- **Read replica routing.** Worth it once reads dominate, and not before. Nothing
+  above needs it, and adding it early is a second thing to reason about whenever a
+  query is slow.
+- **Distributed locks.** Redis based, for cases where a row lock is not enough. The
+  refresh rotation does not need one, which is why it uses a row lock.
+- **A `roles` table.** Phase 38 keeps `users.role` a `varchar`. Converting it
+  changes the API surface for no gain at this size, and it is a clean standalone
+  change when the roles stop being a fixed enum.
 
 ---
 
