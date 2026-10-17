@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
@@ -21,15 +22,22 @@ import type { RetentionTargetResult } from '../retention.service.js';
  * Sized against the real payload: a run with five targets serialises to about
  * 1.2 KB of JSON and 728 bytes stored, so a daily run costs roughly 260 KB a
  * year, and even ten manual runs a day on top of the cron stays under 3 MB.
- * The entire history fits in memory, which is why it carries no index. An index
- * on `startedAt` would be the only index on the table and would cost more than
- * it saves at that size.
+ * The entire history fits in memory *today*, which is why it had no index until
+ * Phase 23 — but nothing prunes it, so "today" is a statement about the first
+ * year of a deployment rather than a property of the table. The history route is
+ * cursor paged now, and it carries `(createdAt, id)` for that walk: four kilobytes
+ * per thousand rows against a route an operator opens when something has already
+ * gone wrong.
  *
  * The trade is deliberate and worth restating: nothing prunes this table. The
  * operator trims it by hand, quarterly or yearly, when the number of rows
  * finally matters.
  */
 @Entity({ name: 'maintenance_logs' })
+// Phase 23 added this, against the note below that used to say the table carries
+// no index. It does now: the history route is cursor paged, and the table grows
+// for the life of the deployment because nothing prunes it.
+@Index('IDX_maintenance_logs_created_cursor', ['createdAt', 'id'])
 export class MaintenanceLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

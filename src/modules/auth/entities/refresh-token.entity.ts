@@ -14,6 +14,10 @@ import { RefreshTokenRevokedReason } from '../enums/index.js';
 
 @Entity({ name: 'refresh_tokens' })
 @Index('IDX_refresh_tokens_user_revoked', ['userId', 'revokedAt'])
+// Cursor paging for `GET /auth/sessions`. Replaces nothing — the `(userId,
+// revokedAt)` index above still serves the "revoke every session" write path,
+// which does not sort.
+@Index('IDX_refresh_tokens_user_created_cursor', ['userId', 'createdAt', 'id'])
 export class RefreshToken {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

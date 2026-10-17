@@ -115,16 +115,24 @@ describe('append-only', () => {
 });
 
 describe('indexing', () => {
-  it('declares no index at all', () => {
-    // Measured against the real payload: 728 bytes a row, so a year of daily
-    // runs is about 260 KB and fits in memory. An index on startedAt would be
-    // the only index on this table and would cost more than it saves. The
-    // operator trims by hand when the row count finally matters.
+  it('carries one index: the keyset pair the history route pages on', () => {
+    // It had none until Phase 23, on the reasoning that the whole table fits in
+    // memory. That is true of the first year and nothing stops it: nothing prunes
+    // this table, so it grows for the life of the deployment, and the history is
+    // read by an operator when something has already gone wrong.
+    //
+    // `(createdAt, id)` rather than `(startedAt)`: a cursor boundary is a
+    // comparison on the sort column with the id as the tie-break, so the id has to
+    // be in the index or every row sharing a timestamp is heap-fetched to be
+    // discarded.
     const storage = getMetadataArgsStorage();
+    const indices = storage.indices.filter(
+      (index) => index.target === MaintenanceLog,
+    );
 
-    expect(
-      storage.indices.filter((index) => index.target === MaintenanceLog),
-    ).toEqual([]);
+    expect(indices.map((index) => index.columns)).toEqual([
+      ['createdAt', 'id'],
+    ]);
   });
 
   it('has no unique constraint beyond the primary key', () => {
@@ -153,8 +161,31 @@ describe('the migration', () => {
     expect(migration.match(/CREATE TABLE/g)).toHaveLength(1);
   });
 
-  it('creates no index, matching the decision above', () => {
+  it('creates no index, because that one arrived in Phase 23', () => {
+    // The table's own migration stays index-free and the cursor index is a later,
+    // separately reversible step — a run history that predates paging still reads
+    // correctly.
     expect(migration).not.toMatch(/CREATE INDEX|CREATE UNIQUE INDEX/);
+  });
+
+  it('adds the cursor index in a migration of its own, and drops it in down', () => {
+    const cursorMigration = readFileSync(
+      join(
+        process.cwd(),
+        'src',
+        'database',
+        'migrations',
+        '1792400000000-AddCursorPaginationIndexes.ts',
+      ),
+      'utf8',
+    );
+
+    expect(cursorMigration).toContain(
+      'CREATE INDEX "IDX_maintenance_logs_created_cursor"',
+    );
+    expect(cursorMigration).toContain(
+      'DROP INDEX "public"."IDX_maintenance_logs_created_cursor"',
+    );
   });
 
   it('defaults the two list columns at the database level', () => {
