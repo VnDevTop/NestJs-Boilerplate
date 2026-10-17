@@ -15,6 +15,817 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: give a session a maximum age
+
+`feat(auth): give a session a maximum age`
+
+**What changed**
+
+- `refresh_tokens.sessionStartedAt`: a fixed point per session, carried forward by
+  every rotation
+- Migration `1792300000000-AddSessionStartedAt`, backfilled from `createdAt`, with
+  an index on `(userId, sessionStartedAt)`
+- `RefreshTokenRevokedReason.AbsoluteTimeout`
+- `src/configs/session.config.ts` with `SESSION_ABSOLUTE_TTL_SECONDS`, default
+  30 days, zero disables
+- The check, in `rotate()`, after reuse detection and before a token is issued
+
+**Why**
+
+`JWT_REFRESH_EXPIRES_IN` is a sliding window. Every rotation mints a fresh token
+with a fresh expiry, so a client that refreshes before it lapses is never refused
+and one session can outlive any length of time — nothing in the schema counted
+rotations, which is why `GET /auth/sessions` could list a session a year old and
+mean it.
+
+**Checked at rotation, not per request.** Only a rotation extends a session;
+between refreshes the access token expires on its own within minutes. So the whole
+control costs one comparison at `POST /auth/refresh-token` and nothing on the
+request path. The alternatives were a Redis sliding window — a write on every
+request, on a cache that fails open here, so a Redis outage silently removes the
+timeout — or an access-token claim, which cannot express idle at all because a
+stateless token does not know when it was last used.
+
+**One column, because `createdAt` slides.** A rotation creates a new row, so every
+live token in a chain carries the time of the most recent refresh rather than the
+time the session began. The chain cannot be walked backwards to recover it either:
+`replacedById` points forward, so the root is reachable only in the direction the
+schema does not index. Carrying the value forward is also what makes this a
+ceiling rather than a second sliding window — using the session cannot buy it
+another allowance. There is a test for exactly that, and it fails if the
+forward-carry is dropped.
+
+**Backfilled from `createdAt` rather than left at the migration's `now()`**, which
+would have handed every signed-in user a brand new lifetime clock and made every
+live session look like it had just started.
+
+**`AbsoluteTimeout` is deliberately not `Rotated`.** `Rotated` is the only reason
+reuse detection treats as theft. A phone left on a train comes back holding a token
+already revoked under this reason, and answering with the account-wide sweep would
+revoke every session the user has, including the one they are signing in to. A
+user locking themselves out by leaving a device unattended is a denial of service
+an attacker gets for free.
+
+**What it gives up**
+
+The response is the existing `expired`, 401. A client cannot act differently on
+"your session is too old" than on "your token expired", and inventing a status
+would only give it one.
+
+There is no idle timeout, so a session nobody touches is still ended only by its
+own window. And an access token minted just before the deadline stays valid for up
+to `JWT_EXPIRES_IN`; that is inherent to a stateless access token, and it is the
+trade OAuth's security BCP makes for the same reason.
+
+---
+
+## fix(auth): say at boot that the breach check is off
+
+`fix(auth): say at boot that the breach check is off`
+
+**What changed**
+
+`PasswordPolicyService` warns at boot when `PASSWORD_CHECK_BREACH_LIST` is false,
+naming the variable and saying what the check actually sends.
+
+**Why**
+
+`PASSWORD_CHECK_BREACH_LIST` defaults to false because it is a network call in the
+request path, and that is a good reason to leave the choice to whoever runs the
+deployment. The problem was not the default, it was the silence: a password that
+appears verbatim in a breach corpus is accepted, and nothing in the logs, the
+response or the documentation says so at the moment an operator would look.
+
+Warned rather than defaulted on. Flipping it would put an outbound HTTPS call in
+the middle of every registration and reset for every deployment, including the
+air-gapped ones, to fix a problem that is about the operator not knowing.
+
+There is already a `log` line for a missing zxcvbn in the same constructor; this
+is the same idea for the same reason.
+
+---
+
+## fix(core): redact the columns and messages that could carry a secret
+
+`fix(core): redact the columns and messages that could carry a secret`
+
+**What changed**
+
+- `audit_logs.error`, `mail_logs.error` and `notification_logs.error` pass through
+  `redactText` **before** they are clipped
+- `notification_logs.body` gets the same treatment
+- `postJson` no longer interpolates an unparseable url into its error message
+- Three new text patterns for credentials that are a url path rather than a
+  `key=value`: `hooks.slack.com/services/…`, `discord.com/api/webhooks/…`,
+  `api.telegram.org/bot…`
+- `refresh_tokens.jti` added to `REDACTED_KEYS`
+
+**Why**
+
+Four places where a credential could reach a database column, all of them the same
+shape of mistake: a value that arrives verbatim from something else is clipped and
+stored, and clipping looks like handling.
+
+**The order was wrong.** The first 500 characters of an exception message is
+precisely where a token in a query string sits, so the clip preserved the part
+that mattered and discarded the rest.
+
+**A webhook url is the credential.** `postJson` rejected an unparseable url with
+the url interpolated into the message. Slack and Discord incoming webhooks carry
+the bot token in the path, and that message is caught by the notification service
+into an `error` field, which is a database column — so a misconfigured webhook
+wrote a live credential into `notification_logs`.
+
+**The redactor could not see it anyway.** None of the text patterns match a secret
+that is a url path, so three more were added, pinned to the hosts the channels
+actually post to. Redacting every url path would fire on ordinary prose, and a
+redactor that cries wolf is one people switch off — there is a test for that
+specific property.
+
+`jti` is not an access credential, but it is half of `token:revoked:<jti>`, the key
+that decides whether a session is dead, so anyone holding it can enumerate which
+sessions exist and which were cut.
+
+**What is deliberately left alone**
+
+`actorEmail`, `ipAddress` and `userAgent`. They are personal data by definition,
+and a redactor that removed them would make the audit trail useless for the
+incident it exists for.
+
+Ten new tests, all verified to fail against the code they replace — by reverting
+each file and watching the suite go red rather than by reading the code.
+
+---
+
+## fix(auth): hash recovery codes with scrypt like passwords
+
+`fix(auth): hash recovery codes with scrypt like passwords`
+
+**What changed**
+
+- `hashRecoveryCode` uses scrypt with a per-code salt
+- The stored value names its derivation: `scrypt$…`, with `sha256$` still verified
+  and never written
+- `verifyRecoveryCode` is async, and both `TwoFactorService` call sites are awaited
+- The find-then-filter in `consumeRecoveryCode` is now a single pass
+
+**Why**
+
+A recovery code is ten characters of a 32 symbol alphabet — about 50 bits — and it
+was stored as SHA-256 with a salt. Against a leaked table of those, SHA-256 runs at
+billions of hashes a second on a GPU, so fifty bits stops being much of a defence
+when the guessing is free. Passwords in the same table already used scrypt: the
+credential an attacker with the database wants most was the one hashed cheapest.
+
+**The stored value naming its derivation is what makes the upgrade safe.** `sha256$`
+rows from a previous deployment still verify — same salt, same digest, and the
+prefix is what tells it apart — and they are never written, so they age out as
+codes are spent with no migration to run.
+
+**Verification is now async, which is the part that needed care in the caller.** A
+Promise is truthy, so the old `!this.isRecoveryCode(record, code)` would have
+accepted every wrong code ever typed.
+
+**Cost of the fix, stated plainly:** a wrong code costs one derivation per
+remaining code, roughly a second, and a correct one costs about two. That is the
+right place for it — a recovery code is used a handful of times before the lockout,
+and it is precisely the credential worth the expense.
+
+---
+
+## fix(auth): derive the two-factor key with scrypt, not a single hash
+
+`fix(auth): derive the two-factor key with scrypt, not a single hash`
+
+**What changed**
+
+`deriveKey` uses `scryptSync` with a fixed, versioned salt instead of a single
+SHA-256 of the passphrase.
+
+**Why**
+
+One operation between `TWO_FACTOR_ENCRYPTION_KEY` and the AES-256-GCM key that
+protects every enrolled TOTP secret in the table.
+
+The exposure is narrow but the failure is total. A passphrase in an environment
+file is the thing an operator writes as `changeme`, copies between two deployments,
+and forgets — and the whole defence of the stored ciphertext was that reading it
+required guessing that string. With one SHA-256 it requires guessing it at hash
+speed, which is not a defence at all. That matters most in exactly the case the
+encryption exists for: somebody has the database.
+
+The salt is fixed rather than random, and has to be — the derivation must be
+deterministic or nothing decrypts on the next boot. It is versioned in the string
+so a future change is recognisable as one.
+
+**What it gives up**
+
+**This invalidates every stored two-factor secret.** The derived key changes, so
+existing ciphertext no longer decrypts and those users re-enrol.
+`TWO_FACTOR_ENCRYPTION_KEY` itself does not have to change. It is a one-way door
+for a deployment that already has users enrolled.
+
+The cost is paid on enrol, disable and two-factor login — three paths — and never
+on the password path.
+
+New spec, because this file had none. The derivation is asserted structurally
+rather than by timing: a test that measures how long derivation takes fails on a
+fast machine and passes on a slow one, and a failing timing test is a test people
+delete.
+
+---
+
+## fix(auth): route the password reset through the policy service
+
+`fix(auth): route the password reset through the policy service`
+
+**What changed**
+
+`PasswordResetService.consume` asks `PasswordPolicyService.checkForUser()` once the
+token has named the user, replacing a hand-rolled reuse check with its own message.
+
+**Why**
+
+`checkForUser()` was written to be the uniform entry point — `check()` plus the
+reuse half — and had no callers anywhere in the repository. The reuse check it
+wraps existed anyway, inside the reset transaction, with its own idea of what to
+say. Two implementations of one rule is the state that lets them drift.
+
+The service now reports every reason the policy gives rather than a bespoke
+sentence, because a user who typed a password failing the length rule and reuse at
+once should see both.
+
+**The global half now runs twice on a reset.** `AuthService.resetPassword` still
+calls `assertPasswordAcceptable` before opening the transaction, and `consume`
+calls the full check inside it. Deliberate: the first rejects an obviously bad
+password without taking a row lock and running scrypt to discover it; the second is
+authoritative because it is the only place that can ask about reuse. The breach
+lookup is cached by prefix for thirty days, so the repeat is a cache read in steady
+state.
+
+No new module edge: `PasswordPolicyService` is provided in `AuthModule` and
+`PasswordResetService` lives in it.
+
+**What it does not reach**
+
+The admin create and update paths still bypass the policy entirely. Closing that
+needs `UsersService` to see the policy, and the obvious route is a
+`UsersModule` → `AuthModule` import, which is a genuine Nest-level cycle because
+`AuthService` injects `UsersService` back.
+
+---
+
+## fix(auth): make the lockout settings mean something
+
+`fix(auth): make the lockout settings mean something`
+
+**What changed**
+
+`LoginLockoutService` reads `LOGIN_MAX_FAILED_ATTEMPTS` and
+`LOGIN_LOCKOUT_DURATION` from the `passwordPolicy` namespace instead of two local
+constants. `AccountLockService` asks the lockout for its threshold rather than
+reading the export.
+
+**Why**
+
+Both variables were declared in `PasswordPolicyConfig`, validated in
+`env.validation.ts` and advertised in `.env.example` — and never read. An operator
+who raised the threshold to ten for a deployment behind a corporate proxy got five,
+with nothing in the logs or the response to say so. The configuration was real
+enough to pass a review and useless enough to be a trap.
+
+**`LOGIN_LOCKOUT_DURATION` is the ceiling on the ramp, not a fixed length.** Three
+minutes only bites once the one-minute ramp has climbed past it, and that is the
+reason it is a separate setting from the base — a fixed duration would either make
+five typos cost fifteen minutes or make a sustained attack stop costing anything.
+
+`LOGIN_MAX_FAILED_ATTEMPTS=0` is the documented off switch, so it is a real one:
+`inspect` and `recordFailure` return early and never touch Redis, rather than
+using a threshold no count can reach.
+
+`AccountLockService` now asks rather than reading the constant, because that
+constant is only the default now, and comparing against a hard-coded 5 would have
+silently disabled the permanent lockout for exactly the operator who raised the
+temporary one.
+
+Four tests, all verified to fail with the config ignored.
+
+---
+
+## fix(users): hash a password sent through the update route
+
+`fix(users): hash a password sent through the update route`
+
+**What changed**
+
+`UpdateUserDto` gains an optional `password`, and `UsersService.update` hashes it.
+Setting it bumps `sessionsVersion`.
+
+**Why**
+
+`UpdateUserDto` had no `password` field at all, so `PATCH /users/:id` could not
+change a password — and adding one without hashing would have put the cleartext bug
+back one route over from where the previous commit removed it. The client sends what
+the user typed, the same contract `register` and `CreateUserDto` have, and the
+service owns the digest.
+
+The password is destructured out of the DTO rather than merged as received:
+`merge` assigns every key it is handed, so passing the body through with `password`
+still attached would have written the plaintext no matter what the code above it
+decided — the one way this fix could silently not apply.
+
+**The version bump is the half that is easy to leave out.** An administrator
+resetting a password for somebody who cannot reach their inbox is closing a door
+the old key still opens, and without the bump every token minted under it keeps
+working for the rest of its lifetime. It is bumped only when the password is
+actually in the body: doing it unconditionally would sign the user out of every
+device each time an operator fixed a typo in a name.
+
+Four tests, three of which fail against the merge-as-received version.
+
+**What it deliberately does not do: tell the user.** `password-changed` and
+`new-device-login` both exist as mail templates and neither has ever been sent by
+anything. An admin reset is now reachable, so the account owner is not told their
+credentials changed.
+
+---
+
+## fix(audit): bind the interceptor so a right-to-erasure writes a row
+
+`fix(audit): bind the interceptor so a right-to-erasure writes a row`
+
+**What changed**
+
+`@UseInterceptors(AuditInterceptor)` on `AccountLockController`, and `AuditModule`
+added to `AuthModule`'s imports.
+
+**Why**
+
+`POST /auth/account/erasure` carried `@Audited({ action: 'users.erasure.requested' })`
+from the day it was written and never wrote an audit row. The controller bound no
+interceptor, and `AuthModule` did not import `AuditModule`, so the metadata was read
+by nothing at all.
+
+An erasure request is the most sensitive event in a right-to-be-forgotten workflow —
+the one where somebody asks for their data to disappear — and it left no trace of
+having happened.
+
+**The reason it survived is the reason this is worth writing down.** Every
+assertion in `audit-policy.spec.ts` reads _handler metadata_, and handler metadata
+is happy to describe an intention nobody acts on. The route had a correct action
+name in the dotted form, unique among its peers, on a route that still existed. All
+six checks passed over a decorator that was never going to run.
+
+So the file grew a second block that reads the `__interceptors__` binding on the
+controller class — the thing that was actually missing.
+
+`AuditModule` imports nothing but TypeORM, so adding it to `AuthModule` is a
+one-directional edge and cannot close a cycle.
+
+**One trap**, because it cost a rewrite: `expect(undefined).toContain(x)` **passes**
+under vitest rather than throwing. The obvious spelling of that assertion is
+vacuous on precisely the case that matters, where the metadata is absent rather
+than wrong.
+
+---
+
+## fix(users): hash the password on every path that creates an account
+
+`fix(users): hash the password on every path that creates an account`
+
+**What changed**
+
+`UsersService.create` hashes the submitted password and returns the entity rather
+than the response DTO. `AuthService.register` passes the plaintext and reads the
+digest back off the return value. `UsersController` maps to the DTO.
+
+**Why**
+
+`POST /users` persisted the submitted password in clear text.
+
+`UsersService.create` wrote the string it was handed straight to the repository.
+That survived review because its one careful caller pre-hashed: `AuthService.register`
+had to hold the digest anyway, to record it in the password history. `POST /users`
+has no such reason, so an administrator creating an account — a route behind
+`@Roles(Admin, SuperAdmin)` and `@Permissions(UserWrite)` — put a live credential
+into the one column the rest of the system assumes holds a scrypt digest.
+
+**It failed quietly, which is why 1962 assertions did not catch it.**
+`verifyPassword` splits the stored value on `:` and returns false when there is no
+second part, so that account could never sign in: the row was created, the response
+was 200, and no test ever had that user authenticate. A suite asserting "a user was
+created" passes on a stored plaintext.
+
+Hashing moves into `create`, which makes it the single writer of the column, and
+`register` reads the digest back rather than computing its own — one scrypt call per
+signup, and the hash recorded in the history is provably the one that was stored.
+
+Three tests, each verified to fail against the old code by reverting it.
+
+---
+
+## docs: add an installation guide and per-module introductions
+
+`docs: add an installation guide and per-module introductions`
+
+**What changed**
+
+- `docs/installation.md`: the two things that bite people who skip to
+  `npm run start:dev`
+- Eight `INTRODUCTION.md` files, one per module, each linking from its `README.md`
+- `src/modules/README.md` gained an index
+- OpenCode credited in the README and in `CONTRIBUTING.md`
+
+**Why**
+
+The README said "copy .env.example and start it" and left the two things that bite
+people to the first error message: `npm ci` installs the git hooks through the
+prepare script, and the placeholder secrets in `.env.example` are rejected at boot
+in production, which reads as a failure until you know it is the validator doing
+its job.
+
+Every module gained an `INTRODUCTION.md` beside its README. The README answers _why_
+a decision was made; the introduction answers _what is there now_, and the two had
+drifted apart across 22 phases.
+
+**The standards mappings are technical, not compliance claims, and say so at the top
+of every table.** A control being present is one input to an assessment; HIPAA
+compliance additionally needs administrative and physical safeguards, policies,
+training, a risk analysis and a business associate agreement, none of which are
+software. Where a control is partial or absent the table says so — two of the eight
+technical safeguards are absent outright (automatic logoff, emergency access) and
+that is worth more to a reader than a green tick.
+
+The gap tables are the reason to publish these. Writing only strengths would be
+marketing, and an audit that discovers a gap the README did not mention reads worse
+than one that found it documented.
+
+---
+
+## style: drop a defensive array copy that oxlint flags
+
+`style: drop a defensive array copy that oxlint flags`
+
+`unicorn(no-useless-spread)` was reporting the copy in the block-expiry test, and it
+was reporting it correctly: the array buys nothing. The loop iterates
+`store.keys()` and calls `store.set(key, ...)` on a key the Map already holds.
+Setting an existing key does not change a Map's key set, so the iterator is not
+disturbed and the copy protects against nothing. It was a habit from iterating an
+array that could have been appended to underneath the loop.
+
+---
+
+## ci: pin the runner image and move to the node 24 action majors
+
+`ci: pin the runner image and move to the node 24 action majors`
+
+**What changed**
+
+- `actions/checkout@v4` → `@v7`, `actions/setup-node@v4` → `@v7`
+- `docker/setup-buildx-action@v3` → `@v4`, `docker/build-push-action@v6` → `@v7`
+- `ubuntu-latest` → `ubuntu-24.04` on all three jobs
+- `NODE_VERSION` hoisted to a top-level `env`
+
+**Why**
+
+Every run warned twice, which is how a warning stops being read.
+
+The v4 actions target Node 20, which GitHub has deprecated: they still work, forced
+onto a newer runtime, and print the same notice on every job. Each version was
+confirmed to exist against the GitHub releases API rather than assumed from the
+shape of the deprecation notice.
+
+`ubuntu-latest` is pinned for the same reason. GitHub announces the label migrates
+to Ubuntu 26 on 19 October 2026, which would move every job without a commit, and a
+CI failure should be a change in this repository rather than a change in the runner.
+The pin wants bumping deliberately, as its own commit, when the image it names is
+retired — which is the moment a pin becomes the problem.
+
+---
+
+---
+
+## test: run the end to end suite against real containers
+
+Phase 21. Intended commit: `test: run the end to end suite against real containers`
+
+**Tasks**
+
+- [x] `test/e2e/global-setup.ts` starts one Postgres and one Redis for the whole run
+- [x] `test/e2e/harness.ts` reads the urls into `process.env`, boots `AppModule`
+      through a dynamic import, and truncates every table between specs
+- [x] `*.e2e-spec.ts` renamed so the unit vitest config stops matching it
+- [x] Four e2e suites: optional dependencies, cache invalidation, retention dry
+      run, and the auth flow
+- [x] Every mutating request carries a distinct `Idempotency-Key`
+- [x] `fileParallelism: false`, because two suites booting their own containers
+      race for ports
+
+**The bugs this found**
+
+Every one of these passed every unit test and failed only once there was a real
+database and a real Redis behind it. That is the argument for the suite.
+
+- **The application did not boot at all, and 120 unit test files could not see
+  it.** Six faults sat behind the first error each time:
+  `NotificationEventsModule` re-exporting a provider belonging to an imported
+  module; `ThrottlerModule.forRootAsync` injecting a token only the root could
+  see; `SentryService` taking the DSN as a constructor parameter, which Nest
+  read as an injection token, so every deployment with `SENTRY_DSN` set failed;
+  `RetentionService` importing `DataSource` as a type, so its erased parameter
+  reached the injector as `Object`; `RetentionScheduler` asking for a config
+  namespace its module never registered; and three modules injecting a provider
+  whose module only the root imported. `src/app.module.spec.ts` now builds the
+  entire graph with a stubbed data source — no database, no Redis, no Docker —
+  and was verified by reverting one fix and watching it fail with the same
+  message the boot produced.
+- **`RedisClientService` had no `@Injectable()`, so Nest constructed it with no
+  arguments at all.** A class without a decorator emits no `design:paramtypes`,
+  and the injector then supplies nothing. It was masked earlier because the
+  broken client failed _fast_, which let the rate limiter fail open; with a real
+  redis in CI the idempotency guard reached the command and every mutating
+  request returned a 500. Every test in its own spec constructs the service by
+  hand, so nothing noticed.
+- **The module graph had a cycle, and it only failed outside `node dist/main`.**
+  `QueueModule` imported `MaintenanceModule` through the `maintenance/index.js`
+  barrel, and that barrel re-exports `MaintenanceSchedulerModule`, which imports
+  `QueueModule` back. `node` resolved it by luck; vitest did not, and the job
+  died with `The module at index [2] of the QueueModule "imports" array is
+undefined` — a message that reads as a missing provider and is not one.
+  `module-graph.spec.ts` now fails on any value-import cycle, and type-only
+  cycles stay legal because the compiler erases them.
+- **The e2e harness was booting a different application from the one that
+  ships.** `setGlobalPrefix`, URI versioning, the validation pipe, the filters
+  and the response wrapper all lived inline in `main.ts`, so a test-created
+  application had no prefix and no wrapper: `/health` was a 404, every success
+  body was bare rather than `{ success, data, timestamp }`, and the "unknown
+  path returns 404" test passed for the wrong reason. `main.ts` now delegates to
+  `src/bootstrap.ts`, which both it and the harness call.
+- **`POST /auth/login` answered 201.** Nest defaults POST to 201, and a sign-in
+  creates nothing. `@ApiOkResponse` already documented 200 on all three token
+  routes, so the wire and the documentation disagreed.
+- **`node-redis` retries a failed connection forever, so `connect()` never
+  rejects.** The client promises that a dead redis is a miss rather than a hang,
+  and with the default reconnect strategy the first command awaited never
+  settles. Measured against a dead port: no rejection at all, with `connectTimeout`
+  at 250ms. The factory now bounds its retries, which is what makes `connect()`
+  reject and `run()` report a miss.
+- **The harness's fake agent was a function; supertest's is not.** Two bugs in
+  one function. `Object.assign(wrapped, agent)` copied supertest's verb methods —
+  closures over the agent — so `http(app).post(...)` went straight to the
+  original and the `Idempotency-Key` was never sent: every mutating route
+  answered 400, in files that had nothing to do with idempotency. The fix called
+  the agent itself, and `request(server)` is an **object**, so every request in
+  the suite became `TypeError: agent is not a function`. `createHttp()` now
+  builds through `agent[verb](url)`. **A fake models what the dependency is, not
+  what the code wishes it were.**
+- **`whitelist: true` strips any property no class-validator decorator names,
+  and two request DTOs had none.** `PUT /admin/roles/:role/permissions`
+  answered 400 for every call, and `PATCH /notifications/preferences` had
+  nothing to write. `@ApiProperty` is documentation and nothing else, so Swagger
+  advertised fields the application never received.
+- **The idempotency key was a counter, and vitest resets it per file.** Every
+  file's second `POST /auth/register` sent the key the previous file's second
+  register sent, so the guard replayed the earlier file's stored response: a
+  registration reported as created when the row had never been written, and the
+  sign-in after it answered 401 for an address that did not exist.
+- **`resetRedis` only cleared the cache's database.** The throttle counters,
+  deduplication markers, idempotency claims and dead-letter list live in the
+  queue's redis. A rate limit therefore carried across spec files, and a later
+  file hit a 429 for a request nothing in it had made — which reads as a broken
+  route rather than as leftover state.
+- **A stale `test/.e2e-env.json` switched the suite on while the setup was
+  skipping it.** `E2E_NO_CONTAINERS=1 npm run test:e2e` reported `5 failed (5)`
+  files alongside `30 skipped` tests. The setup now removes the file whenever it
+  skips, not only when it writes one.
+- **The initial migration needs `uuid-ossp`, which a fresh container does not
+  enable.** The e2e setup creates it before migrating, rather than editing an
+  applied migration.
+- **A verification token row needs the address it was minted for.** The test's
+  own `INSERT` omitted a NOT NULL column, so the account was never verified and
+  every later refresh was refused — a cascade that looked like an application
+  fault and was a fault in the fixture.
+- **`RedisClientService.eval` did not namespace its keys.** The throttler's
+  counters sat in the root namespace while every other queue key sat under
+  `REDIS_KEY_PREFIX` — two deployments on one redis sharing a rate limit.
+- **Locking a user invalidates their access token, and unlocking does not bring
+  it back.** `lockAccount` bumps `sessionsVersion`, which is compared on every
+  request. The account is reachable again, that session is not — which is the
+  point of a lock, and which the cache suite had asserted the opposite of.
+- **An `@Permissions()` route is also `@Roles(Admin, SuperAdmin)`, always.** The
+  first version of the cache suite drove a grant change through http with a
+  plain user and would have passed with the permission cache deleted, because
+  the role guard refuses first and never reaches the permission guard.
+- **Mail rows are polled for, never read straight after a request.** The queue
+  resolves its enqueue before the job runs, so an assertion on `mail_logs` on
+  the next line is a race that passes on a fast machine and fails in CI.
+
+**Decisions worth carrying forward**
+
+- **The suite skips without Docker and CI does not skip.** `E2E_NO_CONTAINERS=1`
+  exists so the e2e job can work on a laptop. The CI job deliberately omits it,
+  because a job that could not start its containers would otherwise report
+  success on nothing. The first version surfaced testcontainers' own
+  `Could not find a working container runtime strategy`, which names what was
+  looked for and nothing about what to do next.
+- **Nothing was moved into `optionalDependencies`.** npm installs an
+  `optionalDependencies` entry whenever it resolves, so a test relying on it
+  would pass on a machine with a warm lockfile cache and prove nothing on the
+  machine that needed it. The assertion is the fallback path.
+- **No e2e assertion waits out a TTL.** A cache test that sleeps for the expiry
+  passes just as well when the invalidation is deleted. The suite reads redis
+  directly and asserts the key is gone.
+- **The soft delete in the cache suite goes through the service, not a raw
+  `UPDATE`.** A write made directly in the database is invisible to invalidation
+  by design, so asserting it there would be asserting a limitation as a
+  guarantee.
+- **`testcontainers` gave up its convenience classes.** `PostgreSqlContainer` and
+  `RedisContainer` are no longer exported from the package entry point, and
+  reconstructing them is thirty lines of wait strategies to maintain. The Postgres
+  wait is on the log line rather than `pg_isready`, which answers before the
+  server accepts connections from anything but its own socket.
+- **A seeded admin is not a super admin, on purpose.** The seeder creates
+  `Role.Admin`, which holds neither `RoleWrite` nor `MaintenanceRun`, so the
+  harness promotes its fixture rather than re-seeding under a different role.
+
+**Known limits**
+
+- The e2e suite needs a Docker daemon, and runs one file at a time.
+- `test/app.e2e-spec.ts` asserts the versioned prefix, which is what a client
+  actually calls.
+- The optional-dependency suite sets `MAIL_TRANSPORT=ses` and expects the memory
+  fallback, so it does not prove a _present_ SES package works.
+
+---
+
+## test: add mutation testing, and a smoke test, for the expensive paths
+
+Phase 21. Intended commits: `test: add a k6 smoke test`, `test: add mutation
+testing for auth and retention`
+
+**Tasks**
+
+- [x] `test/smoke/k6-smoke.js` covering register, login and refresh
+- [x] `stryker.conf.json` scoped to the auth and retention files
+- [x] Both run on demand rather than on the pull request workflow
+
+**Decisions worth carrying forward**
+
+- **Mutation testing is scoped and off the pull request workflow.** Auth and the
+  two retention files, because a flipped comparison there deletes or locks out
+  something real and produces no exception. A full run takes minutes, which is
+  the wrong price for every commit.
+- **The smoke test registers a real user per virtual user.** It is a smoke test,
+  not a capacity plan, so the defaults stay small and `docs/production.md` says
+  why.
+
+**Known limits**
+
+- The k6 script needs `k6` installed and a booted instance; nothing runs it for
+  you.
+- Mutation testing runs on demand, so a surviving mutant is found by whoever
+  runs it rather than by the pull request.
+
+---
+
+## docs: document the testing layers and the new variables
+
+Phase 21. Intended commit: `docs: document the testing layers and the new variables`
+
+**Tasks**
+
+- [x] `src/modules/mail/README.md`, `queue`, `notification` and `maintenance`
+- [x] `docs/production.md` and the root `README.md` updated with the new
+      environment variables and the module list
+- [x] Four layers documented by what each one can and cannot answer
+
+---
+
+## feat: add observability and operations for the new subsystems
+
+Phase 20. Intended commit: `feat: add observability and operations for the new
+subsystems`
+
+Delivered as ten commits, each independently revertable.
+
+**Tasks**
+
+- [x] Extend `/health` with mail transport, queue connectivity and backlog depth,
+      all reporting degraded rather than down
+- [x] Expose the last successful maintenance run in the health payload
+- [x] Prometheus metrics: `mail_sent_total`, `mail_failures_total`,
+      `notification_sent_total`, `job_lag_seconds`, `retention_rows_deleted_total`
+- [x] OpenTelemetry traces spanning HTTP, database and job execution
+- [x] Propagate `X-Request-Id` into every log line, mail record and notification
+      record
+- [x] Sentry error reporting with release tagging
+- [x] Alert rules: failure rate above a threshold, a non-empty dead-letter list, a
+      maintenance job that has not run in 26 hours
+- [x] Redact token, secret and OTP fields in the logger
+- [x] `docs/runbook.md` for provider outage, Redis loss, queue backlog, and
+      tracing a missing email through `mail_logs`
+- [x] A Grafana dashboard for auth failure rate, job lag and mail delivery
+
+**Decisions worth carrying forward, because each is a refusal of something**
+
+- **Nothing new in `/health` is ever `down`.** `down` makes Terminus return 503
+  and an orchestrator pulls every instance out of rotation, so a mail provider
+  outage, a full queue or a dead redis would each turn a system that is still
+  answering requests into an outage of the API itself. Only the database may go
+  red.
+- **The health check sends no mail and reads no backlog it cannot read.** A probe
+  mail lands in a real inbox, and a zero waiting-jobs reading taken while redis
+  is down looks healthier than an application with no jobs at all.
+- **`@opentelemetry/api` and nothing else.** No SDK, no exporter, no collector —
+  those would choose the deployment's tracing stack for whoever clones this.
+  Install one and the spans appear; leave it out and every method is a no-op at
+  the same speed.
+- **Sentry's `beforeSend` strips headers, cookies, body and query string.** Those
+  are where a password, a reset token and a two-factor code are. An error
+  reporting service holding a sign-up body is a credential store with a far
+  larger blast radius than the database.
+- **Alert thresholds live in TypeScript and the YAML is checked against them.** A
+  drifted alert stays green while the thing it watches is on fire — which is how a
+  monitoring system gets turned off.
+- **`mail_logs` was created rather than the correlation work narrowed to fit.** A
+  request id stamped onto a table nobody queries is a column, and one on the table
+  somebody queries when a user says they got nothing is the feature.
+- **`auth_login_attempts_total` exists because a failure rate needs a
+  denominator.** It is also the only sign-in signal that survives a redis outage,
+  because the rate limiter and the lockout both fail open.
+
+**What is deliberately not here**
+
+- An admin route to read the audit trail. The table is written by Phase 19 and
+  nothing reads it back; that is a decision about who may see it, not a gap.
+- A generic signed webhook channel, dropped rather than half-built in the wrong
+  phase.
+- Distributed-trace retention. Storing spans is the collector's business, and a
+  template that kept its own would be a second place to answer "where is that
+  trace".
+
+---
+
+## feat: add account security, audit log and idempotency
+
+Phase 19. Intended commit: `feat: add account security, audit log and idempotency`
+
+Delivered as eleven commits rather than one, each independently revertable. The
+plan named a single commit; the phase was large enough that one commit would have
+made bisecting a regression a matter of reading the whole diff.
+
+**Tasks**
+
+- [x] A password policy in zod, with an optional `zxcvbn` strength score
+- [x] New passwords checked against a breach list through the k-anonymity API
+- [x] The last N password hashes kept and reuse rejected
+- [x] An email verification gate, blocking sensitive actions until confirmed
+- [x] A permanent account lockout with an unlock flow and a notification
+- [x] An audit log entity: actor, action, before/after diff, ip, user agent,
+      request id
+- [x] Every privileged action recorded, through an interceptor
+- [x] An `Idempotency-Key` header guard on mutating endpoints
+- [x] `@VersionColumn()` on the mutable entities for optimistic concurrency
+- [x] `user.requestDeletion()`: soft delete, hard delete at the end of the
+      retention window
+- [x] A data export endpoint, CSV and JSON, streamed
+
+**Decisions worth carrying forward, because each one is a refusal of something**
+
+- **A permanent lockout only ever applies to a confirmed address, and that is a
+  code invariant rather than a setting.** An unverified account could never
+  receive the unlock link, so locking one would be permanent with no owner able
+  to clear it. A flag for this is one careless default away from locking every
+  account in a deployment.
+- **A locked account answers with the same 401 as an unregistered one.** A
+  dedicated message is a free oracle for anybody willing to burn twenty attempts,
+  and the owner has the mail.
+- **The audit writer never throws.** An audit write that failed the action it was
+  recording would mean an outage in the log becomes an outage in the product. The
+  gap is logged at `error`; the trade is real and is that this trail can have
+  holes.
+- **`before` is null on every interceptor-written audit entry.** The interceptor
+  sees the request and the response, never the row as it was, and a reconstructed
+  before-state in a table presented as evidence looks like a record while being an
+  inference.
+- **No TypeORM subscriber**, for the same two reasons the cache phase reached for
+  the hook: no dependency injection, and a query-builder write arrives without an
+  id.
+- **Idempotency uses redis directly, not the cache.** The cache fails open by
+  reporting an unreachable store as a miss, and a miss on an idempotency check
+  means "this request is new" — the exact duplicate it prevents.
+- **An export never selects a credential.** The exclusion is structural rather
+  than a filter at the output stage, because a column that is not selected cannot
+  be rendered.
+
+**What is deliberately not here**
+
+- An admin route to read somebody else's audit trail. The table exists and is
+  written; the query surface is a separate decision about who may see it.
+- A generic webhook channel with HMAC signing, dropped rather than half-built.
+
+---
+
 ## feat: add database-managed email templates
 
 Phase 22. Intended commit: `feat: add database-managed email templates`
@@ -541,6 +1352,97 @@ Phase 16. Intended commit: `fix: cascade user devices and two-factor secrets on 
   no constraint at all and a hard-deleted user left the secret behind forever.
 - `user_devices` was `NO ACTION`, so deleting a user who still had a device raised
   a foreign key violation, at three in the morning, from a job nobody was watching.
+
+## feat: add background job queue with in-process fallback
+
+Phase 15. Intended commit: `feat: add background job queue with in-process
+fallback`
+
+**Tasks**
+
+- [x] `@nestjs/bullmq` as an optional dependency, resolved through
+      `loadOptional`, not a static import
+- [x] `src/modules/queue` with a provider-level abstraction so the module imports
+      cleanly when the package is absent
+- [x] Four queues: `mail`, `notification`, `maintenance`, `digest`
+- [x] The mail send moved into `processors/mail.processor.ts`
+- [x] `retry.policy.ts`: exponential backoff, 5 attempts
+- [x] Provider 4xx marked non-retryable; only timeouts, 5xx and connection errors
+      are retried
+- [x] Exhausted jobs sent to a dead-letter list in Redis
+- [x] An in-process fallback under a bounded concurrency limiter
+- [x] An idempotency guard on `template + recipient + subject id`, using a Redis
+      `SET NX` with a TTL matching the retry window
+- [x] Cron entry points, disabled by `QUEUE_ENABLED=false`
+
+Implementation note: the fallback calls the same processor function the queue
+does, so there is one implementation of the work and not two that drift.
+
+**Decisions worth carrying forward**
+
+- **`bullmq` is a dev dependency, not a runtime one.** The adapter has to be
+  tested against the real library; a queue adapter that has never run is one that
+  is broken. Production still ships without it unless the queue is enabled.
+- **Deduplication sits around the processor, not at `enqueue`.** A queue is
+  at-least-once and the duplicate arrives at _execution_. A key is also released
+  when a job fails retryably, because holding it would make the retry skip itself,
+  bullmq record success, and the mail never be sent. Verified against a real
+  redis.
+- **A redis outage fails open.** Losing a dedupe key risks a duplicate; refusing
+  the job would lose a real email.
+- **The dead-letter list is redis, not a table.** It is operational data read at
+  3am and worthless after a few days; a table would mean something the retention
+  phase has to remember to purge.
+- **`ScheduleModule` was added but no cron entry uses it yet.** The only recurring
+  work is the retention job, which arrives in the next phase. Entries will not be
+  gated on the queue driver, so they keep running when redis is down.
+- **A redis key prefix gap from the cache foundation was found and fixed here:**
+  the raw client did not namespace keys the way keyv does for the cache, so every
+  dedupe and dead-letter key would have been written unprefixed.
+
+**Expected outcome**
+
+- `register()` returns without waiting for SMTP.
+- A BullMQ redelivery cannot produce a duplicate welcome email.
+- Turning the queue off is a config change, not a code change.
+
+---
+
+## feat: add mail, notification, queue and retention configuration
+
+Phase 13. Intended commit: `feat: add mail, notification, queue and retention
+configuration`
+
+**Tasks**
+
+- [x] `src/configs/mail.config.ts` — transport, from name, reply-to, connection
+      options, timeouts
+- [x] `src/configs/notification.config.ts` — per-channel enable flags and
+      credentials
+- [x] `src/configs/queue.config.ts` — enabled, redis url, attempts, backoff,
+      concurrency
+- [x] `src/configs/retention.config.ts` — every age and batch size
+- [x] `src/configs/password-policy.config.ts`
+- [x] `APP_URL` added to `app.config.ts`; every email links back to it
+- [x] A `redis` namespace for queue and throttle usage, distinct from the cache
+      namespace so keys never collide
+- [x] `env.validation.ts` extended: in production `MAIL_FROM` is required,
+      `MAIL_TRANSPORT` must not be `memory`, `APP_URL` must be an absolute https
+      URL
+- [x] Every new variable documented in `.env.example` and
+      `src/configs/README.md`
+
+Implementation note: a validation rule that only fires in production is
+`superRefine` on the zod schema, not a check inside the service, so a bad deploy
+fails at boot instead of at the first email.
+
+**Expected outcome**
+
+- No hard-coded value anywhere in the new modules.
+- A misconfigured production environment is rejected at startup with a message
+  naming the variable.
+
+---
 
 ## feat: define the retention policy table
 

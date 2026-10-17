@@ -2,1460 +2,665 @@
 
 ## Goal
 
-Extend the boilerplate from a correct auth skeleton to something a real product
-can run on: users get contacted, the database stops growing on its own,
-authentication is served from cache, and the app can tell the operator what it
-is doing.
+Take a correct auth skeleton to something a real product runs on: a query layer
+that pages honestly, an isolation model that survives its first customer, and the
+integrations — search, bulk data, billing, webhooks — that every product ends up
+needing and nobody wants to write twice.
 
-The layer boundaries are unchanged. Everything below slots into `configs`,
-`database`, `common`, `core` and `modules` as they exist today.
+Phases 0–22 built the security and operations foundation and are recorded in
+[CHANGELOG.md](CHANGELOG.md). What follows is the second half.
 
-Already built, not rebuilt here:
-
-- JWT auth, refresh rotation, device authentication, two-factor
-- RBAC with roles, permissions and manager scope
-- `CacheService` with TTL, empty-TTL, coalescing and invalidation helpers
-- helmet, CORS allow-list, throttler, Swagger, Observe, Terminus health
-- TypeORM migrations, oxlint, vitest, husky, commitlint
+Layer boundaries are unchanged. Everything below slots into `configs`, `database`,
+`common`, `core` and `modules` as they exist today.
 
 Gaps this plan closes:
 
-- Nothing ever emails a user, and there is no password reset or verification.
-- Soft-deleted rows and dead tokens accumulate with no retention policy.
-- `CacheService` exists but no service reads or invalidates it, so every
-  request still goes to Postgres.
-- No outbound notification channel, and no visibility into what the app sends.
+- **Nothing pages.** `GET /users` and the admin listings return every matching row,
+  and `PaginationQueryDto` exists unused.
+- **There is no query language.** No full-text search, and no safe way to express a
+  user-supplied filter.
+- **Nothing records progress.** An import large enough to need a job has no way to
+  report where it got to, or be cancelled.
+- **The audit trail cannot be read.** It is written for every privileged action and
+  no route returns it.
+- **HTTP is called by hand.** Each call site passes its own `HttpService` and
+  invents its own notion of which failure is worth retrying.
+- **There is no integration point in either direction.** No outbound webhook, no
+  inbound one, no event bus between modules.
+- **Multi-tenancy is not addressable.** Every table would need a column, and every
+  index and unique constraint with it, before the first customer rather than after
+  the hundredth.
+- **No billing, no bulk data, no realtime, and no search beyond what SQL can do.**
 
 ---
 
-## Phase 12: Optional Integration Foundation
+## Shipped
 
-Status: Done
+Phases 0–22. The implementation detail lives in [CHANGELOG.md](CHANGELOG.md);
+what each one _is_ is beside the code it produced.
 
-Goal:
-
-Allow an integration to exist in the code without its package existing on disk.
-A feature nobody enabled must cost zero dependencies and zero memory.
-
-Tasks:
-
-- [x] Create `src/core/optional/optional.util.ts` with `loadOptional<T>(specifier)`
-      using `createRequire(import.meta.url)`
-- [x] Never use a static `import` for an optional package; a static import
-      breaks the build when the package is missing
-- [x] Register every optional integration through a `useFactory` that returns
-      `null` when the package is not resolvable
-- [x] Make `null` a real, tested code path in every consumer, not a `throw`
-- [x] Write the in-house, zero-dependency transports that the default profile
-      uses (mail memory transport, Telegram and Slack over raw HTTPS)
-- [x] Add `docs/optional-integrations.md`: feature, package, env flag, install command
-
-Integration matrix:
-
-```text
-Feature                 Package to install (only if enabled)   Env flag
-SMTP (production mail)   nodemailer                            MAIL_TRANSPORT=smtp
-Amazon SES              @aws-sdk/client-sesv2                 MAIL_TRANSPORT=ses
-SendGrid                @sendgrid/mail                        MAIL_TRANSPORT=sendgrid
-BullMQ queue            @nestjs/bullmq + bullmq               QUEUE_ENABLED=true
-Telegram                none, raw HTTPS                       TELEGRAM_ENABLED=true
-Slack / Discord         none, incoming webhook                SLACK_ENABLED=true
-```
-
-Implementation note:
-
-```ts
-import { createRequire } from 'node:module';
-
-const requireOptional = createRequire(import.meta.url);
-
-export function loadOptional<T>(specifier: string): T | null {
-  try {
-    return requireOptional(specifier) as T;
-  } catch {
-    return null;
-  }
-}
-```
-
-Expected outcome:
-
-- The app boots, passes tests and serves traffic with an empty
-  `optionalDependencies`, degrading cleanly instead of crashing.
-- Enabling a feature is a documented `npm install` plus an env flag.
-
-Expected commit:
-
-```text
-feat: add optional integration foundation
-```
+| Area          | What exists                                                               |
+| ------------- | ------------------------------------------------------------------------- |
+| Auth          | refresh rotation with theft detection, devices, TOTP, recovery codes      |
+| Authorisation | `@Roles()`, `@ManagerOnly()`, `@Permissions()` against a permission table |
+| Sessions      | four revocation scopes, listable and individually revocable               |
+| Configuration | namespaced, typed, whole environment validated before anything connects   |
+| Cache         | Redis or Valkey with coalescing, stale while revalidate, an auth path     |
+| Rate limiting | counted in Redis across replicas, two buckets per credential route        |
+| Mail          | swappable transport, queued, nine templates, database-managed             |
+| Queue         | two drivers, retries, deduplication, dead-letter list                     |
+| Retention     | nightly batched cleanup, dry run, run history                             |
+| Notifications | five channels, per-user opt-out, every attempt logged                     |
+| Audit         | an append-only trail with a redactor no credential passes                 |
+| Privacy       | erasure with a grace window, a streamed export of everything held         |
+| Observability | request id, JSON production logs, split liveness and readiness            |
+| Operations    | reviewed migrations, idempotent seed, two-stage image, CI                 |
 
 ---
 
-## Phase 13: Configuration Expansion
+## Group 1: Query and data foundation
 
-Status: Done
+Phases 23–31. Everything in Groups 4–8 stores data, and they all need a list route
+that pages and a tenant column that exists. This group is the floor.
 
-Goal:
+### Phase 23: Cursor pagination
 
-Add the configuration namespaces the new modules need, with the same
-`registerAs` pattern, zod validation and `.env.example` entries the existing
-namespaces already have.
+Status: Planned
 
-Tasks:
+Goal: no listing route returns an unbounded result set.
 
-- [x] Create `src/configs/mail.config.ts` — transport, from name, reply-to,
-      connection options, timeouts
-- [x] Create `src/configs/notification.config.ts` — per-channel enable flags
-      and credentials
-- [x] Create `src/configs/queue.config.ts` — enabled, redis url, attempts,
-      backoff, concurrency
-- [x] Create `src/configs/retention.config.ts` — every age and batch size
-- [x] Create `src/configs/password-policy.config.ts`
-- [x] Add `APP_URL` to `app.config.ts`; every email links back to it
-- [x] Add a `redis` namespace for queue and throttle usage, distinct from the
-      cache namespace so keys never collide
-- [x] Extend `env.validation.ts`: in production `MAIL_FROM` is required,
-      `MAIL_TRANSPORT` must not be `memory`, `APP_URL` must be an absolute
-      https URL
-- [x] Document every new variable in `.env.example` and `src/configs/README.md`
+- [ ] Cursor pagination on `(createdAt, id)` for every route that can grow
+- [ ] `meta: { nextCursor, hasMore }` in the existing response envelope
+- [ ] Filter and sort DTOs with an **allow-list**, because sorting by an arbitrary
+      column name is SQL injection with a different name
+- [ ] `GET /users` and the admin listings migrated
+- [ ] `PaginationQueryDto` either wired in or deleted — an unused DTO reads as a
+      plan and is not one
 
-Implementation note: a validation rule that only fires in production is
-`superRefine` on the zod schema, not a check inside the service, so a bad
-deploy fails at boot instead of at the first email.
+Done when a concurrent insert between two page requests cannot make a row appear
+on both pages or on neither.
 
-Expected outcome:
+### Phase 24: A reusable query criteria object
 
-- No hard-coded value anywhere in the new modules.
-- A misconfigured production environment is rejected at startup with a message
-  naming the variable.
+Status: Planned
 
-Expected commit:
+- [ ] `QueryCriteria` built once from a DTO and consumed by any repository
+- [ ] Sorting, filtering and paging in one place rather than per service
 
-```text
-feat: add mail, notification, queue and retention configuration
-```
+Done when adding a list route needs no new pagination code.
 
----
+### Phase 25: Job progress and cancellation
 
-## Phase 14: Outbound Email
+Status: Planned
 
-Status: Done
+- [ ] Progress recorded per job: processed, total, current item, started, finished
+- [ ] `GET /jobs/:id` and a cancel endpoint
+- [ ] Cancellation honoured at the next chunk boundary, not mid-write
 
-Goal:
+Done when a five-minute import can be watched and stopped.
 
-Deliver transactional email through a swappable transport, with templates
-written as plain functions so no template engine dependency is introduced.
+### Phase 26: An audit read surface
 
-Note: templates are deliberately plain functions in this phase, and the ones
-shipped in the repository are the only ones that can send. A template engine and
-database-managed templates are a separate phase, Phase 22, because they are a
-runtime dependency and an admin surface, and neither belongs in the phase whose
-job is to make a user receive a welcome email.
+Status: Planned
 
-Tasks:
+- [ ] `GET /admin/audit` behind `@ManagerOnly()` and a new `audit:read`
+- [ ] Filter by actor, action, target and window, cursor-paged
+- [ ] The answer to "every `users.update` on this account" reachable from the API
+- [ ] A decision recorded about **who** may read it, not left implicit
 
-- [x] Create `src/modules/mail` with `mail.module.ts`, `mail.service.ts`
-- [x] Define `MailTransport { send(message): Promise<SendResult> }` in
-      `transports/transport.interface.ts`
-- [x] Implement `memory.transport.ts` as the zero-dependency dev default
-- [x] Implement `smtp.transport.ts` over the optional `nodemailer`
-- [x] Implement `ses.transport.ts` and `sendgrid.transport.ts` over their
-      optional packages
-- [x] Make `memory` the development default and refuse it in production
-- [x] Build `templates/template.registry.ts` mapping a name to
-      `{ subject, render(data) }`
-- [x] Render both an HTML and a plain-text part for every template
-- [x] Give each template exactly the data it needs, never the user entity
-- [x] Generate a stable mail id per message, log it, and return it to the caller
-- [x] Add `POST /auth/forgot-password`, returning 202 with a generic message
-- [x] Add `POST /auth/reset-password`, single-use token, invalidates other
-      sessions on success
-- [x] Add `POST /auth/verify-email` and `POST /auth/resend-verification`
-- [x] Add the `email_verification_tokens` and `password_reset_tokens` entities
-- [x] Store tokens hashed with sha256, never in plaintext
-- [x] Index `expiresAt` on every token table, Phase 16 cleans on it
-- [x] Add a throttler bucket for mail: 3 reset mails per hour per email and
-      10 per hour per IP
+Done when an incident can be investigated without leaving the application and
+writing SQL.
 
-Template set:
+### Phase 27: A Lucene query parser
 
-```text
-welcome            after register            firstName, appName
-verify-email       after register / resend   verificationUrl, expiresInHours
-reset-password     forgot password           resetUrl, ip, expiresInMinutes
-password-changed   after reset, forced      ip, deviceLabel
-new-device-login   refresh from new device   deviceLabel, ip, time
-account-locked     lockout or admin action   reason, supportUrl
-```
+Status: Planned
 
-All six exist and are tested. Four are emitted: `verify-email` and
-`reset-password` from this phase, `welcome` from the same register call. Three
-are rendered but have no caller yet, because the events that need them do not
-exist: `password-changed` waits for the forced-change flow, `new-device-login`
-for the refresh event, `account-locked` for the lockout, which Phase 19 adds.
+Goal: one query language, reusable by every searchable entity.
 
-Security notes, and where each one landed:
+`src/common/search/` holds the parser and **knows no entity**. Adding search to
+`customers`, `orders` or `invoices` is one field-map file and no new
+infrastructure.
 
-- `forgot-password` answers identically whether or not the email exists. It also
-  takes the same time and does the same database work: the miss path runs the
-  same statement against an id with no rows, and both paths are held for a fixed
-  floor with equal jitter. A matching message alone is not enough, because the
-  branch that issues a token is measurably slower. See
-  `src/modules/auth/README.md` for why the floor is a mitigation rather than a
-  proof.
-- The reset token is consumed inside the same transaction that changes the
-  password, so a crash can never leave a live token with a changed password. The
-  session revocation is in that transaction too.
-- `MailService.send()` does not add latency to `register()` or `login()`. The
-  send is not awaited, so a provider that hangs cannot hold a request open. It
-  still costs two database statements, which Phase 15 removes by queueing.
+- [ ] `ast.ts`: `BooleanQuery | FieldQuery | RangeQuery | PhraseQuery |
+  WildcardQuery | ExistsQuery | BoostQuery | MatchAllQuery`
+- [ ] Tokenizer and recursive-descent parser
+- [ ] Supported: `term`, `field:value`, `"phrase"`, `AND OR NOT`, parentheses,
+      `[a TO b]` inclusive, `{a TO b}` exclusive, `>`, `<`, `>=`, `<=`, `wild*`,
+      `f?y`, `fuzzy~`, `fuzzy~2`, `boost^3`, `field:*`, `\:` escaping
+- [ ] **Refused and documented**: regex, script fields, nested queries. Not because
+      they are hard — because they make the translator unprovable
 
-Security notes that are part of the definition of done:
+### Phase 28: The field registry and the translators
 
-- `forgot-password` answers identically, with comparable timing, whether or not
-  the email exists.
-- The reset token is consumed inside the same transaction that changes the
-  password, so a crash can never leave a live token with a changed password.
-- `MailService.send()` must not add latency to `register()` or `login()`; it
-  resolves as soon as the job is accepted.
+Status: Planned
 
-Expected outcome:
+- [ ] `SearchFieldRegistry`: field → `{ type, searchable, filterable, sortable,
+  weight, column }`
+- [ ] The **allow-list** is the injection boundary. An undeclared field is
+      `UnknownFieldError` listing the valid names, never silently dropped
+- [ ] The translator emits **parameterized values only**, and never interpolates
+      query text into SQL
+- [ ] Three translators: Postgres, in-memory predicate (unit tests), and a mock
+- [ ] `search.test-kit.ts`: golden cases, fuzz, and a SQL-injection corpus —
+      reusable by every entity's search
 
-- A new user receives a welcome email, can verify their address, and can reset
-  a forgotten password.
-- A provider outage degrades to a logged error, never a 500 on register.
+### Phase 29: The Postgres translator
 
-Expected commit:
+- [ ] `tsquery` from the AST, not from a string the user typed
+- [ ] `setweight()` per field for `ts_rank`
+- [ ] `tsvector` column, GIN index, and a migration to populate it
+- [ ] Facet counts over the same AST
 
-```text
-feat: add transactional email with pluggable transports
-```
+### Phase 30: User search
+
+- [ ] `POST /users/search`, permission-gated
+- [ ] Six fields: `email`, `firstName`, `lastName`, `role`, `isActive`,
+      `createdAt`
+- [ ] Every field carries a weight, chosen rather than defaulted
+
+### Phase 31: The search documentation
+
+Status: Planned
+
+The thing that makes this reusable rather than a parser somebody has to reverse
+engineer.
+
+- [ ] `src/common/search/README.md`: the field type table, the three capabilities
+      spelled out, and how to register a new entity
+- [ ] A worked example on an entity with a **different shape** — an `orders` or
+      `customers` search with uuid, money-as-integer, keyword and date fields
+- [ ] How a derived field works (`fullName` from first and last, no duplicate
+      column), so `name:john` works
+- [ ] The anti-pattern list: queries that must full-scan, wildcard `*`, sorting by
+      a non-sortable field
 
 ---
 
-## Phase 15: Background Job Queue
+## Group 2: Multi-tenancy
 
-Status: Done
+Phases 32–41. **Before** Groups 4–8, because a tenant column added afterwards means
+touching every query, index and unique constraint again.
 
-Goal:
+### Phase 32: The tenant column, present from the start
 
-Move email sending and notifications out of the request cycle, and give the
-retention job a scheduler.
+Status: Planned
 
-Tasks:
+- [ ] `tenant_id` on all seventeen tables, **always**, including while
+      `MULTI_TENANT=false`
+- [ ] Composite uniques: `(tenantId, email)`, and the same for every other natural
+      key
+- [ ] Migration with a fixed default tenant seeded, so the feature can be enabled
+      without a backfill
+- [ ] Indexes lead with `tenantId`
+- [ ] `MULTI_TENANT=false` produces byte-identical behaviour to today
 
-- [x] Add `@nestjs/bullmq` as an optional dependency, resolved through
-      `loadOptional`, not a static import
-- [x] Create `src/modules/queue` with a provider-level abstraction over the
-      queue so the module imports cleanly when the package is absent
-- [x] Create queues: `mail`, `notification`, `maintenance`, `digest`
-- [x] Move the mail send from Phase 14 into `processors/mail.processor.ts`
-- [x] Add `retry.policy.ts`: exponential backoff, 5 attempts
-- [x] Mark provider 4xx responses as non-retryable, retry only timeouts, 5xx
-      and connection errors
-- [x] Send exhausted jobs to a dead-letter list in Redis and raise a log alarm
-- [x] Add an in-process fallback: when the queue is disabled or Redis is
-      unreachable, run the same processor under a bounded concurrency limiter
-- [x] Add an idempotency guard, `template + recipient + subject id`, using a
-      Redis `SET NX` with a TTL matching the retry window
-- [x] Register the cron entry points, disabling them with `QUEUE_ENABLED=false`
+### Phase 33: The tenant registry
 
-Implementation note: the fallback must call the same processor function as the
-queue does, so there is one implementation of the work and not two that drift.
+- [ ] A `tenants` table: slug, name, status, plan, and where its data lives
+- [ ] Resolution from host, subdomain or header — the one untrusted input that
+      decides what you can read
+- [ ] An unknown or disabled tenant answers 401 rather than falling back to a
+      default
+- [ ] One fixed tenant row seeded for single-tenant deployments
 
-What was decided along the way, and why:
+### Phase 34: Tenant context
 
-- **`bullmq` is a dev dependency, not a runtime one.** The adapter has to be
-  tested against the real library; a queue adapter that has never run is one that
-  is broken. Production still ships without it unless the queue is enabled.
-- **Deduplication sits around the processor, not at `enqueue`.** A queue is
-  at-least-once and the duplicate arrives at _execution_. A key is also released
-  when a job fails retryably, because holding it would make the retry skip itself,
-  bullmq record success, and the mail never be sent. Verified against a real
-  redis: a repeated delivery is skipped, and a released key lets the retry run.
-- **A redis outage fails open.** Losing a dedupe key risks a duplicate; refusing
-  the job would lose a real email.
-- **The dead-letter list is redis, not a table.** It is operational data read at
-  3am and worthless after a few days; a table would mean something Phase 16 has to
-  remember to purge.
-- **`ScheduleModule` was added but no cron entry uses it yet.** The only recurring
-  work is the retention job, which arrives with Phase 16. Entries will not be
-  gated on the queue driver, so they keep running when redis is down.
-- **A redis key prefix gap from Phase 12/13 was found and fixed here:** the raw
-  client did not namespace keys the way keyv does for the cache, so every dedupe
-  and dead-letter key would have been written unprefixed.
+- [ ] `TenantContext` on AsyncLocalStorage, set before any guard runs
+- [ ] Propagated into queued jobs, because a job with no tenant context is a job
+      that writes in the wrong place
+- [ ] Propagated into scheduled work
 
-Expected outcome:
+### Phase 35: Repository scoping
 
-- `register()` returns without waiting for SMTP.
-- A BullMQ redelivery cannot produce a duplicate welcome email.
-- Turning the queue off is a config change, not a code change.
+- [ ] A tenant-aware repository base class
+- [ ] Scope applied at the repository, **never** per query — a query that has to
+      remember is a query that will forget
+- [ ] A test that fails when a repository method is added without a scope
 
-Expected commit:
+### Phase 36: Row-level security
 
-```text
-feat: add background job queue with in-process fallback
-```
+Status: Planned
 
----
+Every table. RLS is not a replacement for the repository scope, it is the layer
+underneath: an application bug that forgets the filter gets an empty result rather
+than another customer's data.
 
-## Phase 16: Data Retention and Cleanup
+- [ ] `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY` on every table —
+      without `FORCE`, the table owner bypasses it and TypeORM connects as the
+      owner
+- [ ] `USING ("tenantId" = current_setting('app.tenant_id', true))`, with `WITH
+  CHECK` so an insert cannot write into another tenant
+- [ ] The application role documented as **not** a superuser, because a superuser
+      bypasses every policy
+- [ ] A second, non-superuser role for the app, created by the migration
+- [ ] A test that proves the policy binds: a query with no tenant filter returns
+      nothing rather than everything
 
-Status: Done
+### Phase 37: Cache namespacing
 
-Goal:
+- [ ] `tenantId` folded into the key prefix in **one** place
+- [ ] A test asserting no two tenants' entries can collide
 
-Bound the size of the database by deleting data that can no longer be useful,
-without ever taking a lock that hurts production traffic.
+### Phase 38: Per-tenant permissions
 
-Tasks:
+Status: Planned
 
-- [x] Create `src/modules/maintenance` with a `retention.service.ts`
-- [x] Implement the policy below, every age configurable
-- [x] Add a `maintenance.retention` cron at an off-peak hour, plus an
-      admin-triggered manual run
-- [x] Delete in batches with `WHERE id IN (SELECT id ... LIMIT 5000)` and a
-      sleep between batches
-- [x] Log a structured summary of rows deleted per target, and expose the last
-      run time and duration
-- [x] Add `RETENTION_DRY_RUN` that reports what would be deleted and deletes
-      nothing
-- [x] Add a hard-coded minimum age guard, so a misconfigured value cannot
-      delete fresh data
-- [x] Add the `maintenance.log` entity, append-only, to record each run
-- [x] Add an admin route to trigger a dry run and to read the history
+- [ ] `permissions` and `role_permissions` gain `tenantId`
+- [ ] `role:<tenantId>:<role>` cache keys
+- [ ] The seeder clones the catalogue into each tenant rather than writing one
+      global copy
+- [ ] `PUT /admin/roles/:role/permissions` tenant-scoped
+- [ ] No `roles` table: `users.role` stays a `varchar`. Converting it is its own
+      refactor and would change the API surface for no gain here
 
-Retention policy:
+### Phase 39: Per-tenant mail templates
 
-```text
-Target                        Rule                                    Default
-users (soft deleted)          hard delete after deletedAt + N days     30
-email_verification_tokens     delete once expiresAt passed            +7 grace
-password_reset_tokens         delete once used, or expiresAt + N      +7 grace
-refresh_tokens                delete when revokedAt + N, or expired   7
-user_devices                  delete when no live refresh token       immediate
-mail_logs, notification_logs  delete rows older than N                30
-login attempt bookkeeping     delete rows older than N                7
-two-factor secrets            cascade with the user delete             -
-```
+- [ ] `email_templates` and `email_template_versions` gain `tenantId`
+- [ ] An operator edits their tenant's wording and nobody else's
+- [ ] The shipped `.hbs` files remain the fallback for every tenant
 
-Decisions taken against the policy above:
+### Phase 40: Per-tenant retention
 
-- `two_factor_secrets` is not a target of its own. Now that it has a cascading
-  foreign key, the user delete removes it.
-- `mail_logs`, `notification_logs`, login-attempt bookkeeping and `audit_logs`
-  stay out of the policy until their tables exist. A rule naming a missing table
-  would fail on every run. They are listed in `DEFERRED_TARGETS` so the gap is
-  reviewable rather than forgotten.
-- The `user_devices` rule does discard the `ipAddress` and `userAgent` of past
-  logins along with the row. It returned 2 rows out of 40 on live data, which is
-  a cheap trade, and device rows are otherwise bounded by the user count.
+- [ ] The retention run iterates tenants
+- [ ] `maintenance_logs` gains `tenantId`; the history API is tenant-scoped
+- [ ] **Open decision, revisit past five tenants**: one job per tenant means N
+      batch-delete passes a night. A single job scanning every tenant is
+      compatible with the data but changes the API shape
 
-Commits:
+### Phase 41: The isolation proof
 
-```text
-ce9f119  fix: cascade user devices and two-factor secrets on user delete
-2753621  feat: define the retention policy table
-62cb57b  feat: add batched retention deletes
-c525251  feat: add the maintenance run log
-25951e7  feat: add the maintenance job processor
-21b9f1c  feat: schedule the retention job
-689a76a  feat: expose retention runs to an admin
-66d4cf4  docs: mark phase 16 data retention as done
-```
+Status: Planned
 
-What was built:
+The answer to "how do you know it does not leak".
 
-- `retention.policy.ts` holds the policy as data: one entry per table, each with
-  its own predicate. Adding a target is adding an entry, not editing a switch.
-- `retention.service.ts` runs it in batches, one transaction per batch, with a
-  configurable pause between them. A target that fails is recorded and skipped
-  rather than ending the run.
-- `retention.processor.ts` runs it as a queue job, so the cron and the admin
-  route share one execution path.
-- `scheduler/retention.scheduler.ts` enqueues it nightly at `RETENTION_SCHEDULE`,
-  through `JOB_QUEUE`, so it fires whether the queue is BullMQ or in-process.
-- `admin/retention.controller.ts` exposes a synchronous dry run, a queued real
-  run, and the history.
-
-Decisions taken during the work:
-
-- `RETENTION_ENABLED` defaults to `true`. Retention only removes rows already past
-  their age, so an unconfigured deployment loses nothing it could still use, and
-  defaulting it off would make every install a deployment that grows forever.
-- The minimum age guard is enforced at the point of use, not only in environment
-  validation, because a config object assembled in a test must not be able to
-  delete today's rows.
-- A run that hit its timeout stops immediately rather than finishing the batch in
-  progress. A timeout here is nearly always a lost database connection, and
-  completing the batch would be another round trip against a connection that is
-  already gone.
-- A run that finished is a job success even when individual targets failed. A
-  renamed column answers a retry identically five seconds later. A timeout is the
-  opposite and stays retryable, because tables were left unclean.
-- `maintenance_logs` carries no index. A run is about 728 bytes stored, so a year
-  of daily runs is roughly 260 KB and fits in memory; an index would cost more than
-  it saves. Nothing prunes it, and the operator trims by hand.
-- The dry run counts exactly, with no cap. A rehearsal that under-reports is worse
-  than a slow one.
-
-Known limits:
-
-- The cron does not catch up a missed run. Restarting the app is fine, because the
-  schedule is re-registered on every boot and fires at the next occurrence, but a
-  window in which the process is not running at `RETENTION_SCHEDULE` means that
-  night is skipped entirely and nothing logs an error.
-- With the in-process dispatcher, a job that was enqueued but not yet processed is
-  lost on restart. With BullMQ it survives in redis, but the worker is created
-  lazily on first use, so it waits for the next enqueue to be picked up.
-- Several instances each run the schedule, so a night can produce several runs.
-  That is accepted: every run is idempotent, and rows are only removed once they
-  are already past their age.
-
-Expected outcome:
-
-- Table sizes flatten out under normal traffic instead of growing forever.
-- The first production run can be rehearsed safely with a dry run.
+- [ ] CI runs the suite in **three modes**: `off`, `on`, and `on + RLS on`
+- [ ] The third is the one that earns its keep: it turns "the scope looks right"
+      into a check, because any test relying on a row it forgot to scope fails
+- [ ] A cross-tenant isolation spec covering every path: read, write, delete, list,
+      search, export, Excel export, background job, audit query, and cache
+- [ ] A multi-tenant playground in `docs/installation.md`
 
 ---
 
-## Phase 17a: Permission-based Authorization
+## Group 3: The HTTP client
 
-Status: Done
+Phases 42–44. Before Group 4, because the first thing that genuinely needs
+retry-until-it-holds is a webhook.
 
-Goal:
+### Phase 42: A shared HTTP client
 
-Give the authorization layer an actual permission model. The `@Permissions()`
-decorator and `PermissionsGuard` exist, but nothing uses them: there is no
-`permissions` table, no `role_permissions` table, and the guard returns true for
-any route without permission metadata. This phase builds the data model and makes
-the guard enforce it.
+Status: Planned
 
-This is split out of the original Phase 17 because it is a feature, not a
-performance change, and it is releasable on its own. Everything in Phase 17b
-caches what this phase defines.
+`@nestjs/axios` is already a dependency and every transport already uses it. What
+is missing is discipline, not a package.
 
-Tasks:
+- [ ] `HttpCoreModule`, global: one timeout configuration
+- [ ] An error taxonomy — `retryable`, `permanent`, `throttled` — so no call site
+      invents its own notion of which failure is worth another attempt
+- [ ] `request-id` propagated onto every outbound request, so a third party can
+      quote it back
 
-- [x] Add a `Permission` entity: `name` unique, `description`, timestamps
-- [x] Add a `RolePermission` entity joining role to permission, unique per pair
-- [x] Generate the migration and seed the permission set each role starts with
-- [x] Add `permissions` to `RequestUser`, populated by the strategy
-- [x] Rewrite `PermissionsGuard` so it checks the user's set, denying by default
-      when a route declares permissions and the user has none
-- [x] Apply `@Permissions()` to the admin routes that should require one, so the
-      decorator has at least one real caller
-- [x] Add `GET /auth/sessions`, listing the caller's refresh sessions and devices
-- [x] Add `DELETE /auth/sessions/:id`, revoking one session without touching the
-      others
-- [x] Add a `sessionsVersion` column on `users`, bumped by `logoutAll()` and by
-      a password change
-- [x] Put `sessionsVersion` in the access token payload and reject a token whose
-      claim does not match, so logout-everywhere kills access tokens
-- [x] Add a throttler storage adapter over the existing `RedisClientService`, so
-      limits hold across replicas instead of resetting per process
-- [x] Add throttler buckets for login, two-factor and refresh, keyed per IP and
-      per email
-- [x] Block login temporarily after repeated failures, the way a desktop OS
-      does: five failures block for one minute, each further failure adds a
-      minute, capped at fifteen, and the block expires on its own
+### Phase 43: Circuit breaker and retry budget
 
-Implementation note: the token carries `sessionsVersion` rather than the strategy
-comparing it against a fresh database read on every request. Reading the column
-would cost the query this phase exists to remove, and the claim makes revocation
-a comparison rather than a lookup. A token issued before the column existed has
-no claim and stays valid, which is correct: it predates the feature.
+- [ ] A breaker that opens on a threshold and half-opens to probe
+- [ ] A retry budget, so a retry storm cannot outlive the outage that caused it
 
-Implementation note, on the email lookup: `forgot-password`, `resend-verification`
-and `verify-email` must keep doing real database work. Caching the email lookup
-would make a registered address measurably faster than an unknown one on the
-second attempt, which is exactly the account-enumeration oracle the timing floor
-in `src/modules/auth/enumeration.spec.ts` exists to close. Only `login` reads
-through the cache, and its answer is already identical either way.
+### Phase 44: Migrate the existing call sites
 
-Commits:
-
-```text
-a781a26  feat: add the permission model
-b622927  feat: enforce permissions in the guard
-42d75cf  feat: list and revoke sessions
-0166711  feat: kill every access token on logout everywhere
-80fc63d  feat: share the rate limit across replicas
-df3085a  fix: apply the per-address rate limits that were never enforced
-b84cc0e  feat: block login temporarily after repeated failures
-c3e70c4  docs: mark phase 17a permission authorization as done
-```
-
-What was built, and what it turned out to need:
-
-- **`Permission` and `RolePermission` entities**, with `ROLE_PERMISSIONS` as the
-  single statement of which role holds what. A plain user holds none, so an
-  unseeded permission locks a route rather than unlocking it.
-- **`PermissionsGuard`** rewritten to check the caller's set, and `@Permissions()`
-  applied to seven routes so the decorator has real callers. It throws a 403
-  naming the missing permission instead of returning false.
-- **`GET/DELETE /auth/sessions`**, where a session is one live refresh token
-  rather than one device, because one device can hold several.
-- **`sessionsVersion`** on the user, carried in the access token, so
-  logout-everywhere is immediate instead of waiting out the fifteen minute token.
-- **A redis rate limit store**, built as a Lua script because a read followed by a
-  write lets a concurrent pair both through, which is the burst being defended
-  against. It fails open, so a redis outage costs rate limiting rather than login.
-- **A temporary login lockout**: five failures block for a minute, each further
-  failure adds a minute, and the length stops growing at fifteen.
-
-Three things this phase found rather than built:
-
-- **The per-address rate limits had never run.** `ThrottlerGuard` builds its list
-  from the module options and nothing else, so a bucket named only in
-  `@Throttle()` metadata is never reached. The three-per-hour mail limit from
-  Phase 14 was configured, documented and tested, and enforced nothing. Every
-  bucket is now declared globally and gated behind a `@RateLimit` marker, with the
-  polarity reversed so an undeclared route is limited by `default` alone.
-- **The lockout counts failures for addresses that do not exist.** Counting only
-  real accounts would make the 429 answer which addresses exist without a single
-  successful guess, which is the question the enumeration floor exists to keep
-  closed. The cost is that anybody can lock an address out; the block is short,
-  grows with the failures and then stops, which slows that attack further than it
-  inconveniences a real person.
-- **Jewellery belongs in redis keys as a hash.** The lockout keys carry a digest
-  of the address, for the same reason `user:email` does.
-
-Known limits:
-
-- The lockout is per address, not per account row, so it counts attempts against
-  addresses nobody registered. That is the price of not leaking existence.
-- Nothing prunes the lockout keys. They carry their own expiry, so redis reclaims
-  them, but an operator watching key count sees them come and go.
-- A single replica serving several processes behind one load balancer still shares
-  nothing; the redis store only matters across replicas, which is where the limits
-  were previously being reset.
-
-Expected outcome:
-
-- A route can require a named permission, and a user without it is refused.
-- A caller can see their own sessions and revoke one.
-- Logout everywhere takes effect on the next request rather than at token expiry.
-- Rate limits and login blocks hold across every replica.
-- Five wrong passwords block that account for a minute, not forever.
+- [ ] `json-poster`, and the Slack, Telegram and Discord channels
+- [ ] The password breach lookup
+- [ ] Every hand-set timeout gone
 
 ---
 
-## Phase 17b: Authentication and Authorization through Cache
+## Group 4: Webhooks and events
 
-Status: Done
+Phases 45–52. Both directions, because the two problems are different problems.
 
-Goal:
+### Phase 45: Outbound subscriptions
 
-Serve authentication from Redis instead of Postgres, while a revoked session or
-a changed role still takes effect immediately rather than at TTL expiry.
+- [ ] Endpoint, subscribed events, secret, enabled — one secret per endpoint
+- [ ] Secret rotation, with the previous secret still verifying for a window, so a
+      deploy does not break verification halfway through
 
-Tasks:
+### Phase 46: Signing and replay protection
 
-- [x] Cache the sanitised user under `user:<id>`, TTL 60s, and read it from
-      `JwtStrategy.validate()`
-- [x] ~~Cache the email lookup under `user:email:<hash>`~~ — dropped. The reason
-      is in the note below and it is the one thing in this phase that would have
-      been a mistake rather than a shortcut.
-- [x] ~~Cache the permission set under `perm:user:<id>`~~ — dropped, because
-      caching per role instead is both smaller and the only thing invalidation can
-      actually do.
-- [x] Cache the role permission map under `role:<role>`, TTL 600s, so a permission
-      set is one small read rather than a join per request
-- [x] Have the strategy resolve permissions and hand them to the guard, so the
-      lookup is once per request rather than once per guarded route
-- [x] Invalidate on every write that changes an authentication answer: a user
-      update, a soft delete, a role's grants, a device sign-out, a session
-      revocation
-- [x] ~~Do the invalidation from a TypeORM subscriber in
-      `src/database/subscribers/`~~ — dropped, and replaced with a guard test. See
-      the note below for the two reasons, both checked against the installed
-      TypeORM rather than assumed.
-- [x] Drop the cache entry **after** the transaction commits rather than inside
-      it, because a delete inside lets a concurrent read refill the entry from the
-      row being revoked
-- [x] Fall back to the database when redis is unreachable, so an outage costs
-      latency rather than availability. Detection is the health indicator reporting
-      `degraded`, not a log line: a store that fails open has nothing to log,
-      because every call looks like a miss.
-- [x] Report cache loss as degraded rather than down in the Terminus indicator
+- [ ] `t=<timestamp>,v1=<hmac-sha256>` over `timestamp.body`
+- [ ] A verification window, and a signed timestamp so it cannot be forged
+- [ ] Constant-time comparison
 
-Dropped from the original task list, and why:
+### Phase 47: The SSRF guard
 
-- **The invalidation subscriber.** The plan wanted invalidation to live in a
-  TypeORM subscriber so it "cannot be forgotten in one of them". Two things make
-  that impossible here, both verified in `node_modules` rather than reasoned
-  about:
+Status: Planned
 
-  1. **A subscriber gets no dependency injection.**
-     `ConnectionMetadataBuilder.buildSubscribers` instantiates them with
-     `new metadata.target()`, so there is no constructor argument to inject
-     `CacheService` through, and Nest does not rewrite the options it is given.
-     Reaching the cache would need a module-level singleton or a second redis
-     client, and a second client has to reproduce the key derivation that
-     `CacheService` owns — which is exactly the drift `cache-keys.ts` exists to
-     prevent.
+**Not optional, and not polish.** A subscription endpoint is user-supplied, so
+without this the feature is a way to read the cloud metadata service.
 
-  2. **It could not identify the row.** `UpdateQueryBuilder` passes `valuesSet`
-     as the event entity, so `update()` and `increment()` deliver
-     `{ sessionsVersion: 1 }` with no id; `DeleteQueryBuilder` passes no entity
-     at all. Every write whose invalidation matters is a query-builder write, so
-     the subscriber would fire on all of them and be able to act on none.
+- [ ] Resolve the hostname, then check the resolved address — checking the string
+      is defeated by DNS rebinding
+- [ ] Refuse loopback, link-local, private ranges, and `169.254.169.254`
+- [ ] Refuse redirects
+- [ ] Bound the timeout and the response size
+- [ ] A test proving a subscription pointed at the metadata address never connects
 
-  What replaces it is a guard test, `sessions-version-guard.spec.ts`: a write to
-  a revocation-critical column may only appear in a file that also invalidates,
-  and the amount must be an increment. Adding a third bump site fails the build
-  rather than quietly weakening logout-everywhere. It was checked by planting a
-  bump in `DeviceService`, which failed the two relevant tests.
+### Phase 48: Delivery
 
-- **`wrapOrLoad()`.** `CacheService.wrap()` already does this: it coalesces
-  concurrent callers on the same key and stores a nullish result for `emptyTtl`
-  rather than the full TTL. Negative caching therefore arrives with it, and a
-  second helper doing the same job is two implementations of one behaviour.
-- **`token:revoked:<jti>`.** There is no per-access-token revocation to cache.
-  Refresh tokens already carry `revokedAt` in the database, and access tokens die
-  through the `sessionsVersion` claim that Phase 17a adds. A cache of revoked ids
-  would have nothing to read from.
+- [ ] Through the existing queue, so retries and the dead-letter list are already
+      there
+- [ ] Manual replay from the admin, **and the replay is itself audited**
+- [ ] 4xx is permanent; 5xx and timeouts are not
 
-Implementation note: a stale cache entry is an authorization bug, not a
-performance bug. That is why invalidation is explicit at every write and guarded
-by a test, why the deletes happen after the transaction rather than inside it, why
-TTLs stay short, and why the integration test mutates a user and re-reads
-immediately rather than waiting one out.
+### Phase 49: Inbound webhooks
 
-Commits:
+- [ ] `rawBody` on the Nest factory — HMAC cannot be verified against a re-serialised
+      body
+- [ ] Per-provider signature verification
+- [ ] Dedupe on the provider's event id: a repeat is acknowledged and dropped
 
-```text
-perf: serve authentication from cache
-perf: serve authorization from cache
-perf: guard the sessions version against an uninvalidate write
-perf: report cache loss as degraded
-```
+### Phase 50: Service-to-service authentication
 
-Beyond the plan, because caching the claims made it the obvious place to answer a
-question the claims could not:
+Status: Planned
 
-- [x] **A per-device revocation level.** `user_devices.sessionsVersion`, carried
-      as `did`/`dv`, so signing out of one browser leaves the phone signed in.
-- [x] **A per-session revocation level**, carried as `sid`, so
-      `DELETE /auth/sessions/:id` stops the access token already minted from that
-      session rather than only the next refresh.
-- [x] **A rotation supersedes the old access token**, recorded after the commit.
-- [x] `PUT /admin/roles/:role/permissions`, so changing a grant goes through the
-      application and therefore through the invalidation.
-- [x] The permission seed clears the cached grant sets it wrote.
+For internal calls. **Not** HMAC — that is for parties you do not control.
 
-Commits:
+- [ ] Service tokens: a subject, scopes, a short expiry, revocable
+- [ ] Scoped exactly as permissions are, reusing the same vocabulary
 
-```text
-perf: serve authentication from cache
-perf: serve authorization from cache
-perf: guard the sessions version against an uninvalidate write
-perf: report cache loss as degraded
-feat: revoke an access token when its device signs out
-feat: revoke a session's access token, and the one a rotation supersedes
-fix: clear cached role grants from the permission seeder
-feat: expose role permissions over the admin api
-refactor: build the redis store through the keyv factory
-```
+### Phase 51: A domain event catalogue
 
-What was built, and what it turned out to need:
+- [ ] One module per aggregate, following the shape `notification.events` already
+      has
+- [ ] Events typed and named, so adding one does not mean editing another module
 
-- **A projection, not the user row.** `findAuthClaims` selects six named columns
-  and never reads the password hash, because the strategy does not use it and a
-  bcrypt hash in Redis is offline cracking material in a store that is usually
-  less protected than the database it duplicates.
-- **One key per role for grants**, so a role change is one delete rather than one
-  per holder. `CacheService` has no pattern delete by choice, so a per-user key
-  would have made every role change a scan of the user table.
-- **Invalidation after the commit.** A delete inside the transaction lets a
-  request in between refill the entry from the uncommitted row, and that entry
-  then outlives the token it wrongly admitted. Small window, silent failure, so it
-  was worth three shapes of the same idiom.
-- **Four revocation scopes**: the account, the device, the session and the user
-  row. The two counters are increments, and an absent claim is read as "this
-  predates the column" rather than as zero, which is what keeps a deploy from
-  signing everybody out.
+### Phase 52: The outbox pattern
 
-Five things this phase found rather than built:
-
-- **Caching the email lookup would have been the mistake of the week.** The only
-  caller is `login`, and `login` needs the password hash to verify. Serving that
-  row from cache means a bcrypt hash in Redis; caching only the email-to-id mapping
-  saves nothing, because the row still has to be fetched for the hash. The lookup
-  is still a database read.
-- **A subscriber cannot do this job**, for two independent reasons: TypeORM builds
-  subscribers with `new target()` so there is no injection, and every write whose
-  invalidation matters arrives from a query builder with no row id. A guard test
-  replaced it, and it fails the build when a revocation-critical column is
-  written somewhere that does not invalidate.
-- **`createKeyv` does accept connection options.** The comment inherited from
-  Phase 12 said it "only accepts a URL and hardcodes the socket options", which is
-  false for the installed version, and that false belief is why the store was being
-  hand-built with a manual client. Verified by running both forms and reading one
-  from the other.
-- **A hand-built client that is never closed hangs the process.** `npm run seed`
-  printed its last line and sat there, because the open socket kept the event loop
-  alive. Found by running the seed rather than by reading it.
-- **Writing into the transaction is the same bug twice.** The rotation records the
-  superseded session after its commit for the same reason the user claims do; the
-  first version had it inside, and a test that asserts the order is what noticed.
-
-Known limits:
-
-- **A grant edited straight in the database is invisible to the application** until
-  `CACHE_AUTH_ROLE_TTL` expires. Invalidation runs where the write runs, and
-  nothing inside the application can see a write it did not make. The route exists
-  so that the normal path is not that path; `SECURITY.md` and
-  `docs/production.md` both say so.
-- **`CACHE_BACKEND=memory` cannot be evicted from outside the process**, so the
-  seeder's cache clear is a no-op there and those entries are left to expire.
-- **Rotation leaves a lost-response client with nothing.** A client that does not
-  receive the response to a refresh has no working token, and its retry presents a
-  rotated token, which is the reuse signal that drops every session on the account.
-  A lost response and a leaked token are indistinguishable server-side, and the
-  design already treated them as the same thing.
-
-Expected outcome:
-
-- An authenticated request costs redis reads instead of postgres queries.
-- A role change, a deactivation or a revocation takes effect on the next request.
-- Signing out of one device leaves the others signed in.
-- A redis outage costs latency, not availability.
+- [ ] An event written in the same transaction as the state change
+- [ ] A separate process publishes it
+- [ ] Dual-write — writing the row and publishing separately — is how events go
+      missing
 
 ---
 
-## Phase 18: Notifications
+## Group 5: Files and bulk data
 
-Status: Done
+Phases 53–58.
 
-Goal:
+### Phase 53: Storage abstraction
 
-Send operational and user-facing notifications to Telegram, Slack and other
-channels, without adding a dependency for any of them.
+- [ ] Presigned URLs, so a large file never passes through the API process
+- [ ] A `memory` driver for local development and a `s3` driver for everything else
+- [ ] The optional-package pattern, so a deployment without one still boots
 
-Tasks:
+### Phase 54: Upload validation
 
-- [x] Create `src/modules/notification` with `notification.service.ts`
-- [x] Define `NotificationChannel { name, isEnabled(), send(n) }`
-- [x] Implement `telegram.channel.ts` over raw HTTPS, no package
-- [x] Implement `slack.channel.ts` over an incoming webhook, no package, with
-      Block Kit payloads
-- [x] Implement `discord.channel.ts` on the same webhook shape
-- [x] Implement `email.channel.ts` delegating to `MailService`
-- [x] Implement `console.channel.ts` as the development default
-- [x] Add a per-channel enable flag, retry policy and dead-letter list
-- [x] Make `notify()` asynchronous and failure-isolated; a broken webhook must
-      never fail a registration
-- [x] Add `notification_preferences` so a user can opt out per event and
-      channel
-- [x] Add `GET /notifications/preferences` and `PATCH /notifications/preferences`
-- [x] Add the `notification_log` entity, purged by Phase 16
-- [x] Centralise MarkdownV2 escaping in one helper; Telegram rejects messages
-      containing unescaped `_`, `*` and backticks
-- [x] Support Telegram topic/thread ids to route event types to different rooms
-- [x] Emit these events: user registered, user deleted, repeated failed logins,
-      new device login, 2FA enabled or disabled, retention job anomaly
+- [ ] Size and content type validated on the **signature request**, not after the
+      upload
+- [ ] A scan hook, so the signature is not the only gate
 
-Implementation note: the channel interface is the whole extension story. A
-third party adds a channel by providing one class; the core is not modified.
+### Phase 55: Excel export
 
-Commits:
+- [ ] `exceljs`, streaming — **not** the `xlsx` package, whose public npm build is
+      outdated and carries known advisories
+- [ ] Multiple sheets, header rows, merged cells, styles
+- [ ] Streamed from the cursor in Phase 23, so a hundred thousand rows does not
+      arrive in memory
+- [ ] Reusing the existing CSV formula-injection guard and the column allow-list
+      pattern from the user export
 
-```text
-feat: add multi-channel notifications
-```
+### Phase 56: Excel import
 
-What was built:
+- [ ] Chunked, and **resumable** from a checkpoint
+- [ ] Errors reported per row rather than failing the file
+- [ ] All-or-nothing per chunk, so a resume does not double-write
+- [ ] Idempotent per row, so a repeated chunk is harmless
 
-- Five channels behind one interface: console, telegram, slack, discord, email.
-  Not one package between them — the only transport is `HttpModule`, which the
-  boilerplate already depends on.
-- Two modules, because the graph demands it. The queue's router injects
-  `NotificationProcessor`, which injects the delivery service, so that service
-  cannot live in a module that enqueues. `NotificationModule` sits below the
-  queue, `NotificationEventsModule` above it, and a test asserts the split.
-- `notification_logs` with one row per channel per notification, refusals
-  included, carrying the rendered body.
-- `notification_preferences`, opt-out, cached per user, evicted once after the
-  whole write batch.
-- Seven events, each typed to exactly the fields it renders.
+### Phase 57: Import presets
 
-Decisions taken against the plan above:
+- [ ] One descriptor per entity: columns, types, transforms, validation
+- [ ] A template download endpoint, which is cheaper than answering "which columns
+      do you want?"
 
-- **Retries are per channel and live in the service, not in the queue.** A queue
-  retry re-attempts every channel for the sake of the one that failed, so a Slack
-  alert would arrive five times because Telegram was down. The queue's retry
-  budget is still what catches a job that failed outright.
-- **A partial delivery is a job success.** The processor asks whether anybody
-  received the notification. Mail is one recipient and one provider, so a failure
-  there is the job's failure; a notification is four channels and the useful
-  question is the other one.
-- **A skipped notification is a success too** — nothing enabled, or every channel
-  muted. A deployment told not to send must not fill the dead-letter list with
-  work it declined.
-- **The `notification` mail template is one entry, not six.** The events carry a
-  headline and a body and nothing else, so a registry entry per event would be six
-  chances to mail the wrong thing. It renders the app name in the footer rather
-  than the subject, because an operator triages a mailbox by subject line and
-  "Security alert" six times a day tells them nothing.
+### Phase 58: Progress over realtime
 
-Four things this phase found rather than built:
-
-- **Slack's `mrkdwn` is not Markdown.** It escapes with HTML entities, not
-  backslashes, so Telegram's `escapeMarkdownV2` would have rendered as a wall of
-  backslashes and still left `<url|label>` clickable. A notification body carries
-  a user-supplied email address, so without a second escaper an address containing
-  `<` became a link in a shared ops channel. Two helpers, one per syntax, each
-  next to the markup that needs it.
-- **Discord could not reuse Slack's payload.** Phase 12's comment said one
-  implementation could serve both, and for the url and the transport that is
-  true. The body is not: Discord ignores `text` and posts an empty message,
-  because its field is `content` and it calls a section an `embed`. Reusing it
-  would have delivered nothing while answering 200.
-- **`isNotificationEventKey` used `in`, which walks the prototype chain.** The
-  event name arrives off a queue, so `"constructor"` passed the guard and was then
-  looked up in the registry as a function. `Object.hasOwn` instead. Found by
-  writing the test for a name that only looks like a real one.
-- **The dedupe key fell back to a fresh uuid for the recipient half**, which made
-  it unstable for any event carrying only a `subjectId` — silently disabling
-  deduplication for exactly the events that were using it. The subject id now
-  falls back before the notification id.
-
-Dropped from the plan, with the reason:
-
-- **HMAC-signed webhooks.** The roadmap proposed these for a _receiver_. This
-  module is a sender, and an outgoing webhook signed with a shared secret is a
-  secret the receiver then has to store, which is the opposite of why these
-  channels were chosen. Signing belongs on the inbound side.
-- **A generic webhook channel.** Telegram, Slack and Discord each have their own
-  class because their payloads genuinely differ. A generic channel accepting
-  arbitrary payloads would need per-destination formatting configuration, which
-  is the configuration this design removes.
-
-Known limits:
-
-- **A redelivery of a subject-less event can deliver twice.** The dedupe key
-  carries a fresh uuid unless the caller supplies a subject, which is deliberate:
-  a key from the event name alone would suppress the second failed sign-in of an
-  ongoing attack.
-- **The email channel is queued twice** — once as a notification, then again by
-  the mail job its delegation enqueues. Acceptable because the notification job is
-  already off the request path.
-- **Preferences are read with the auth TTL**, so a mute can take up to a minute to
-  apply. One knob rather than two that mean roughly the same thing.
-- **`notification_logs` holds addresses** and is purged on an age, so the window is
-  a data-retention decision rather than a housekeeping one.
-- **Nothing reads `notification_logs` through the API.** The service has
-  `recent()` and `forNotification()`; Phase 20 puts them behind a route.
-
-Expected outcome:
-
-- Registration triggers a notification on every enabled channel.
-- Disabling a channel is a config flag, and a failing channel never blocks the
-  request.
-
-## Phase 19: Account Security Features
-
-Status: Done
-
-Goal:
-
-Close the account-lifecycle gaps that real deployments get asked about.
-
-Tasks:
-
-- [x] Add an email verification gate, blocking sensitive actions until the
-      address is verified
-- [x] Add a password policy in zod, with an optional `zxcvbn` strength score
-- [x] Check new passwords against a breach list using the k-anonymity API, or
-      an offline list
-- [x] Keep the last N password hashes and reject reuse
-- [x] Add a permanent account lockout with an unlock flow and a notification.
-      Phase 17a already blocks login temporarily; this is the version that needs
-      an administrator or a verified email to clear
-- [x] Add an audit log entity: actor, action, before/after diff, ip, user
-      agent, request id, append-only
-- [x] Record an audit entry on every privileged action, through an interceptor
-      plus a TypeORM subscriber for writes that bypass a controller
-- [x] Add an `Idempotency-Key` header guard on mutating endpoints, so a client
-      retry after a timeout cannot create a duplicate
-- [x] Add `@VersionColumn()` to the mutable entities for optimistic concurrency
-- [x] Add `user.requestDeletion()`: soft delete, queue a data export, hard
-      delete at the end of the retention window, a right-to-erasure flow built
-      on Phase 16
-- [x] Add a data export endpoint, CSV and JSON, streamed for large result sets
-
-Expected outcome:
-
-- Insecure passwords, unverified addresses and repeated attacks are all visible
-  and handled.
-- Every privileged action is attributable to a person and a request.
-
-Expected commit:
-
-```text
-feat: add account security, audit log and idempotency
-```
-
-Delivered as eleven commits rather than one, each independently revertable. The
-plan named a single commit; the phase was large enough that one commit would have
-made bisecting a regression a matter of reading the whole diff.
-
-```text
-feat: enforce a configurable password policy
-feat: reject a password found in a breach
-feat: reject a reused password
-feat: gate sensitive actions on a verified address
-feat: add a permanent account lockout
-feat: add the audit log entity and writer
-feat: audit every privileged action
-feat: make mutating routes idempotent
-feat: add optimistic concurrency
-feat: add the right to erasure
-feat: export a user's data
-```
-
-Decisions worth carrying forward, because each one is a refusal of something:
-
-- **A permanent lockout only ever applies to a confirmed address, and that is a
-  code invariant rather than a setting.** An unverified account could never receive
-  the unlock link, so locking one would be permanent with no owner able to clear it.
-  A flag for this is one careless default away from locking every account in a
-  deployment.
-- **A locked account answers with the same 401 as an unregistered one.** A dedicated
-  message is a free oracle for anybody willing to burn twenty attempts, and the
-  owner has the mail. The notification is how the owner finds out, not the
-  response.
-- **The audit writer never throws.** An audit write that failed the action it was
-  recording would mean an outage in the log becomes an outage in the product. The
-  gap is logged at `error`; the trade is real and is that this trail can have
-  holes.
-- **`before` is null on every interceptor-written audit entry.** The interceptor
-  sees the request and the response, never the row as it was, and a reconstructed
-  before-state in a table presented as evidence looks like a record while being an
-  inference.
-- **No TypeORM subscriber**, for the two reasons Phase 17b reached for the same
-  hook: no dependency injection, and a query-builder write arrives without an id.
-  A service doing a privileged write outside a controller calls the writer
-  directly.
-- **Idempotency uses redis directly, not the cache.** The cache fails open by
-  reporting an unreachable store as a miss, and a miss on an idempotency check
-  means "this request is new" — the exact duplicate it prevents.
-- **An export never selects a credential.** The exclusion is structural rather than
-  a filter at the output stage, because a column that is not selected cannot be
-  rendered.
-
-What is deliberately not here, so it is not mistaken for an oversight:
-
-- **An admin route to read somebody else's audit trail.** The table exists and is
-  written; the query surface is a separate decision about who may see it.
-- **A generic webhook channel with HMAC signing.** Dropped rather than half-built;
-  Phase 22 is where a signature scheme belongs.
+- [ ] The import's progress pushed rather than polled, using Group 7
 
 ---
 
-## Phase 20: Operational Hardening
+## Group 6: Billing
 
-Status: Done
+Phases 59–65. An abstraction with Stripe as the default adapter, because a template
+hard-wired to one provider gets forked on first contact.
 
-Goal:
+### Phase 59: The provider interface
 
-Make the new features observable and operable, so a failure at 3am is a
-dashboard, not an investigation.
+- [ ] `PaymentProvider` with a capability model, so a provider that cannot refund
+      says so rather than failing at runtime
+- [ ] No provider named in core
 
-Tasks:
+### Phase 60: The Stripe adapter
 
-- [x] Extend `/health` with mail transport, queue connectivity and backlog
-      depth, all reporting degraded rather than down
-- [x] Expose the last successful maintenance run in the health payload
-- [x] Add Prometheus metrics: `mail_sent_total`, `mail_failures_total`,
-      `notification_sent_total`, `job_lag_seconds`,
-      `retention_rows_deleted_total`
-- [x] Add OpenTelemetry traces spanning HTTP, database and job execution
-- [x] Propagate `X-Request-Id` into every log line, mail record and
-      notification record
-- [x] Add Sentry error reporting with release tagging
-- [x] Add alert rules: failure rate above a threshold, a non-empty dead-letter
-      list, a maintenance job that has not run in 26 hours
-- [x] Redact token, secret and OTP fields in the logger
-- [ ] Add a runbook in `docs/`: provider outage, Redis loss, queue backlog, and
-      tracing a missing email through `mail_logs`
-- [x] Add a Grafana dashboard for auth failure rate, job lag and mail delivery
+- [ ] Charges, refunds, subscriptions, and webhook verification
+- [ ] Loadable through `loadOptional`, like every other integration
 
-Expected outcome:
+### Phase 61: An internal ledger
 
-- Each new subsystem is visible before it is asked about.
-- The runbook answers the common failure questions without reading code.
+- [ ] Double-entry, and **provider data is never treated as the truth**
+- [ ] Every state change is ours first and confirmed second
 
-Expected commit:
+### Phase 62: Reconciliation
 
-```text
-feat: add observability and operations for the new subsystems
-```
+- [ ] A polling job that settles what a lost or late webhook missed
+- [ ] Idempotent, because it will run again
 
-Delivered as ten commits, each independently revertable:
+### Phase 63: Plans, prices and the subscription state machine
 
-```text
-feat: extend health with mail, queue and backlog
-feat: report the last maintenance run in health
-feat: redact secrets from the logger
-feat: add prometheus metrics
-feat: add open telemetry tracing
-feat: add sentry error reporting
-feat: add alert rules
-feat: propagate the request id into mail and notification records
-docs: add an operations runbook
-docs: add a grafana dashboard
-```
+- [ ] Explicit transitions; an invalid one is refused rather than coerced
+- [ ] Proration, upgrade, downgrade, cancel
 
-Decisions worth carrying forward, because each is a refusal of something:
+### Phase 64: Entitlement to permission
 
-- **Nothing new in `/health` is ever `down`.** `down` makes Terminus return 503 and
-  an orchestrator pulls every instance out of rotation, so a mail provider outage, a
-  full queue or a dead redis would each turn a system that is still answering
-  requests into an outage of the API itself. Only the database may go red.
-- **The health check sends no mail and reads no backlog it cannot read.** A probe
-  mail lands in a real inbox and a provider rate limit would eventually refuse it;
-  a zero waiting-jobs reading taken while redis is down looks healthier than an
-  application with no jobs at all.
-- **`@opentelemetry/api` and nothing else.** No SDK, no exporter, no collector —
-  those would choose the deployment's tracing stack for whoever clones this. Install
-  one and the spans start appearing; leave it out and every method is a no-op at
-  the same speed. The `@nestjs/observe` integration already in the repository is an
-  alternative, not a partner.
-- **Sentry's `beforeSend` strips headers, cookies, body and query string.** Those
-  are where a password, a reset token and a two-factor code are. An error reporting
-  service holding a sign-up body is a credential store with a far larger blast
-  radius than the database.
-- **Alert thresholds live in TypeScript and the YAML is checked against them.** A
-  Prometheus rule file is hand-maintained YAML with no compiler near it, and a
-  drifted alert stays green while the thing it watches is on fire — which is how a
-  monitoring system gets turned off.
-- **`mail_logs` was created rather than the correlation work narrowed to fit.** It
-  did not exist; a request id stamped onto a table nobody queries is a column, and
-  one on the table somebody queries when a user says they got nothing is the
-  feature.
-- **`auth_login_attempts_total` exists because a failure rate needs a denominator.**
-  One counter with a label rather than two, so the halves are always over the same
-  window. It is also the only sign-in signal that survives a redis outage, because
-  the rate limiter and the lockout both fail open.
+Status: Planned
 
-What is deliberately not here, so it is not mistaken for an oversight:
+The highest-value idea in this plan for a boilerplate.
 
-- **An admin route to read the audit trail.** The table is written by Phase 19 and
-  nothing reads it back; that is a decision about who may see it, not a gap.
-- **A generic signed webhook channel**, dropped rather than half-built in the wrong
-  phase.
-- **Distributed-trace retention.** Storing spans is the collector's business, and a
-  template that kept its own would be a second place to answer "where is that trace".
+- [ ] A plan grants entitlements; an entitlement maps to a permission
+- [ ] The existing `PermissionsGuard` reads it unchanged
+- [ ] Without this, billing and authorisation are two separate sources of truth
+      about who may do what, and they diverge
+
+### Phase 65: Dunning, refunds and cancellation
+
+- [ ] A failed charge retried on a schedule, then the subscription cancelled
+- [ ] Refunds as ledger entries, not as a provider call
 
 ---
 
-## Phase 21: Testing Depth and Documentation
+## Group 7: Realtime
 
-Status: Done
+Phases 66–68.
 
-Goal:
+### Phase 66: An SSE gateway
 
-Prove the new behaviour, especially the optional-dependency and cache paths,
-which are the ones that fail quietly.
+- [ ] Server-sent events first. They cover progress and push notifications, and
+      they need no dependency
+- [ ] Authenticated in the handshake — no unauthenticated stream, ever
+- [ ] Bounded connections per user
 
-Tasks:
+### Phase 67: The realtime bus
 
-- [x] Add unit tests for every new service and template
-- [x] Add an integration test that boots the app with an empty
-      `optionalDependencies` and asserts every feature degrades cleanly
-- [x] Add a cache test that mutates a user and re-reads immediately, asserting
-      invalidation happened rather than trusting the TTL
-- [x] Add a retention test with a dry run, asserting nothing is deleted
-- [x] Add `testcontainers` for real Postgres and Redis in e2e
-- [x] Run the e2e suite in CI against service containers, it currently only
-      type checks
-- [x] Add a k6 or Artillery smoke test for login, register and refresh
-- [x] Add mutation testing on the auth and retention paths, where a silent
-      logic error is expensive
-- [x] Write `src/modules/mail/README.md`, `src/modules/queue/README.md`,
-      `src/modules/notification/README.md`, `src/modules/maintenance/README.md`
-- [x] Update `docs/production.md` and the root `README.md` with the new
-      environment variables and the module list
+- [ ] Domain events from Group 4 fan out to subscribers
+- [ ] Rooms per user and per tenant, and a tenant never receives another's
 
-Expected outcome:
+### Phase 68: WebSocket
 
-- A regression in cache invalidation or optional loading fails CI.
-- Every new module is documented next to its code, in the same commit.
-
-Commits:
-
-```text
-test: stop the unit job running the e2e suite
-test: run the end to end suite against real containers
-test: prove the optional dependencies degrade cleanly
-test: prove cache invalidation without waiting a ttl
-test: prove a retention dry run deletes nothing
-test: cover sign-in, sign-up and refresh end to end
-test: add a k6 smoke test
-test: add mutation testing for auth and retention
-test: cover the auth service, two factor and every template
-fix: namespace the keys a lua script is given
-fix: say what to do when there is no container runtime
-fix: break the queue and retention module cycle
-fix: make the application boot
-fix: share one bootstrap between the binary and the e2e harness
-fix: make the redis client injectable, and send an idempotency key in e2e
-test: build the whole module graph in the unit suite
-docs: document the testing layers and the new variables
-docs: mark phase 21 testing depth as done
-```
-
-What was built:
-
-- **`test/e2e/global-setup.ts`**, which starts one Postgres and one Redis for the
-  whole run, migrates them and writes the urls to `test/.e2e-env.json`.
-- **`test/e2e/harness.ts`**, which reads that file into `process.env`, boots
-  `AppModule` through a dynamic import, and truncates every table between specs.
-- Four e2e suites: optional dependencies, cache invalidation, retention dry run
-  and the auth flow.
-- `src/modules/auth/auth.service.spec.ts` and
-  `src/modules/auth/two-factor.service.spec.ts`, the two services in the module
-  that had no direct coverage.
-- `src/modules/mail/templates/mail.templates.spec.ts`, which renders all nine
-  templates with a payload that is hostile in every field at once.
-- `test/smoke/k6-smoke.js` and `stryker.conf.json`.
-
-Decisions worth carrying forward, because each is a refusal of something:
-
-- **The suite skips without Docker and CI does not skip.** `E2E_NO_CONTAINERS=1`
-  exists so the e2e job can work on a laptop. The CI job deliberately omits it,
-  because a job that could not start its containers would otherwise report
-  success on nothing — which is the exact failure mode a skipped suite produces.
-  The first version instead surfaced testcontainers' own
-  `Could not find a working container runtime strategy`, which names what was
-  looked for and nothing about what to do next; on a machine with no Docker that
-  was the entire output of the command. It is now one pure `planInfra()` —
-  skip locally, fail on CI, run when both addresses are supplied — tested without
-  needing a runtime.
-- **Nothing was moved into `optionalDependencies`.** npm installs an
-  `optionalDependencies` entry whenever it resolves, so a test that relied on it
-  would pass on a machine with a warm lockfile cache and prove nothing on the
-  machine that needed it. The assertion is the fallback path, which holds
-  everywhere.
-- **No e2e assertion waits out a TTL.** A cache test that sleeps for the expiry
-  to prove invalidation works passes just as well when the invalidation is
-  deleted; it only costs a minute a day. The suite reads redis directly and
-  asserts the key is gone.
-- **The soft delete in the cache suite goes through the service, not a raw
-  `UPDATE`.** A write made directly in the database is invisible to invalidation
-  by design, so asserting it there would be asserting a limitation as though it
-  were a guarantee.
-- **`*.e2e-spec.ts` ends with `.spec.ts`, so the unit config was pulling the e2e
-  suite in.** `npm test` was booting the whole application against a developer's
-  database. The failure mode looks like a slow unit test, which is why it
-  survived this long.
-- **Mutation testing is scoped and off the pull request workflow.** Auth and the
-  two retention files, because a flipped comparison there deletes or locks out
-  something real and produces no exception. A full run takes minutes, which is
-  the wrong price for every commit.
-- **A stale `test/.e2e-env.json` switched the suite on while the setup was skipping
-  it.** That file is the only switch `e2eEnabled()` reads, and it is written by the
-  setup and gitignored, so a fresh clone and a CI runner have none. But a run
-  after an earlier one on the same machine left one behind, and
-  `E2E_NO_CONTAINERS=1 npm run test:e2e` then reported `5 failed (5)` files
-  alongside `30 skipped` tests. The setup now removes the file whenever it skips,
-  not only when it writes one, and a unit test pins that.
-- **`resetRedis` only cleared the cache's database.** The throttle counters, the
-  deduplication markers, the idempotency claims and the dead-letter list live in
-  the queue's redis, which is a different url on purpose. A rate limit therefore
-  carried across spec files, and a later file hit a 429 for a request nothing in
-  it had made — which reads as a broken route rather than as leftover state.
-- **The initial migration needs `uuid-ossp`, which a fresh container does not
-  enable.** `DEFAULT uuid_generate_v4()` is the extension's function and no
-  migration creates it, because the database this repository is developed against
-  already has it. The e2e setup creates it before migrating, with
-  `IF NOT EXISTS`, rather than editing an applied migration.
-- **`whitelist: true` strips any property no class-validator decorator names, and
-  two request DTOs had none.** `PUT /admin/roles/:role/permissions` answered 400
-  for every call — `permissions` was stripped and the controller checks for a list
-  — and `PATCH /notifications/preferences` had nothing to write, because all three
-  fields of the pair and the list holding them were stripped too. `@ApiProperty` is
-  documentation and nothing else, so Swagger advertised fields the application
-  never received. `request-dto-validation.spec.ts` now checks every `@Body()` type
-  against the pipe's own rule.
-- **Locking a user invalidates their access token, and unlocking does not bring
-  it back.** `lockAccount` bumps `sessionsVersion`; the claim is compared on every
-  request, so the token that was refused while locked stays refused afterwards. The
-  account is reachable again, that session is not — which is the point of a lock,
-  and which the cache suite had asserted the opposite of.
-- **The idempotency key was a counter, and vitest resets it per file.** Every
-  file's second `POST /auth/register` sent the key the previous file's second
-  register sent, so the guard replayed the earlier file's stored response: a
-  registration reported as created when the row had never been written, and the
-  sign-in after it answered 401 for an address that did not exist. A uuid cannot
-  collide across files, which is the property the header is asking for.
-- **A verification token row needs the address it was minted for.** The test's
-  own `INSERT` omitted a NOT NULL column, so the account was never verified and
-  every later refresh was refused — a cascade that looked like an application
-  fault and was a fault in the fixture.
-- **The harness's fake agent was a function; supertest's is not.** Two bugs in one
-  function, both caught by CI and neither by the test beside it.
-  `Object.assign(wrapped, agent)` copied supertest's verb methods — which are
-  closures over the agent — onto a wrapper object, so `http(app).post(...)` went
-  straight to the original and the `Idempotency-Key` was never sent: every mutating
-  route answered 400, in files that had nothing to do with idempotency. The fix
-  called the agent itself, and `request(server)` is an **object**, not a function,
-  so every request in the suite became `TypeError: agent is not a function`.
-  `createHttp()` now builds through `agent[verb](url)`, and `http.spec.ts` uses a
-  fake that is an object with verb methods for the same reason: **a fake models
-  what the dependency is, not what the code wishes it were.** Both regressions were
-  reproduced against the fixed version to confirm the test fails on them.
-- **`node-redis` retries a failed connection forever, so `connect()` never
-  rejects.** `RedisClientService` promises that a dead redis is a miss rather than
-  a hang, and with the default reconnect strategy the first command awaited on the
-  client never settles — the initial connect timeout bounds one attempt and the
-  loop starts the next. Measured against a dead port: no rejection at all, with
-  `connectTimeout` at 250ms. The factory now bounds its retries and returns an
-  error, which is what makes `connect()` reject and `run()` report a miss.
-- **`POST /auth/login` answered 201.** Nest defaults POST to 201, and a sign-in
-  creates nothing. `@ApiOkResponse` already documented 200 on all three token
-  routes, so the wire and the documentation disagreed; `login`, `2fa/login` and
-  `refresh-token` now say `@HttpCode(HttpStatus.OK)`.
-- **`RedisClientService` had no `@Injectable()`, so Nest constructed it with no
-  arguments at all.** A class without a decorator emits no `design:paramtypes`,
-  and the injector then supplies nothing: `configService` was `undefined` and the
-  first redis command died with "Cannot read properties of undefined (reading
-  'getOrThrow')". It was masked earlier because the broken client failed _fast_,
-  which let the rate limiter fail open; with a real redis in CI the idempotency
-  guard reached the command and every mutating request returned a 500. Every test
-  in its own spec constructs the service by hand, so nothing noticed.
-- **Every mutating route requires an `Idempotency-Key`, and the e2e specs sent
-  none.** The harness now attaches a distinct one to every non-safe request, the
-  way a client has to.
-- **The e2e harness was booting a different application from the one that ships.**
-  `setGlobalPrefix`, URI versioning, the validation pipe, the filters and the
-  response wrapper all lived inline in `main.ts`, so a test-created application
-  had no prefix and no wrapper: `/health` was a 404, every success body was bare
-  rather than `{ success, data, timestamp }`, and the "unknown path returns 404"
-  test passed for the wrong reason — the prefixed path was also a 404. `main.ts`
-  now delegates to `src/bootstrap.ts`, which both it and the harness call, and
-  `app.module.spec.ts` asserts `/api/v1/health` is routed and `/health` is not,
-  with no container involved.
-- **The application did not boot at all, and 120 unit test files could not see
-  it.** Six faults sat behind the first error each time: `NotificationEventsModule`
-  re-exporting a provider belonging to an imported module; `ThrottlerModule
-.forRootAsync` injecting a token only the root could see; `SentryService` taking
-  the DSN as a constructor parameter, which Nest read as an injection token, so
-  every deployment with `SENTRY_DSN` set failed; `RetentionService` importing
-  `DataSource` as a type, so its erased parameter reached the injector as
-  `Object`; `RetentionScheduler` asking for a config namespace its module never
-  registered; and three modules injecting a provider whose module only the root
-  imported. `src/app.module.spec.ts` now builds the entire graph with a stubbed
-  data source — no database, no Redis, no Docker — and was verified by reverting
-  one fix and watching it fail with the same message the boot produced.
-- **The module graph had a cycle, and it only failed outside `node dist/main`.**
-  `QueueModule` imported `MaintenanceModule` through the `maintenance/index.js`
-  barrel, and that barrel re-exports `MaintenanceSchedulerModule`, which imports
-  `QueueModule` back. `node` resolved the cycle by luck; vitest did not, and the
-  e2e job died at boot with `The module at index [2] of the QueueModule "imports"
-array is undefined` — a message that reads as a missing provider and is not
-  one. Every unit test passed, because no unit test builds the application.
-  Fixed by importing the module file directly and by moving `JOB_QUEUE` into
-  `queue.tokens.ts` so a string constant no longer evaluates a module graph.
-  `module-graph.spec.ts` now fails on any value-import cycle, and type-only
-  cycles stay legal because the compiler erases them.
-- **`RedisClientService.eval` did not namespace its keys.** Every other command
-  went through the prefix helper and `eval` passed its keys straight to the
-  client, so the throttler's counters sat in the root namespace while every other
-  queue key sat under `REDIS_KEY_PREFIX` — two deployments on one redis sharing a
-  rate limit. It was found while writing the e2e reset, and the fix has a test
-  that asserts the prefix on both the `EVALSHA` path and the `EVAL` fallback.
-- **An `@Permissions()` route is also `@Roles(Admin, SuperAdmin)`, always.** The
-  first version of the cache suite drove a grant change through http with a plain
-  user and would have passed with the permission cache deleted, because the role
-  guard refuses first and never reaches the permission guard. The grants are now
-  asserted through `PermissionsService` and the key is read out of redis, which is
-  the claim actually being made.
-- **A seeded admin is not a super admin, on purpose.** The seeder creates
-  `Role.Admin`, which holds neither `RoleWrite` nor `MaintenanceRun`, so the
-  harness promotes its fixture rather than re-seeding under a different role.
-- **Mail rows are polled for, never read straight after a request.** The queue
-  resolves its enqueue before the job runs, so an assertion on `mail_logs` on the
-  next line is a race that passes on a fast machine and fails in CI.
-- **`testcontainers` gave up its convenience classes.** `PostgreSqlContainer` and
-  `RedisContainer` are no longer exported from the package entry point, and
-  reconstructing them is thirty lines of wait strategies the suite would then
-  have to maintain. The Postgres wait is on the log line rather than `pg_isready`,
-  which answers before the server accepts connections from anything but its own
-  socket.
-- **The smoke test registers a real user per virtual user.** It is a smoke test,
-  not a capacity plan, so the defaults stay small and `docs/production.md` says
-  why.
-
-Known limits:
-
-- The e2e suite needs a Docker daemon. It runs one file at a time
-  (`fileParallelism: false`), because two suites booting their own containers
-  would race for ports and fail each other.
-- `test/app.e2e-spec.ts` no longer asserts `Hello World`. It asserts the versioned
-  prefix, which is what a client actually calls.
-- The optional-dependency suite sets `MAIL_TRANSPORT=ses` and expects the memory
-  fallback, so it does not prove a _present_ SES package works. That is the
-  transport's own spec's job, and that spec asserts the call rather than a
-  session.
-- The k6 script needs `k6` installed and a booted instance; nothing runs it for
-  you.
-- Mutation testing runs on demand rather than on CI, so a surviving mutant is
-  found by whoever runs it rather than by the pull request.
+- [ ] Only if SSE is measured to be insufficient
+- [ ] Added without a dependency unless that is impossible
 
 ---
 
-## Phase 22: Configurable Email Templates
+## Group 8: Reporting and search at scale
 
-Status: Done
+Phases 69–73.
 
-Goal:
+### Phase 69: A report registry
 
-Let an operator change a welcome email or a password reset email without a
-deploy, by storing the template in the database and rendering it with a real
-engine. Phase 14 ships plain functions, which is right for a boilerplate: the
-templates in the repository are code, they are reviewed in a diff, and the app
-has no template dependency at all. This phase trades both for editability.
+- [ ] A report defined as a query plus a format and a schedule
+- [ ] Declaring one requires no code
 
-Tasks:
+### Phase 70: Scheduled delivery
 
-- [x] Add `handlebars` as a dependency, and say plainly in the README that the
-      no-dependency property of Phase 14 is what is being given up
-- [x] Create the `email_templates` entity: name, locale, subject, text, html,
-      version, `updatedBy`, timestamps
-- [x] Ship the templates as `.hbs` files, and seed the table from them so a
-      fresh clone has every template present
-- [x] Make the database row the override and the `.hbs` file the fallback, so an
-      app with an empty table still sends every mail
-- [x] Render through `CacheService.wrap()` under a new `CACHE_NAMESPACE.Mail`
-      key, so a hot template expiring under load does not stampede the table
-- [x] Invalidate the cache entry on every template write, so an edit takes
-      effect on the next send rather than after a TTL
-- [x] Add `GET/PUT /admin/mail-templates/:name` behind a permission, writing an
-      audit entry through the Phase 19 audit log
-- [x] Reject a stored template containing the triple-brace form, since raw
-      interpolation of a user-controlled field is stored XSS in the mail client
-- [x] Keep the per-template data contract: the admin form lists the allowed
-      fields, so an editor cannot add a variable no call site supplies
-- [x] Preview a stored template against sample data before saving it
-- [x] Purge template versions older than the Phase 16 retention window
+- [ ] Through the queue, so it retries
+- [ ] Delivered by mail or written to storage, whichever the report says
 
-Expected outcome:
+### Phase 71: The OpenSearch translator
 
-- An operator edits a transactional email in the running app, with a preview,
-  and the change reaches the next send.
-- A template can still be reviewed in a diff, because the file remains the
-  fallback and the seed.
+- [ ] The **same AST** from Phase 27, a second translator
+- [ ] A user's query does not change when the backend does
 
-Commits:
+### Phase 72: Index synchronisation
 
-```text
-fae4088  feat: add handlebars and ship the templates as hbs files
-7468bb7  feat: add the email template tables
-b9a8920  feat: resolve a template from the database with the file as fallback
-adc6227  feat: add the mail template admin routes
-e38a345  feat: seed the template table from the shipped files
-ccf9628  feat: purge superseded mail template versions
-429055c  test: cover the template override against a real database
+- [ ] Through the outbox from Phase 52
+- [ ] No dual-write, which is where index drift comes from
 
-```
+### Phase 73: A shared facet API
 
-Decisions worth carrying forward, because each is a refusal of something:
+- [ ] Aggregations over the same AST, so search and facets cannot disagree about
+      what matched
 
-- **The `.hbs` files stay the fallback rather than becoming only the seed.** A row
-  that copies the file's contents into the table would freeze the wording, and a
-  later release's fix would not reach a deployment that had been seeded. An absent
-  row meaning "shipped" is what makes the phase additive and makes
-  `DELETE /admin/mail-templates/:name` mean something.
-- **The shell stays in code.** `layout.ts` wraps both parts after rendering, so an
-  operator editing a body cannot remove the "replies are not read" footer, and cannot
-  produce a template with an html part and no text part.
-- **A broken stored template falls back rather than failing.** It logs at `error`
-  and renders the shipped file. The alternative is one operator's mistake becoming a
-  500 on every registration in the deployment — the same asymmetry as a provider
-  outage, and for the same reason.
-- **The seeder inserts and never overwrites.** A second run cannot undo an edit made
-  deliberately, which is the one outcome an operator would not forgive. A fresh clone
-  has no rows, so it always gets the files.
-- **The version history is written in the same transaction as the update.** A
-  history row recorded outside it describes a save that then failed, which is how a
-  history table stops being trustworthy.
-- **The history table is purged on its own window, defaulting to the audit one.**
-  A template history that outlived the audit trail would be keeping wording nobody
-  could attribute.
+---
 
-Five things this phase found rather than built:
+## Group 9: Operations and compliance
 
-- **`Handlebars.escapeExpression` corrupts a url.** It is the html escaper and
-  encodes `=` as `&#x3D;`, so `?token=a&b=1` in an `href` reaches the mail client
-  as `?token&#x3D;a&amp;b&#x3D;1` — and the token no longer matches what the server
-  issued. Every verification and reset link in the application would have been dead,
-  and the only symptom would have been a support ticket saying the link does not
-  work. Caught by a test asserting the rendered `href` and reading the entity back.
-- **`knownHelpersOnly` does not refuse an unknown helper at compile time.** It throws
-  at _render_, and `save` compiles without rendering — so a stored template naming a
-  helper that does not exist would have been written and then failed on every send.
-  `assertKnownHelpers` scans the source and closes that window before the write.
-- **The first version of that scan refused every shipped template.** It treated every
-  `{{name}}` as a helper call, when handlebars resolves that as a _variable_. The
-  scan now distinguishes `{{name}}` from `{{name arg}}`, `{{#name}}` and `(name
-arg)`, and the set of helpers the shipped corpus actually uses — `actionLink`,
-  `isNull`, `bodyLines`, `bodyLinesText`, plus `if`/`each` — is asserted rather than
-  assumed.
-- **`nest build` did not copy the `.hbs` files.** They went in a top-level `assets`
-  key in `nest-cli.json`, which `copyAssets` does not read; it reads
-  `compilerOptions.assets`. The build succeeded, the container booted, and the first
-  send failed with "no template for welcome". Fixed in the first commit rather than a
-  late `fix:`, because a `.hbs` file that no build copies is dead weight and six
-  intermediate commits would each have been undeployable. Asserted by a test, because
-  nothing else would have noticed.
-- **The DTO guard had a false positive, in the direction that teaches a reader to
-  ignore it.** `request-dto-validation.spec.ts` scans source with paren counting, and
-  the `}` closing a decorator's argument list (`@Matches(LANGUAGE_TAG, {`) was
-  treated as closing a class and discarded every decorator stacked above it. A
-  correctly decorated `locale` came back undecorated and the guard reported it. It
-  still catches the real bug — verified by stripping the validator and watching it
-  fail — but the scanner now records a decorator that opens an argument list before
-  the depth check skips it.
+Phases 74–79. These close gaps this repository has already written down.
 
-Known limits:
+### Phase 74: Backup and restore
 
-- **Only `en` is ever resolved.** The `locale` column exists and is keyed into the
-  cache and the unique index, but no send asks for a second locale, so a row in any
-  other locale is stored and previewable and never sent. Recorded rather than built,
-  because the schema was needed for it and half of it is better than none.
-- **Templates are no longer type-checked.** A renamed field in a `.hbs` file is a
-  runtime failure. `template-fields.ts` is a `satisfies` map against the data
-  interfaces, which catches a _new_ field going unlisted but not a stale `.hbs`.
-- **A template edited in the database and then reset keeps its history row.** That
-  is the point of the table, but it means a reset is not a deletion of the operator's
-  work — only the live copy goes.
-- **`updatedBy` is denormalised and nullable**, with no foreign key, so the record of
-  who changed a password reset email outlives the operator. The audit entry carries
-  the same fact while the account exists.
+Status: Planned
 
-## Follow-up Candidates
+- [ ] A script, and a **restore drill that runs**, not just a backup that exists
+- [ ] Measured RPO and RTO
+- [ ] `SECURITY.md` tells you to do this before the first deploy and ships no code
+      to do it. That is the gap
 
-Not scheduled. Each needs a decision before it becomes a phase.
+### Phase 75: Audit tamper-evidence
 
-- File uploads to S3-compatible storage, with presigned URLs, content-type
-  validation and a virus scan hook.
-- Feature flags and remote config, Redis-backed, evaluated server-side.
-- Completing the admin module: pagination, filtering, force logout, impersonation
-  with an audit trail, and a role editor.
-- API deprecation headers, `Sunset` and per-version throttles, on top of the
-  existing `/api/v1` prefix.
-- Multi-tenancy, an optional `tenantId` plus a global scope. Only worth it for a
-  SaaS product, so it is deliberately last.
-- Pagination on the admin and user listing routes, which still return everything
-  they match.
-- Restricting `GET /users/:id` to the record's owner or an admin. It is still
-  readable by any authenticated user, which is recorded as an open decision in
-  `src/modules/users/README.md`.
+- [ ] A hash chain over the audit rows
+- [ ] An alteration or a deletion becomes detectable rather than invisible
+- [ ] Append-only is currently a **convention**: no trigger, no chain, and an
+      operator with SQL can rewrite history undetected
+
+### Phase 76: A migration linter
+
+- [ ] Flags a rename or a drop column in one step
+- [ ] Expand, backfill, contract is enforced rather than advised
+
+### Phase 77: Fix the `DATABASE_SCHEMA` inconsistency
+
+- [ ] `data-source.ts` reads it; `database.config.ts` does not, so the documented
+      env var only works for the CLI and the running app ignores it
+- [ ] Both read it, or neither is documented
+
+### Phase 78: The retention policy registry
+
+- [ ] `RETENTION_LOGIN_ATTEMPTS_DAYS` is accepted, validated and does nothing —
+      removed or wired
+- [ ] Three variables shipped in `.env.example` have no schema validation
+
+### Phase 79: Field-level encryption
+
+- [ ] For the identifiers that are personal data
+- [ ] Separately: the two-factor key derivation becomes a work-hardened KDF, and
+      the entropy lifecycle gets a second look
+
+---
+
+## Group 10: Developer experience
+
+Phases 80–85.
+
+- [ ] **80** Typed client generation from the OpenAPI document already published
+- [ ] **81** `Deprecation` and `Sunset` headers
+- [ ] **82** A CI check for OpenAPI breaking changes
+- [ ] **83** Seed factories, so fixtures are not hand-written
+- [ ] **84** A `docker compose --profile dev` stack: MinIO, Stripe CLI, MailHog, a
+      webhook catcher
+- [ ] **85** Feature flags, evaluated server-side — a kill switch for the risky path
+      is worth more than a rollback
+
+---
+
+## Group 11: Auth expansion
+
+Phases 86–91.
+
+**A boundary worth stating.** These are **core auth protocols**, not integrations.
+They are declared as ordinary dependencies in `package.json`, which is a different
+thing from the optional-package pattern the integrations use. That pattern exists
+so a feature nobody enabled costs zero dependencies; a login method nobody uses is
+not the same category, and pretending otherwise either bloats every clone or makes
+these look like something they are not.
+
+| Phase | Feature             | Dependency                            |
+| ----- | ------------------- | ------------------------------------- |
+| 86    | API keys            | **none** — scrypt is already here     |
+| 87    | OIDC social login   | declared                              |
+| 88    | Passkeys / WebAuthn | declared                              |
+| 89    | SAML SSO            | declared                              |
+| 90    | Consent records     | none — GDPR record of what was agreed |
+| 91    | i18n catalogues     | declared                              |
+
+**Phase 86 is first** because it needs no dependency, the repository already has
+the primitives, and it is the foundation for everything machine-to-machine after
+it. Keys stored as a scrypt digest with a lookup prefix, scoped like permissions,
+and revocable.
+
+The README's optional-integrations wording is corrected to state this boundary
+explicitly, rather than leaving a blanket "no dependencies" claim that would be
+false once Phase 87 lands.
+
+---
+
+## Group 12: Schema-per-tenant, in full
+
+Phases 92–97.
+
+**The riskiest block in this plan, stated before it is attempted.**
+
+`@InjectRepository` binds a repository from a single `DataSource` when the module
+is constructed. Multi-schema is not a config change; it requires a repository
+proxy that resolves the right `DataSource` per call through the tenant context,
+and that touches how nearly every service obtains its repository.
+
+| Phase | Content                                                                |
+| ----- | ---------------------------------------------------------------------- |
+| 92    | Repository proxy resolving a `DataSource` per tenant via the context   |
+| 93    | A registry that creates, caches and evicts those connections           |
+| 94    | A migration runner that runs per schema, reporting progress per tenant |
+| 95    | The CLI data source takes a tenant and resolves the schema             |
+| 96    | The full e2e suite runs in schema mode                                 |
+| 97    | A CI job for it                                                        |
+
+Migration 94 isolates failures: one tenant's schema failing to migrate does not
+block the others, because it will eventually, and a migration run that stops at
+the first one leaves the platform in a state nobody can reason about.
+
+The `TenantDialect` abstraction from Group 2 is what makes this additive. Row mode
+stays the default; `schema` and `database` are further implementations of one
+interface, and application code never learns which is active.
+
+---
+
+## Group 13: Testing expansion
+
+Phases 98–101.
+
+- [ ] **98** Contract tests (Pact) for the webhook consumer and the payment
+      provider, so changing one does not silently break the other
+- [ ] **99** Mutation testing extended beyond auth and retention
+- [ ] **100** Load tests for search, export and import
+- [ ] **101** Chaos tests: Redis and Postgres failing mid-authentication, because
+      the fail-open posture means those paths need to be exercised deliberately
+      rather than discovered
 
 ---
 
@@ -1468,41 +673,123 @@ Before starting a phase:
 1. Review this plan.
 2. Confirm the target phase.
 3. Implement only the required files.
-4. Run `npm run check` when applicable.
-5. Commit the phase separately.
+4. Run `npm run check`.
+5. Commit the phase separately, and add its entry to
+   [CHANGELOG.md](CHANGELOG.md).
 
-The order is not arbitrary. Mail without a queue blocks requests. Retention
-without a queue either runs inside a request or does not run at all. The cache
-work is independent but is the highest-risk change to existing behaviour, so it
-lands after the harness in Phase 12 is solid.
+The order is not arbitrary. Groups 4 to 8 all store data, and they all need a
+paging list route and a tenant column that already exists — retrofitting a tenant
+column means touching every query, index and unique constraint in the system.
+Group 3 precedes Group 4 because the first thing that genuinely needs
+retry-until-it-holds is a webhook, and building it before the client discipline
+exists means writing the same retry logic twice.
 
 ---
 
 ## Progress Tracking
 
-| Phase     | Name                                           | Status |
-| --------- | ---------------------------------------------- | ------ |
-| Phase 0   | Project Architecture Skeleton                  | Done   |
-| Phase 1   | Base Application Foundation                    | Done   |
-| Phase 2   | Users Module                                   | Done   |
-| Phase 3   | Auth Module - Basic JWT                        | Done   |
-| Phase 4   | Authorization - RBAC and Manager Scope         | Done   |
-| Phase 5   | Admin Module Foundation                        | Done   |
-| Phase 6   | API Documentation                              | Done   |
-| Phase 7   | Refresh Tokens                                 | Done   |
-| Phase 8   | Device Authentication                          | Done   |
-| Phase 9   | Two-Factor Authentication                      | Done   |
-| Phase 10  | Cache and Performance                          | Done   |
-| Phase 11  | Production Hardening                           | Done   |
-| Phase 12  | Optional Integration Foundation                | Done   |
-| Phase 13  | Configuration Expansion                        | Done   |
-| Phase 14  | Outbound Email                                 | Done   |
-| Phase 15  | Background Job Queue                           | Done   |
-| Phase 16  | Data Retention and Cleanup                     | Done   |
-| Phase 17a | Permission-based Authorization                 | Done   |
-| Phase 17b | Authentication and Authorization through Cache | Done   |
-| Phase 18  | Notifications                                  | Done   |
-| Phase 19  | Account Security Features                      | Done   |
-| Phase 20  | Operational Hardening                          | Done   |
-| Phase 21  | Testing Depth and Documentation                | Done   |
-| Phase 22  | Configurable Email Templates                   | Done   |
+| Phase     | Name                                           | Status  |
+| --------- | ---------------------------------------------- | ------- |
+| Phase 0   | Project Architecture Skeleton                  | Done    |
+| Phase 1   | Base Application Foundation                    | Done    |
+| Phase 2   | Users Module                                   | Done    |
+| Phase 3   | Auth Module - Basic JWT                        | Done    |
+| Phase 4   | Authorization - RBAC and Manager Scope         | Done    |
+| Phase 5   | Admin Module Foundation                        | Done    |
+| Phase 6   | API Documentation                              | Done    |
+| Phase 7   | Refresh Tokens                                 | Done    |
+| Phase 8   | Device Authentication                          | Done    |
+| Phase 9   | Two-Factor Authentication                      | Done    |
+| Phase 10  | Cache and Performance                          | Done    |
+| Phase 11  | Production Hardening                           | Done    |
+| Phase 12  | Optional Integration Foundation                | Done    |
+| Phase 13  | Configuration Expansion                        | Done    |
+| Phase 14  | Outbound Email                                 | Done    |
+| Phase 15  | Background Job Queue                           | Done    |
+| Phase 16  | Data Retention and Cleanup                     | Done    |
+| Phase 17a | Permission-based Authorization                 | Done    |
+| Phase 17b | Authentication and Authorization through Cache | Done    |
+| Phase 18  | Notifications                                  | Done    |
+| Phase 19  | Account Security Features                      | Done    |
+| Phase 20  | Operational Hardening                          | Done    |
+| Phase 21  | Testing Depth and Documentation                | Done    |
+| Phase 22  | Configurable Email Templates                   | Done    |
+| Phase 23  | Cursor pagination                              | Planned |
+| Phase 24  | A reusable query criteria object               | Planned |
+| Phase 25  | Job progress and cancellation                  | Planned |
+| Phase 26  | An audit read surface                          | Planned |
+| Phase 27  | A Lucene query parser                          | Planned |
+| Phase 28  | The field registry and the translators         | Planned |
+| Phase 29  | The Postgres translator                        | Planned |
+| Phase 30  | User search                                    | Planned |
+| Phase 31  | The search documentation                       | Planned |
+| Phase 32  | The tenant column, present from the start      | Planned |
+| Phase 33  | The tenant registry                            | Planned |
+| Phase 34  | Tenant context                                 | Planned |
+| Phase 35  | Repository scoping                             | Planned |
+| Phase 36  | Row-level security                             | Planned |
+| Phase 37  | Cache namespacing                              | Planned |
+| Phase 38  | Per-tenant permissions                         | Planned |
+| Phase 39  | Per-tenant mail templates                      | Planned |
+| Phase 40  | Per-tenant retention                           | Planned |
+| Phase 41  | The isolation proof                            | Planned |
+| Phase 42  | A shared HTTP client                           | Planned |
+| Phase 43  | Circuit breaker and retry budget               | Planned |
+| Phase 44  | Migrate the existing call sites                | Planned |
+| Phase 45  | Outbound subscriptions                         | Planned |
+| Phase 46  | Signing and replay protection                  | Planned |
+| Phase 47  | The SSRF guard                                 | Planned |
+| Phase 48  | Delivery                                       | Planned |
+| Phase 49  | Inbound webhooks                               | Planned |
+| Phase 50  | Service-to-service authentication              | Planned |
+| Phase 51  | A domain event catalogue                       | Planned |
+| Phase 52  | The outbox pattern                             | Planned |
+| Phase 53  | Storage abstraction                            | Planned |
+| Phase 54  | Upload validation                              | Planned |
+| Phase 55  | Excel export                                   | Planned |
+| Phase 56  | Excel import                                   | Planned |
+| Phase 57  | Import presets                                 | Planned |
+| Phase 58  | Progress over realtime                         | Planned |
+| Phase 59  | The provider interface                         | Planned |
+| Phase 60  | The Stripe adapter                             | Planned |
+| Phase 61  | An internal ledger                             | Planned |
+| Phase 62  | Reconciliation                                 | Planned |
+| Phase 63  | Plans, prices and subscription state           | Planned |
+| Phase 64  | Entitlement to permission                      | Planned |
+| Phase 65  | Dunning, refunds and cancellation              | Planned |
+| Phase 66  | An SSE gateway                                 | Planned |
+| Phase 67  | The realtime bus                               | Planned |
+| Phase 68  | WebSocket                                      | Planned |
+| Phase 69  | A report registry                              | Planned |
+| Phase 70  | Scheduled delivery                             | Planned |
+| Phase 71  | The OpenSearch translator                      | Planned |
+| Phase 72  | Index synchronisation                          | Planned |
+| Phase 73  | A shared facet API                             | Planned |
+| Phase 74  | Backup and restore                             | Planned |
+| Phase 75  | Audit tamper-evidence                          | Planned |
+| Phase 76  | A migration linter                             | Planned |
+| Phase 77  | Fix the `DATABASE_SCHEMA` inconsistency        | Planned |
+| Phase 78  | The retention policy registry                  | Planned |
+| Phase 79  | Field-level encryption                         | Planned |
+| Phase 80  | Typed client generation                        | Planned |
+| Phase 81  | Deprecation and Sunset headers                 | Planned |
+| Phase 82  | OpenAPI breaking-change check                  | Planned |
+| Phase 83  | Seed factories                                 | Planned |
+| Phase 84  | A development compose profile                  | Planned |
+| Phase 85  | Feature flags                                  | Planned |
+| Phase 86  | API keys and service accounts                  | Planned |
+| Phase 87  | OIDC social login                              | Planned |
+| Phase 88  | Passkeys and WebAuthn                          | Planned |
+| Phase 89  | SAML SSO                                       | Planned |
+| Phase 90  | Consent records                                | Planned |
+| Phase 91  | i18n catalogues                                | Planned |
+| Phase 92  | Schema-per-tenant: the repository proxy        | Planned |
+| Phase 93  | Schema-per-tenant: the DataSource registry     | Planned |
+| Phase 94  | Schema-per-tenant: the migration runner        | Planned |
+| Phase 95  | Schema-per-tenant: the CLI                     | Planned |
+| Phase 96  | Schema-per-tenant: the full e2e suite          | Planned |
+| Phase 97  | Schema-per-tenant: the CI job                  | Planned |
+| Phase 98  | Contract tests                                 | Planned |
+| Phase 99  | Mutation testing, extended                     | Planned |
+| Phase 100 | Load tests                                     | Planned |
+| Phase 101 | Chaos tests                                    | Planned |
