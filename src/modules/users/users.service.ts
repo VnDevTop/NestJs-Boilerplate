@@ -15,11 +15,23 @@ import {
 import type { CacheConfig } from '../../configs/index.js';
 import { ConfigService } from '@nestjs/config';
 
+import {
+  PaginatedResultDto,
+  paginateByCursor,
+  resolveSort,
+} from '../../common/pagination/index.js';
+
 import { hashPassword } from '../../common/utils/index.js';
 
 import { NotificationEventsService } from '../notification/notification-events.service.js';
 import { NotificationPreferencesService } from '../notification/notification-preferences.service.js';
-import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto/index.js';
+import {
+  CreateUserDto,
+  ListUsersQueryDto,
+  USER_SORT_FIELDS,
+  UpdateUserDto,
+  UserResponseDto,
+} from './dto/index.js';
 import { User } from './entities/index.js';
 
 /**
@@ -150,14 +162,73 @@ export class UsersService {
     return savedUser;
   }
 
-  async findAll(): Promise<UserResponseDto[]> {
-    const users = await this.usersRepository.find({
-      order: {
-        createdAt: 'DESC',
-      },
+  /**
+   * A page of users, newest first by default.
+   *
+   * **Every filter is a parameter and every sort field comes from an allow-list.**
+   * The sort is resolved in the controller, which is where the declared sortable
+   * columns live; the resolved column is interpolated into the ORDER BY because an
+   * identifier cannot be a bound parameter, and its only possible values are the
+   * ones `resolveSort` accepts. The `email` substring is bound as a value, so the
+   * `%` and `_` a caller types are searched for literally rather than acting as
+   * wildcards — a search box that treats `_` as "any character" is a box that
+   * returns rows nobody asked for.
+   *
+   * **Fuzzy is spelled out, so it cannot become a coincidence.** `ILIKE` with the
+   * wildcards wrapped around an escaped term is deliberate; leaving them implicit
+   * would work until somebody searched for a literal `_`.
+   *
+   * No `total`, deliberately. See `PageMetaDto`: the honest paging answer is the
+   * one carried by the page itself, and a count over the same rows is a second
+   * query that goes stale between pages.
+   */
+  async findAll(
+    query: ListUsersQueryDto,
+  ): Promise<PaginatedResultDto<UserResponseDto>> {
+    const sort = resolveSort(
+      query.sort,
+      query.order,
+      USER_SORT_FIELDS,
+      'createdAt',
+    );
+
+    const qb = this.usersRepository.createQueryBuilder('user');
+
+    if (query.role !== undefined) {
+      qb.andWhere('user.role = :role', { role: query.role });
+    }
+
+    if (query.isActive !== undefined) {
+      qb.andWhere('user.isActive = :isActive', { isActive: query.isActive });
+    }
+
+    if (query.isEmailVerified !== undefined) {
+      qb.andWhere('user.isEmailVerified = :isEmailVerified', {
+        isEmailVerified: query.isEmailVerified,
+      });
+    }
+
+    if (query.email !== undefined && query.email.trim() !== '') {
+      // The wildcards are ours and the term is escaped, because a `%` typed into
+      // the search box should find addresses containing a percent sign and not
+      // every row on the table.
+      const escaped = query.email
+        .trim()
+        .replace(/[\\%_]/g, (character) => `\\${character}`);
+
+      qb.andWhere('user.email ILIKE :email', { email: `%${escaped}%` });
+    }
+
+    const page = await paginateByCursor(qb, {
+      limit: query.effectiveLimit,
+      cursor: query.cursor,
+      sort,
     });
 
-    return UserResponseDto.fromEntities(users);
+    return PaginatedResultDto.of(
+      UserResponseDto.fromEntities(page.items),
+      page.meta,
+    );
   }
 
   async findById(id: string): Promise<User | null> {
