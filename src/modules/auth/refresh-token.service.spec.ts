@@ -1,15 +1,15 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import type { RefreshTokenService } from './refresh-token.service.js';
 import { RefreshTokenService as Svc } from './refresh-token.service.js';
+import { CursorPaginationQueryDto } from '../../common/pagination/index.js';
 
 const repository = {
   find: vi.fn(),
   update: vi.fn(),
-  createQueryBuilder: () => queryBuilder.builder,
 };
 
 /**
@@ -49,6 +49,66 @@ function fakeQueryBuilder(
   };
 
   return { builder, state };
+}
+
+/**
+ * Records the conditions the paged listing builds.
+ *
+ * Separate from the `update` builder above because it is a different builder with
+ * a different job, and a double that pretended to be both would let a regression in
+ * either pass.
+ */
+const listing = {
+  conditions: [] as Array<{ sql: string; params?: Record<string, unknown> }>,
+  limit: undefined as number | undefined,
+};
+
+const listingQueryBuilder = {
+  // The revoke path drives an `UPDATE` through the same builder, so it delegates
+  // to the update double rather than growing a second set of chainable methods
+  // here. Two doubles, one entry point.
+  update: (...args: unknown[]) =>
+    (queryBuilder.builder.update as (...a: unknown[]) => unknown)(...args),
+  set: (...args: unknown[]) =>
+    (queryBuilder.builder.set as (...a: unknown[]) => unknown)(...args),
+  where: (...args: unknown[]) =>
+    (queryBuilder.builder.where as (...a: unknown[]) => unknown)(...args),
+  returning: (...args: unknown[]) =>
+    (queryBuilder.builder.returning as (...a: unknown[]) => unknown)(...args),
+  execute: (...args: unknown[]) =>
+    (queryBuilder.builder.execute as (...a: unknown[]) => unknown)(...args),
+  andWhere(sql: string, params?: Record<string, unknown>) {
+    listing.conditions.push({ sql, params });
+
+    return listingQueryBuilder;
+  },
+  orderBy: vi.fn(() => listingQueryBuilder),
+  addOrderBy: vi.fn(() => listingQueryBuilder),
+  limit(value: number) {
+    listing.limit = value;
+
+    return listingQueryBuilder;
+  },
+  getMany: vi.fn(async () => []),
+};
+
+function query(overrides: Partial<CursorPaginationQueryDto> = {}) {
+  return Object.assign(new CursorPaginationQueryDto(), overrides);
+}
+
+function readConditions(): string[] {
+  return listing.conditions.map((condition) => condition.sql);
+}
+
+function readParams(): Array<{
+  sql: string;
+  params?: Record<string, unknown>;
+}> {
+  return listing.conditions;
+}
+
+function recordedLimit(): number | undefined {
+  return listing.limit;
 }
 
 const dataSource = {};
@@ -98,7 +158,10 @@ let queryBuilder = fakeQueryBuilder();
 
 function harness(): RefreshTokenService {
   return new Svc(
-    repository as never,
+    // One repository whose `createQueryBuilder` returns the recording builder. The
+    // update path goes through `save`/`update`, and the paged listing through the
+    // builder, so a single double covers both without pretending one is the other.
+    { ...repository, createQueryBuilder: () => listingQueryBuilder } as never,
     dataSource as never,
     jwtService as never,
     configService as never,
@@ -121,34 +184,61 @@ describe('RefreshTokenService sessions', () => {
     repository.find.mockResolvedValue([]);
     repository.update.mockResolvedValue({ affected: 1 });
     queryBuilder = fakeQueryBuilder();
+    listing.conditions.length = 0;
+    listing.limit = undefined;
+    listingQueryBuilder.getMany.mockResolvedValue([]);
     service = harness();
   });
 
-  describe('listLiveByUserId', () => {
-    it('returns only rows that are neither revoked nor expired', async () => {
-      await service.listLiveByUserId('u1');
+  describe('listLivePage', () => {
+    it('filters revoked and expired rows in SQL rather than after the fact', async () => {
+      await service.listLivePage('u1', query());
 
-      const where = repository.find.mock.calls[0][0].where;
+      const conditions = readConditions();
 
-      // A revoked or expired row is not a session. Listing it invites a revoke
-      // call that reports success and does nothing.
-      expect(where.userId).toBe('u1');
-      expect(where).toHaveProperty('revokedAt');
-      expect(where).toHaveProperty('expiresAt');
+      // Filtering after paging would let expired rows consume slots in the page,
+      // so a client with forty live sessions would be shown nineteen and told
+      // there was nothing more.
+      expect(conditions.some((sql) => sql.includes('revokedAt IS NULL'))).toBe(
+        true,
+      );
+      expect(conditions.some((sql) => sql.includes('expiresAt > :now'))).toBe(
+        true,
+      );
     });
 
-    it('newest first, so the current sign-in is at the top', async () => {
-      await service.listLiveByUserId('u1');
+    it('evaluates "now" once, at the moment the query is built', async () => {
+      await service.listLivePage('u1', query());
 
-      expect(repository.find.mock.calls[0][0].order).toEqual({
-        createdAt: 'DESC',
-      });
+      // A `new Date()` per row would make "live" mean something subtly different
+      // for each of them.
+      const params = readParams().find((entry) => entry.sql.includes(':now'));
+
+      expect(params?.params?.now).toBeInstanceOf(Date);
     });
 
     it('is scoped to one user', async () => {
-      await service.listLiveByUserId('u1');
+      await service.listLivePage('u1', query());
 
-      expect(repository.find.mock.calls[0][0].where.userId).toBe('u1');
+      expect(readParams()).toContainEqual({
+        sql: 'token.userId = :userId',
+        params: { userId: 'u1' },
+      });
+    });
+
+    it('asks for one row past the page so hasMore is known', async () => {
+      await service.listLivePage('u1', query({ limit: 5 }));
+
+      expect(recordedLimit()).toBe(6);
+    });
+
+    it('refuses a sort field the route does not offer', async () => {
+      // `expiresAt` would answer a question about a session's age in an order that
+      // shuffles as tokens rotate; `sessionStartedAt` belongs in a filter, not in
+      // the ORDER BY.
+      await expect(
+        service.listLivePage('u1', query({ sort: 'expiresAt' })),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
