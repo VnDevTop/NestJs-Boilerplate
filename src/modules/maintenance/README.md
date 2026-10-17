@@ -30,7 +30,7 @@ a rule for it would be a second path to the same rows.
 | ------------------------------- | -------------------------------------------------- |
 | `POST /admin/retention/dry-run` | Counts what a run would delete and deletes nothing |
 | `POST /admin/retention/run`     | Queues a real run and returns immediately          |
-| `GET  /admin/retention/runs`    | The run history                                    |
+| `GET  /admin/retention/runs`    | A page of the run history, cursor paged            |
 
 A dry run is synchronous, because counting is fast enough to answer inside a
 request and an operator rehearsing against production data wants the numbers now.
@@ -39,6 +39,11 @@ take minutes, which is longer than a request should stay open.
 
 Both write routes need the `maintenance:run` permission, so a super administrator
 rather than an administrator.
+
+The history route returns `meta.nextCursor` and `meta.hasMore`, and **no total**.
+It used to return one, from a `COUNT(*) OVER()` that read every run ever recorded —
+a table nothing prunes — on the screen an operator opens when something has already
+gone wrong. See [common/pagination](../../common/README.md#pagination).
 
 ## Three decisions that shape the job
 

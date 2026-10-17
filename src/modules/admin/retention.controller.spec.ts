@@ -9,6 +9,11 @@ import type {
 import { RETENTION_JOB } from '../maintenance/processors/retention.processor.js';
 import { QUEUE_NAMES, type JobQueue } from '../queue/queue.interface.js';
 import { AdminRetentionController } from './retention.controller.js';
+import {
+  CursorPaginationQueryDto,
+  PaginatedResultDto,
+  encodeCursor,
+} from '../../common/pagination/index.js';
 
 const RUN: RetentionRunResult = {
   dryRun: true,
@@ -53,7 +58,13 @@ function harness(
 ): Harness {
   const run = vi.fn().mockResolvedValue(RUN);
   const record = vi.fn().mockImplementation(async () => entry());
-  const history = vi.fn().mockResolvedValue({ items: [entry()], total: 1 });
+  const history = vi.fn().mockResolvedValue(
+    PaginatedResultDto.of([entry()], {
+      limit: 20,
+      hasMore: false,
+      nextCursor: null,
+    }),
+  );
   const latest = vi.fn().mockResolvedValue(options.latestFound ?? entry());
   const enqueue = vi.fn().mockResolvedValue(undefined);
 
@@ -179,67 +190,77 @@ describe('AdminRetentionController', () => {
   });
 
   describe('GET admin/retention/runs', () => {
-    it('returns the newest runs first', async () => {
-      await h.controller.history();
+    /**
+     * The page size and the cursor are the route's whole contract now.
+     *
+     * Asserted on the argument rather than on the response, because clamping and
+     * cursor decoding happen in the shared pagination layer — testing them here
+     * again would pin this route to an implementation it no longer has.
+     */
+    it('hands the query DTO straight to the service', async () => {
+      const query = { limit: 20 } as CursorPaginationQueryDto;
 
-      // Asserted on the arguments because ordering is the service's job and this
-      // route's only contract is the page size it passes down.
-      expect(h.history).toHaveBeenCalledWith({ limit: 20, offset: 0 });
+      await h.controller.history(query);
+
+      // Passed through whole rather than unpacked and re-clamped here. The clamp
+      // lives in `effectiveLimit`, so it applies whether the value came from the
+      // validation pipe, from a unit test, or from another service in-process —
+      // which is what makes it a rule rather than a habit on one route.
+      expect(h.history).toHaveBeenCalledWith(query);
     });
 
-    it('returns the items and the total separately', async () => {
-      const result = await h.controller.history();
+    it('hands the query DTO straight to the service, cursor and all', async () => {
+      const cursor = encodeCursor({
+        value: '2026-10-03T03:17:01.234Z',
+        id: 'row-1',
+      });
+
+      await h.controller.history({
+        limit: 20,
+        cursor,
+      } as CursorPaginationQueryDto);
+
+      expect(h.history).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 20, cursor }),
+      );
+    });
+
+    it('hands back the meta the service decided, unchanged', async () => {
+      h.history.mockResolvedValue(
+        PaginatedResultDto.of([entry()], {
+          limit: 20,
+          hasMore: true,
+          nextCursor: 'next',
+        }),
+      );
+
+      const result = await h.controller.history({
+        limit: 20,
+      } as CursorPaginationQueryDto);
 
       expect(result.items).toHaveLength(1);
-      expect(result.total).toBe(1);
-    });
-
-    it('reports a total larger than the page', async () => {
-      h.history.mockResolvedValue({ items: [entry()], total: 128 });
-
-      expect((await h.controller.history()).total).toBe(128);
-    });
-
-    it('caps a page size that asks for too much', async () => {
-      await h.controller.history('999999');
-
-      expect(h.history).toHaveBeenCalledWith({ limit: 100, offset: 0 });
-    });
-
-    it('falls back to the default for a nonsense limit', async () => {
-      await h.controller.history('lots');
-
-      expect(h.history).toHaveBeenCalledWith({ limit: 20, offset: 0 });
-    });
-
-    it('falls back to the default for a negative limit', async () => {
-      await h.controller.history('-5');
-
-      expect(h.history).toHaveBeenCalledWith({ limit: 20, offset: 0 });
-    });
-
-    it('falls back for a zero limit, which would return nothing at all', async () => {
-      await h.controller.history('0');
-
-      expect(h.history).toHaveBeenCalledWith({ limit: 20, offset: 0 });
-    });
-
-    it('passes an offset through so an operator can page backwards', async () => {
-      await h.controller.history('10', '40');
-
-      expect(h.history).toHaveBeenCalledWith({ limit: 10, offset: 40 });
-    });
-
-    it('treats a negative offset as the start', async () => {
-      await h.controller.history('10', '-1');
-
-      expect(h.history).toHaveBeenCalledWith({ limit: 10, offset: 0 });
+      expect(result.meta).toEqual({
+        limit: 20,
+        hasMore: true,
+        nextCursor: 'next',
+      });
     });
 
     it('handles an empty history', async () => {
-      h.history.mockResolvedValue({ items: [], total: 0 });
+      h.history.mockResolvedValue(
+        PaginatedResultDto.of([], {
+          limit: 20,
+          hasMore: false,
+          nextCursor: null,
+        }),
+      );
 
-      expect(await h.controller.history()).toEqual({ items: [], total: 0 });
+      const result = await h.controller.history({
+        limit: 20,
+      } as CursorPaginationQueryDto);
+
+      expect(result.items).toEqual([]);
+      expect(result.meta.hasMore).toBe(false);
     });
   });
 
