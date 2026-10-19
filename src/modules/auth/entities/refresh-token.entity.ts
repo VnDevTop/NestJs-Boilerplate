@@ -18,6 +18,20 @@ import { RefreshTokenRevokedReason } from '../enums/index.js';
 // revokedAt)` index above still serves the "revoke every session" write path,
 // which does not sort.
 @Index('IDX_refresh_tokens_user_created_cursor', ['userId', 'createdAt', 'id'])
+// The index the session-age check reads.
+//
+// **Declared on the class, not on the column.** A property-level `@Index` records
+// the property alone — TypeORM's decorator drops the column list and keeps
+// `[propertyName]` — so the index this declared was `("sessionStartedAt")`,
+// while the migration that creates it has always made it
+// `("userId", "sessionStartedAt")`. The database was right and the entity was
+// wrong, which `synchronize: false` hides until somebody runs
+// `migration:generate` and finds a diff that should not exist.
+//
+// The composite is the one worth having: the question is "which of *this user's*
+// sessions have outlived the limit", and an index leading with `userId` seeks
+// straight to that user's rows.
+@Index('IDX_refresh_tokens_session_started', ['userId', 'sessionStartedAt'])
 export class RefreshToken {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -44,7 +58,6 @@ export class RefreshToken {
    * which is what makes this column the answer to "how old is this session" and
    * `createdAt` the answer to "when was this token minted".
    */
-  @Index('IDX_refresh_tokens_session_started', ['userId', 'sessionStartedAt'])
   @Column({ type: 'timestamptz' })
   sessionStartedAt!: Date;
 
