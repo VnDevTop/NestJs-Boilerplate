@@ -10,6 +10,7 @@ import {
   Ip,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -43,6 +44,10 @@ import {
   RequireVerifiedEmail,
 } from '../../common/decorators/index.js';
 import type { RequestUser } from '../../common/interfaces/index.js';
+import {
+  CursorPaginationQueryDto,
+  type PaginatedResultDto,
+} from '../../common/pagination/index.js';
 import { UserResponseDto } from '../users/dto/index.js';
 import {
   AuthSessionDto,
@@ -383,12 +388,21 @@ export class AuthController {
     return this.authService.getMe(currentUser);
   }
 
+  /**
+   * A page of the caller's active devices.
+   *
+   * Cursor paged, so the response size is set by `limit` rather than by how many
+   * machines the account has accumulated. `meta.nextCursor` goes back as `cursor`.
+   */
   @Get('devices')
   @ApiBearerAuth('access-token')
-  @ApiOperation({ summary: 'List the active devices of the current user' })
+  @ApiOperation({ summary: 'List a page of the current user active devices' })
   @ApiOkResponse({ type: UserDeviceDto, isArray: true })
-  devices(@CurrentUser() currentUser: RequestUser): Promise<UserDeviceDto[]> {
-    return this.authService.listDevices(currentUser);
+  devices(
+    @CurrentUser() currentUser: RequestUser,
+    @Query() query: CursorPaginationQueryDto,
+  ): Promise<PaginatedResultDto<UserDeviceDto>> {
+    return this.authService.listDevices(currentUser, query);
   }
 
   /**
@@ -397,13 +411,20 @@ export class AuthController {
    * Separate from `devices`, which lists machines. One device can hold more than
    * one session, and revoking them is not the same act: `devices/:id` ends every
    * session on the machine, `sessions/:id` ends one of them.
+   *
+   * Paged for the same reason, and with a sharper edge: sessions are *created* by
+   * using the application, so a client that walks a list without a bound is the
+   * normal case rather than an accident.
    */
   @Get('sessions')
   @ApiBearerAuth('access-token')
-  @ApiOperation({ summary: 'List the current user live sessions' })
+  @ApiOperation({ summary: 'List a page of the current user live sessions' })
   @ApiOkResponse({ type: AuthSessionDto, isArray: true })
-  sessions(@CurrentUser() currentUser: RequestUser): Promise<AuthSessionDto[]> {
-    return this.authService.listSessions(currentUser);
+  sessions(
+    @CurrentUser() currentUser: RequestUser,
+    @Query() query: CursorPaginationQueryDto,
+  ): Promise<PaginatedResultDto<AuthSessionDto>> {
+    return this.authService.listSessions(currentUser, query);
   }
 
   /**

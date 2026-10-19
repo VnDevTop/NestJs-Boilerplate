@@ -10,7 +10,7 @@ users
 ├── users.controller.ts
 ├── users.service.ts
 ├── entities/user.entity.ts
-└── dto/            create, update, response
+└── dto/            create, update, response, list query
 ```
 
 ## Entity
@@ -46,6 +46,26 @@ it even by accident.
 | `DELETE /users/:id` | `@Roles(Admin, SuperAdmin)` |
 | `GET /users/:id`    | authenticated only          |
 
+## Listing users
+
+`GET /users` is cursor paged on `(createdAt, id)`. See
+[common/pagination](../../common/README.md#pagination) for the shared layer; the
+parts that belong to this route:
+
+- **Four sortable columns**, `createdAt`, `email`, `role`, `isActive`, declared
+  as a map in `dto/list-users-query.dto.ts`. `firstName` and `lastName` are
+  absent: sorting by either is legal SQL and useless in practice, and an index on
+  either would be maintained forever for a question nobody asks.
+- **Four filters**, `role`, `isActive`, `isEmailVerified` and an `email`
+  substring, as declared properties. Every one is bound as a value, and the
+  `%`/`_` a caller types are escaped, so a search for `a_%b` finds addresses
+  containing a percent sign rather than every row on the table.
+- **`?isActive=false` works.** `@IsBoolean()` rejects the string `"false"`, which
+  is the exact value a client sends to ask for inactive users — and the natural
+  workarounds are worse, because omitting the parameter returns _active_ users.
+- **No `total`.** `meta.hasMore` is the honest answer and it is carried by the
+  page it belongs to.
+
 ## Open decision
 
 `GET /users/:id` has no role guard, so any authenticated user can read any other
@@ -57,6 +77,3 @@ Two reasonable answers: restrict it to the record's own owner plus admins, or
 keep it open and accept that the user directory is visible to every signed in
 user. Whichever is chosen, it belongs in this file as a decision rather than as an
 absence.
-
-`findAll()` also returns every matching row. `PaginationQueryDto` already exists
-in `common/dto` for the case that becomes a problem.

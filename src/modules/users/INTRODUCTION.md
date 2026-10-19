@@ -109,9 +109,8 @@ retention schedule you have decided on.
 | 2   | `GET /users` requires a role but no `UserRead` permission, which exists in the catalogue                                                                                                          | `users.controller.ts`         |
 | 3   | `PATCH /users/:id` can change `role`, `isActive` or `isManager` without bumping `sessionsVersion`; the change reaches the caller on the next request only because the auth cache entry is dropped | `users.service.ts` `update()` |
 | 4   | The export writes **no audit row** — reading a subject's whole record is unrecorded                                                                                                               | `export/export.service.ts`    |
-| 5   | `findAll()` is unpaginated; a `PaginationQueryDto` exists and is unused                                                                                                                           | `users.service.ts`            |
-| 6   | Email is not normalised to lower case on write, contradicting `users/README.md`                                                                                                                   | `CreateUserDto`               |
-| 7   | Names carry no `@MaxLength`, so a >100 char name surfaces a database error as a 500                                                                                                               | `create-user.dto.ts`          |
+| 5   | Email is not normalised to lower case on write, contradicting `users/README.md`                                                                                                                   | `CreateUserDto`               |
+| 6   | Names carry no `@MaxLength`, so a >100 char name surfaces a database error as a 500                                                                                                               | `create-user.dto.ts`          |
 
 Ordered by what an operator inherits. Gap 1 is a deliberate product decision
 rather than an oversight, and it is the one most likely to be closed by somebody

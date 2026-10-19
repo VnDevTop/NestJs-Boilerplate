@@ -81,17 +81,14 @@ export class RetentionRunDto {
   targets!: RetentionTargetResultDto[];
 }
 
-/** A page of history, with the total the page came from. */
-export class RetentionRunListDto {
-  @ApiProperty({ type: [RetentionRunDto] })
-  items!: RetentionRunDto[];
-
-  @ApiProperty({
-    description: 'Total runs on record, not the length of this page',
-    example: 128,
-  })
-  total!: number;
-}
+/**
+ * A page of history.
+ *
+ * **Deleted rather than kept as `{ items, total }`.** The route now returns the
+ * shared `PaginatedResultDto`, whose `meta` carries `nextCursor` and `hasMore`
+ * instead of a total. The total was a `COUNT(*)` over a table nothing prunes, on
+ * the screen an operator opens when something has already gone wrong.
+ */
 
 /** Returned by the route that queues a run rather than performing it. */
 export class RetentionQueuedDto {

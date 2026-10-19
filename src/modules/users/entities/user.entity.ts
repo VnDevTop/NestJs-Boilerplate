@@ -12,6 +12,11 @@ import {
 import { Role } from '../../../common/enums/index.js';
 
 @Entity({ name: 'users' })
+// The keyset index behind `GET /users`. Leads with the sort column and carries the
+// id as the tie-break, which is what makes a page an index range scan rather than
+// a filter over every row sharing a timestamp. Ascending only, because postgres
+// scans an index backwards for `?order=asc`.
+@Index('IDX_users_createdat_cursor', ['createdAt', 'id'])
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

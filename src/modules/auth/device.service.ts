@@ -1,7 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, IsNull, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, Repository } from 'typeorm';
+
+import {
+  CursorPaginationQueryDto,
+  PaginatedResultDto,
+  paginateByCursor,
+  resolveSort,
+  type SortFieldMap,
+} from '../../common/pagination/index.js';
 
 import { authDeviceSessionsKey, CacheService } from '../../core/cache/index.js';
 import type { CacheConfig } from '../../configs/index.js';
@@ -10,6 +18,24 @@ import { UsersService } from '../users/users.service.js';
 import { UserDeviceDto } from './dto/index.js';
 import { UserDevice } from './entities/index.js';
 import { DeviceMetadata } from './types/index.js';
+
+/**
+ * Sortable columns for `GET /auth/devices`.
+ *
+ * **Two columns, both `NOT NULL`.** `createdAt` is the one anybody asks for — "what
+ * did I sign in on most recently" — and `deviceName` is there because the list is
+ * read by looking for a machine. `lastUsedAt` is deliberately absent: it is
+ * nullable, and a nullable column cannot carry a keyset cursor boundary.
+ */
+const DEVICE_SORT_FIELDS = {
+  createdAt: 'createdAt',
+  deviceName: 'deviceName',
+} as const satisfies SortFieldMap<keyof DeviceSortableColumns>;
+
+type DeviceSortableColumns = {
+  createdAt: unknown;
+  deviceName: unknown;
+};
 
 @Injectable()
 export class DeviceService {
@@ -75,13 +101,66 @@ export class DeviceService {
     return { device: await manager.save(device), created: true };
   }
 
-  async listByUserId(userId: string): Promise<UserDeviceDto[]> {
+  /**
+   * A page of a user's active devices, newest first.
+   *
+   * **Paged rather than listing everything**, for the ordinary reason: a caller who
+   * has signed in from two hundred machines has two hundred rows, and a list route
+   * that can return two hundred rows is a list route that can return two thousand.
+   * A user's own devices are bounded by how many machines they own, which is not a
+   * bound worth relying on.
+   *
+   * This replaced `listByUserId`, which is deleted rather than kept: its only
+   * caller was `listSessions`, and that now resolves the device names for the ids
+   * on the page it is returning.
+   */
+  async listPageByUserId(
+    userId: string,
+    query: CursorPaginationQueryDto,
+  ): Promise<PaginatedResultDto<UserDeviceDto>> {
+    const sort = resolveSort(
+      query.sort,
+      query.order,
+      DEVICE_SORT_FIELDS,
+      'createdAt',
+    );
+
+    const page = await paginateByCursor(
+      this.devicesRepository
+        .createQueryBuilder('device')
+        .andWhere('device.userId = :userId', { userId })
+        .andWhere('device.isActive = :isActive', { isActive: true }),
+      { limit: query.effectiveLimit, cursor: query.cursor, sort },
+    );
+
+    return PaginatedResultDto.of(
+      UserDeviceDto.fromEntities(page.items),
+      page.meta,
+    );
+  }
+
+  /**
+   * Device names for a set of ids, in one query.
+   *
+   * **Lookup rather than a second listing.** The obvious implementation — list
+   * every device the caller owns and build a map — reads the whole account on
+   * every page request, to fill in names for the twenty sessions on this page.
+   * `IN` over the ids actually referenced costs one row lookup each and nothing
+   * when the list is empty.
+   */
+  async deviceNamesByIds(
+    userId: string,
+    deviceIds: string[],
+  ): Promise<Map<string, string | null>> {
+    if (deviceIds.length === 0) {
+      return new Map();
+    }
+
     const devices = await this.devicesRepository.find({
-      where: { userId, isActive: true },
-      order: { createdAt: 'DESC' },
+      where: { userId, id: In(deviceIds) },
     });
 
-    return UserDeviceDto.fromEntities(devices);
+    return new Map(devices.map((device) => [device.id, device.deviceName]));
   }
 
   async findActiveById(

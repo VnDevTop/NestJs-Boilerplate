@@ -290,8 +290,16 @@ token at all.
 A device is a machine. A session is one live refresh token on it, and rotation
 leaves a chain of revoked rows behind exactly one live row per chain.
 
-- `GET /auth/sessions` lists the live ones. Expired and revoked rows are excluded
-  by the query, so the list only ever contains something the caller could act on.
+- `GET /auth/sessions` lists the live ones, cursor paged. Expired and revoked rows
+  are excluded by the query rather than after the page is assembled, so an expired
+  row cannot consume one of the twenty slots and leave a caller with forty live
+  sessions looking at nineteen.
+- `GET /auth/devices` is paged the same way. The caller's own devices are bounded
+  by how many machines they own, which is not a bound worth relying on: an account
+  that has signed in from two hundred machines is not a hypothetical.
+- Device names for a page of sessions are looked up for the ids **on that page**,
+  via `deviceNamesByIds`. Listing every device to fill in twenty names made the
+  response size depend on the whole account — the coupling paging exists to remove.
 - `DELETE /auth/sessions/:id` ends one of them, and the access token already
   minted from it. `DELETE /auth/devices/:id` ends every session on the machine,
   and theirs too.

@@ -64,8 +64,14 @@ export class AuditLog {
    * one particular answer.
    *
    * Deliberately not a foreign key: see the class comment.
+   *
+   * **No `@Index()` on this property.** The class-level `IDX_audit_logs_actor`
+   * above already covers `actorId`, and an index on a property is a *second* one
+   * over the same column rather than a second view of the first. The database
+   * has only ever had the named one — `synchronize` is off — so the property
+   * decorator described an index that does not exist, and a `migration:generate`
+   * run would have proposed creating it.
    */
-  @Index()
   @Column({ type: 'uuid', nullable: true })
   actorId!: string | null;
 

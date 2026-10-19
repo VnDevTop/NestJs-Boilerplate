@@ -10,6 +10,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, type QueryRunner, Repository } from 'typeorm';
 
 import { MetricsService } from '../../core/metrics/index.js';
+import {
+  CursorPaginationQueryDto,
+  PaginatedResultDto,
+  paginateByCursor,
+  resolveSort,
+} from '../../common/pagination/index.js';
 import { retentionConfig } from '../../configs/retention.config.js';
 import { MaintenanceLog } from './entities/maintenance-log.entity.js';
 import { RetentionTrigger } from './entities/retention-trigger.enum.js';
@@ -360,30 +366,34 @@ export class RetentionService {
   }
 
   /**
-   * Reads the history, newest first.
+   * Reads the history, newest first, one page at a time.
    *
-   * `COUNT(*) OVER()` counts the matching rows in the same round trip rather than
-   * issuing a second query, which matters only because Postgres makes it easy.
-   * The table holds about one row a day, so this is a sequential scan either way
-   * and an index on `startedAt` would cost more to maintain than it saves.
+   * **Cursor paged, and no `COUNT(*) OVER()`.** The window function was there to
+   * report a total in the same round trip, which is free but not free: a count has
+   * to read every matching row, so the "cheap" query was O(history) whatever the
+   * page size. The table grows without bound — nothing prunes it — so the total
+   * became more expensive the longer the service ran, on the route an operator
+   * opens when something has already gone wrong.
+   *
+   * `hasMore` costs one row past the limit instead. What an operator needs from
+   * this screen is "is there more, and show me the next one", and both are
+   * answered by the page itself.
    */
-  async history(options: {
-    limit: number;
-    offset: number;
-  }): Promise<{ items: MaintenanceLog[]; total: number }> {
-    const rows = await this.logs
-      .createQueryBuilder('run')
-      .orderBy('run.startedAt', 'DESC')
-      .limit(options.limit)
-      .offset(options.offset)
-      .select('run')
-      .addSelect('COUNT(*) OVER() AS "runCount"')
-      .getRawAndEntities();
+  async history(
+    query: CursorPaginationQueryDto,
+  ): Promise<PaginatedResultDto<MaintenanceLog>> {
+    const sort = resolveSort(
+      query.sort,
+      query.order,
+      { createdAt: 'createdAt' },
+      'createdAt',
+    );
 
-    return {
-      items: rows.entities,
-      total: rows.raw.length === 0 ? 0 : Number(rows.raw[0]['runCount'] ?? 0),
-    };
+    return paginateByCursor(this.logs.createQueryBuilder('run'), {
+      limit: query.effectiveLimit,
+      cursor: query.cursor,
+      sort,
+    });
   }
 
   /** The most recent run, or null when nothing has ever run. */

@@ -38,6 +38,7 @@ starting point rather than a scaffold to fill in.
 | Privacy         | Erasure with a grace window, and a streamed export of everything held about an account                                         |
 | Observability   | Request id, JSON production logs, liveness and readiness kept apart                                                            |
 | Operations      | Reviewed migrations, idempotent seed, two stage image, compose stack, CI                                                       |
+| Paging          | Cursor pagination on `(createdAt, id)` with a sort allow-list, on every listing route that can grow                            |
 
 ## Open decisions
 
@@ -47,7 +48,6 @@ it unmade is the point.
 | Decision                                            | Why it matters                                                                                                                    | Phase |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----- |
 | Restrict `GET /users/:id` to the owner or an admin  | Any authenticated user can read another user's profile, email included                                                            | —     |
-| Paginate the listing routes                         | `GET /users` and the admin dashboard return every matching row                                                                    | 23    |
 | Who may read the audit trail                        | It is written for every privileged action, and there is no route that reads it back                                               | 26    |
 | Replace the account-lockout thresholds in config    | A permanent lockout is a denial-of-service surface; only confirmed accounts can be locked, and that is code rather than a setting | —     |
 | Whether the audit writer should ever fail a request | It never does, so the trail can have holes. Failing closed trades that for an application that cannot write anything              | —     |

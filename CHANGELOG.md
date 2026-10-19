@@ -15,6 +15,120 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: cursor pagination
+
+`feat(pagination): cursor pagination`
+
+**What changed**
+
+- `src/common/pagination/`: `cursor.ts` (opaque, versioned base64url boundary),
+  `sort.ts` (the sort allow-list and `resolveSort`), `cursor-pagination-query.dto.ts`
+  (`limit`, `cursor`, `sort`, `order`), `paginated-result.dto.ts`
+  (`PaginatedResultDto`, `PageMetaDto`), `cursor-pagination.ts` (`paginateByCursor`)
+- `ApiSuccessResponse.meta`, and `ResponseTransformInterceptor` lifting a page's
+  `meta` to the top of the envelope
+- `GET /users` paged, filtered (`role`, `isActive`, `isEmailVerified`, `email`
+  substring) and sortable over an allow-list of four columns
+- `GET /auth/sessions` and `GET /auth/devices` paged; device names for a page
+  resolved by id (`DeviceService.deviceNamesByIds`) instead of by listing them all
+- `GET /admin/retention/runs` paged; `RetentionRunListDto` and the hand-rolled
+  `limit`/`offset` clamping helpers deleted
+- `PaginationQueryDto` and `DEFAULT_PAGE` deleted rather than wired in
+- `RefreshTokenService.listLiveByUserId` deleted — the paged path replaced its only
+  caller
+- Migration `1792400000000-AddCursorPaginationIndexes`: `(createdAt, id)` on
+  `users` and `maintenance_logs`, `(userId, isActive, createdAt, id)` on
+  `user_devices`, `(userId, createdAt, id)` on `refresh_tokens`
+
+**Why**
+
+Four routes returned an unbounded result set, and `PaginationQueryDto` existed
+unused — an unused DTO reads as a plan and is not one.
+
+**Keyset, not offset.** `LIMIT n OFFSET m` makes the database count and discard
+`m` rows per page, so page 900 reads nine hundred rows to return twenty. Worse,
+that count happens inside the same statement as the read, and Postgres may
+evaluate it under a different snapshot: a row inserted between two requests can
+then appear on both pages or on neither. A cursor names the boundary it stopped at,
+so an insert ahead of the reader cannot move it. That is the phase's acceptance
+criterion, and it is a test in `cursor-pagination.spec.ts` rather than a claim in a
+comment: rows are inserted between two page reads and every original row is
+asserted to appear exactly once.
+
+**The boundary is `(sortColumn, id)`, compared as a tuple.** `createdAt` is not
+unique — a burst of signups shares a timestamp — and Postgres owes no ordering to
+equal keys, so a boundary on the sort value alone either re-reads or skips the rows
+that tie with it. The id is the tie-break.
+
+**`hasMore`, not a total.** One row past the limit answers it for free;
+`COUNT(*)` answers it by reading every matching row. It also goes stale between
+pages, so "page 4 of 12" becomes "page 4 of 13" with a different set behind it.
+Removing the total from the retention history took its `COUNT(*) OVER()` with it —
+a window function over a table nothing prunes, on the screen an operator opens when
+something has already gone wrong.
+
+**Sorting is an allow-list map, and the map is the injection boundary.** Sorting by
+a client-supplied name is SQL injection under a different spelling — identifiers
+cannot be bound, so anything interpolated is a hole. `resolveSort` takes a
+`const` object, so there is no path from the request to a column, and an undeclared
+field is a 400 listing the valid names rather than a silent fallback: a client that
+asks to sort by `password` would otherwise get a valid page in some other order and
+believe it got what it asked for. The keys are checked with `hasOwnProperty`, so
+`constructor` and `__proto__` resolve to nothing.
+
+**Filters are declared properties, not a `where` bag.** A DTO accepting
+`{ [column]: value }` would let a caller read any column the entity has,
+`password` included, and would need a per-entity deny-list to stop it.
+
+**`?isActive=false` works.** `@IsBoolean()` rejects the string `"false"`, which is
+exactly what a client sends to ask for inactive users, and the workarounds are
+worse: omitting the parameter returns _active_ users, answering the opposite
+question.
+
+**A malformed cursor is a 400.** Ignoring it hands back page one for a request for
+page four — a correct-looking response to the wrong question, which a client renders
+as "no results".
+
+**The envelope is unchanged for a client that reads `data`.** `data` is still the
+array the route always returned; `meta` sits beside it. A route that is not paged
+has no `meta` at all rather than a null one, so it cannot be confused with an
+empty page.
+
+**Sortable columns must be `NOT NULL`.** A cursor carries its boundary as a string
+and `null` would have to be encoded as something the decoder reads as malformed, so
+nullable columns are absent from the allow-lists. That restriction is why
+`lastUsedAt` is not sortable on `GET /auth/devices` and why `sessionStartedAt` is a
+filter to be written rather than an `ORDER BY` to be added.
+
+**Ascending indexes only.** Postgres scans an index backwards for the opposite
+direction, so `?order=asc` costs nothing and a descending copy would be maintained
+on every insert for no query it enables.
+
+**What it gives up**
+
+- No total, and no last page. A client that needs a count walks to the end. That is
+  the honest cost of a consistent snapshot and cheaper than a count that lies.
+- No jumping to an arbitrary page. There is no `?page=4`, and that is the point:
+  a page number is the value that goes stale mid-walk.
+- `GET /admin/retention/runs` no longer reports a total. Breaking, and noted in
+  `src/modules/admin/` and `src/modules/maintenance/` docs.
+- Cursors cannot be shared or bookmarked across different sort orders. The cursor
+  encodes the boundary value, not the sort, so a cursor from `?sort=email` used
+  against `?sort=createdAt` is a wrong answer rather than an error. Cheap to close
+  by putting the sort into the payload and refusing a mismatch; not done here
+  because no client needs it yet.
+- The migration takes a brief write lock on `users` and `refresh_tokens` rather
+  than using `CONCURRENTLY`, which TypeORM cannot run inside a transaction.
+
+**Carried into Phase 24**
+
+The reusable criteria object is now mostly assembled: `resolveSort` plus
+`paginateByCursor` is sorting, filtering and paging in one place. What Phase 24
+adds is the middle part — filters as data rather than as hand-written
+`andWhere` calls — so that adding a list route needs no new pagination code.
+
+---
+
 ## feat: give a session a maximum age
 
 `feat(auth): give a session a maximum age`

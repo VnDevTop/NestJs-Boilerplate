@@ -34,7 +34,13 @@ import { Idempotent } from '../../common/guards/index.js';
 import { AuditInterceptor } from '../audit/audit.interceptor.js';
 import type { RequestUser } from '../../common/interfaces/index.js';
 import { Permission, Role } from '../../common/enums/index.js';
-import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto/index.js';
+import {
+  CreateUserDto,
+  ListUsersQueryDto,
+  UpdateUserDto,
+  UserResponseDto,
+} from './dto/index.js';
+import type { PaginatedResultDto } from '../../common/pagination/index.js';
 import { ExportService, type ExportFormat } from './export/export.service.js';
 import { UsersService } from './users.service.js';
 
@@ -77,12 +83,32 @@ export class UsersController {
     return UserResponseDto.fromEntity(user);
   }
 
+  /**
+   * A page of users.
+   *
+   * **Cursor paged, and the sort is declared rather than free-text.** Both are
+   * enforced in the service against an allow-list, so a request cannot name a
+   * column this route does not offer.
+   *
+   * The body is still the array it always was — `ResponseTransformInterceptor`
+   * lifts `meta` to the top of the envelope — so a client reading `data` needs no
+   * change. A client that wants a second page reads `meta.nextCursor` and passes
+   * it back verbatim.
+   */
   @Roles(Role.Admin, Role.SuperAdmin)
   @Get()
-  @ApiOperation({ summary: 'Get all users' })
+  @ApiOperation({
+    summary: 'List users',
+    description:
+      'Cursor paged. Pass `meta.nextCursor` back as `cursor` for the next page. ' +
+      'The response carries no total on purpose — `meta.hasMore` is the honest ' +
+      'answer, and a total would change under a client walking the list.',
+  })
   @ApiOkResponse({ type: UserResponseDto, isArray: true })
-  findAll(): Promise<UserResponseDto[]> {
-    return this.usersService.findAll();
+  findAll(
+    @Query() query: ListUsersQueryDto,
+  ): Promise<PaginatedResultDto<UserResponseDto>> {
+    return this.usersService.findAll(query);
   }
 
   /**

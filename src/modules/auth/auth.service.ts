@@ -10,6 +10,10 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 
 import { JwtPayload, RequestUser } from '../../common/interfaces/index.js';
+import {
+  CursorPaginationQueryDto,
+  PaginatedResultDto,
+} from '../../common/pagination/index.js';
 import { MetricsService } from '../../core/metrics/index.js';
 import {
   getRequestId,
@@ -935,8 +939,18 @@ export class AuthService {
     return this.usersService.findProfileById(currentUser?.id);
   }
 
-  listDevices(currentUser: RequestUser): Promise<UserDeviceDto[]> {
-    return this.deviceService.listByUserId(currentUser.id);
+  /**
+   * The caller's active devices, one page of them.
+   *
+   * Cursor paged rather than listing all of them: an account that has signed in
+   * from a thousand machines is not a hypothetical, and a route that can return a
+   * thousand rows is a route that will eventually be asked for ten thousand.
+   */
+  listDevices(
+    currentUser: RequestUser,
+    query: CursorPaginationQueryDto,
+  ): Promise<PaginatedResultDto<UserDeviceDto>> {
+    return this.deviceService.listPageByUserId(currentUser.id, query);
   }
 
   /**
@@ -947,31 +961,51 @@ export class AuthService {
    * query, which means the list only ever contains something the caller could
    * usefully revoke.
    *
-   * Device names are filled in from the caller's devices rather than joined, and
-   * a session whose device has since been removed is still listed with no name.
+   * **Device names are looked up for the ids on this page, not for the whole
+   * account.** The previous implementation listed every device the caller owned to
+   * fill in names for twenty rows, which made the size of the response depend on
+   * how many machines the account has accumulated — exactly the coupling paging is
+   * here to remove.
+   *
+   * A session whose device has since been removed is still listed with no name.
    * Dropping it would hide a session that is still able to refresh.
    */
-  async listSessions(currentUser: RequestUser): Promise<AuthSessionDto[]> {
+  async listSessions(
+    currentUser: RequestUser,
+    query: CursorPaginationQueryDto,
+  ): Promise<PaginatedResultDto<AuthSessionDto>> {
     if (!currentUser?.id) {
       throw new UnauthorizedException('Authentication required');
     }
 
-    const [tokens, devices] = await Promise.all([
-      this.refreshTokenService.listLiveByUserId(currentUser.id),
-      this.deviceService.listByUserId(currentUser.id),
-    ]);
-
-    const deviceNames = new Map(
-      devices.map((device) => [device.id, device.deviceName]),
+    const page = await this.refreshTokenService.listLivePage(
+      currentUser.id,
+      query,
     );
 
-    return tokens.map((token) =>
-      AuthSessionDto.fromEntity(
-        token,
-        token.deviceId === null
-          ? null
-          : (deviceNames.get(token.deviceId) ?? null),
+    const deviceNames = await this.deviceService.deviceNamesByIds(
+      currentUser.id,
+      // Deduplicated, because a caller with three sessions on one machine would
+      // otherwise ask for the same name three times and get three rows back.
+      [
+        ...new Set(
+          page.items
+            .map((token) => token.deviceId)
+            .filter((deviceId): deviceId is string => deviceId !== null),
+        ),
+      ],
+    );
+
+    return PaginatedResultDto.of(
+      page.items.map((token) =>
+        AuthSessionDto.fromEntity(
+          token,
+          token.deviceId === null
+            ? null
+            : (deviceNames.get(token.deviceId) ?? null),
+        ),
       ),
+      page.meta,
     );
   }
 

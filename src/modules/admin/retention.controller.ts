@@ -16,7 +16,6 @@ import { RetentionTrigger } from '../maintenance/entities/retention-trigger.enum
 import {
   RetentionQueuedDto,
   RetentionRunDto,
-  RetentionRunListDto,
 } from '../maintenance/dto/index.js';
 import { JOB_QUEUE } from '../queue/queue.tokens.js';
 import { QUEUE_NAMES, type JobQueue } from '../queue/queue.interface.js';
@@ -25,12 +24,11 @@ import {
   type RetentionJobPayload,
 } from '../maintenance/processors/retention.processor.js';
 import { RetentionService } from '../maintenance/retention.service.js';
+import {
+  CursorPaginationQueryDto,
+  PaginatedResultDto,
+} from '../../common/pagination/index.js';
 import { MaintenanceLog } from '../maintenance/entities/maintenance-log.entity.js';
-
-/** Ceiling on one page, so a client cannot ask for the whole history at once. */
-const MAX_LIMIT = 100;
-
-const DEFAULT_LIMIT = 20;
 
 /**
  * Retention controls.
@@ -111,25 +109,36 @@ export class AdminRetentionController {
     return { queued: true, see: '/admin/retention/runs/latest' };
   }
 
-  /** Newest first. The table holds about one row a day, so paging is cheap. */
+  /**
+   * One page of the retention run history, newest first.
+   *
+   * **Cursor paged like every other listing.** The `limit`/`offset` pair it used to
+   * take was hand-rolled and local — two private helpers clamping a string, which
+   * is the pattern that produces a fourth route with a subtly different rule for
+   * what an oversized `limit` means. One implementation, one rule.
+   *
+   * **The `total` is gone.** See `RetentionService.history`: counting the history
+   * meant reading every run ever recorded, on the route an operator opens when
+   * something has already gone wrong. `meta.hasMore` answers the only question the
+   * screen actually asks.
+   */
   @ManagerOnly()
   @Get('runs')
-  @ApiOperation({ summary: 'Read the retention run history' })
-  @ApiOkResponse({ type: RetentionRunListDto })
+  @ApiOperation({
+    summary: 'Read a page of the retention run history',
+    description:
+      'Cursor paged. Pass `meta.nextCursor` back as `cursor` for the next page.',
+  })
+  @ApiOkResponse({ type: RetentionRunDto, isArray: true })
   async history(
-    @Query('limit') limit?: string,
-    @Query('offset') offset?: string,
-  ): Promise<RetentionRunListDto> {
-    const { items, total } = await this.retentionService.history({
-      limit: AdminRetentionController.toPageSize(
-        limit,
-        DEFAULT_LIMIT,
-        MAX_LIMIT,
-      ),
-      offset: AdminRetentionController.toOffset(offset),
-    });
+    @Query() query: CursorPaginationQueryDto,
+  ): Promise<PaginatedResultDto<RetentionRunDto>> {
+    const page = await this.retentionService.history(query);
 
-    return { items: items.map(AdminRetentionController.toLogDto), total };
+    return PaginatedResultDto.of(
+      page.items.map(AdminRetentionController.toLogDto),
+      page.meta,
+    );
   }
 
   /**
@@ -147,34 +156,6 @@ export class AdminRetentionController {
     const entry = await this.retentionService.latest();
 
     return entry === null ? null : AdminRetentionController.toLogDto(entry);
-  }
-
-  /**
-   * Clamps a page size.
-   *
-   * A client asking for `limit=999999` gets the ceiling rather than an error: the
-   * request is not wrong so much as careless, and refusing it would teach an
-   * operator that the route is fragile. A negative or unparseable value falls back
-   * to the default for the same reason.
-   */
-  private static toPageSize(
-    raw: string | undefined,
-    fallback: number,
-    max: number,
-  ): number {
-    const parsed = Number(raw);
-
-    if (!Number.isFinite(parsed) || parsed < 1) {
-      return fallback;
-    }
-
-    return Math.min(Math.floor(parsed), max);
-  }
-
-  private static toOffset(raw: string | undefined): number {
-    const parsed = Number(raw);
-
-    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
   }
 
   private static toLogDto(entry: MaintenanceLog): RetentionRunDto {
