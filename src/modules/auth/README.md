@@ -293,7 +293,8 @@ leaves a chain of revoked rows behind exactly one live row per chain.
 - `GET /auth/sessions` lists the live ones, cursor paged. Expired and revoked rows
   are excluded by the query rather than after the page is assembled, so an expired
   row cannot consume one of the twenty slots and leave a caller with forty live
-  sessions looking at nineteen.
+  sessions looking at nineteen. The scope — _your own_ sessions — is applied by
+  the service and is not something a query parameter can widen.
 - `GET /auth/devices` is paged the same way. The caller's own devices are bounded
   by how many machines they own, which is not a bound worth relying on: an account
   that has signed in from two hundred machines is not a hypothetical.

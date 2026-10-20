@@ -12,7 +12,8 @@ common
 ├── interceptors  ResponseTransformInterceptor
 ├── interfaces    ApiResponse, JwtPayload, RequestUser
 ├── middlewares   RequestIdMiddleware
-├── pagination    cursor encoding, the sort allow-list, the keyset page reader
+├── pagination    the cursor and the two shapes a paged response has
+├── query         the query layer: a spec, a criteria, and the SQL they produce
 ├── pipes         global validation pipe
 └── utils         password, encryption, recovery codes, user agent, request id
 ```
@@ -79,21 +80,20 @@ at all — absent rather than null, so it cannot be confused with an empty page.
 
 `pagination/` is the floor the rest of the plan stands on: every group after this
 one stores data, and every one of them needs a list route that pages. It knows no
-entity, and it holds four decisions.
+entity, and it holds three decisions.
 
 | File                             | Decision                                                            |
 | -------------------------------- | ------------------------------------------------------------------- |
 | `cursor.ts`                      | the boundary is opaque base64url, versioned, and a bad one is a 400 |
-| `sort.ts`                        | sorting is an allow-list map; the request never reaches a column    |
 | `cursor-pagination-query.dto.ts` | `limit`, `cursor`, `sort`, `order` — and no `page`                  |
-| `cursor-pagination.ts`           | keyset paging, one row past the limit, both values bound            |
+| `paginated-result.dto.ts`        | the page and its `meta`, which the envelope carries                 |
 
 **Keyset, not offset.** `LIMIT n OFFSET m` makes the database count and discard
 `m` rows per page, so page 900 reads nine hundred rows to return twenty — and
 because that count happens inside the statement, a row inserted between two
 requests can appear on both pages or on neither. A cursor names the boundary it
 stopped at, so an insert ahead of the reader cannot move it. This is asserted as a
-test in `cursor-pagination.spec.ts`, not only described here.
+test in `query/read-page.spec.ts`, not only described here.
 
 **The boundary is `(sortColumn, id)`, compared as a tuple.** `createdAt` is not
 unique — many rows share a timestamp — and Postgres owes no ordering to equal keys,
@@ -108,29 +108,89 @@ answers it by reading every matching row, and goes stale between pages anyway.
 with page one: a correct-looking response to the wrong question, which a client
 renders as "no results".
 
+## The query layer
+
+`query/` is where a request becomes a query. It is the answer to "adding a list
+route needs no new pagination code", and it holds four decisions.
+
+| File                | Decision                                       |
+| ------------------- | ---------------------------------------------- |
+| `query-spec.ts`     | a route's whole query surface, in one object   |
+| `query-criteria.ts` | the request as data: filters, sort, page       |
+| `build-criteria.ts` | a DTO plus a spec becomes a criteria           |
+| `apply-criteria.ts` | a criteria becomes SQL, with every value bound |
+| `read-page.ts`      | the one call a list route makes                |
+
+**A route declares a spec; a service calls one function.** The spec says which
+fields may be filtered and sorted and which column each one means. The DTO says
+what the request may contain. The service says "give me a page of this". There is
+no query builder in the service, no filter loop, and no `hasMore` arithmetic.
+
+```ts
+const criteria = buildCriteria(query, USER_QUERY_SPEC);
+
+const page = await readPage({
+  query: this.usersRepository.createQueryBuilder('user'),
+  criteria,
+  alias: 'user',
+});
+```
+
+**The spec is the allow-list, and it is checked against the DTO.** A filter in the
+spec that the DTO does not declare is a compile error, and so is a DTO property
+that no filter declares. The first would be a filter that can never fire; the
+second is a parameter the client can send and the route ignores — a client that
+asks for the inactive accounts and gets the unfiltered list has been told a lie,
+and nothing in the code says the filter was forgotten.
+
+**The operator comes from the spec, never from the request.** A request says
+_what_ to filter by, not _how_. The set of operators is closed, and each one is a
+literal in `apply-criteria.ts` — there is no general-purpose "expression"
+operator, because the mechanism is safe precisely because the set of shapes it can
+produce is finite and each one is written out by hand.
+
+**Every value is bound.** The SQL text carries column names and comparison
+operators, both from the spec, and never a value. A value reaches Postgres as a
+parameter, which is the only place a value can go without being able to change
+the meaning of the statement.
+
+**The columns are qualified with the alias.** An unqualified column is ambiguous
+the moment the query joins a second table, which is exactly what a future route
+on the same entity will do.
+
+**The scope is not a filter.** `GET /auth/devices` answers "your own devices", and
+that is applied by the service to the query builder, not by anything the client
+sends. A filter the client controls and a scope the server decides are different
+things, and the code says which is which.
+
 ### Adding a listing route
 
-1. Declare the sortable columns as a map from request name to column:
+1. Extend `CursorPaginationQueryDto` with the filters, as declared properties.
+   A DTO that accepted a `{ [column]: value }` bag and passed it to TypeORM
+   would let a caller read any column the entity has, `password` included.
+
+2. Declare the route's query surface:
 
    ```ts
-   export const ORDER_SORT_FIELDS = {
-     createdAt: 'createdAt',
-     reference: 'reference',
-   } as const satisfies SortFieldMap<'createdAt' | 'reference'>;
+   export const ORDER_QUERY_SPEC = defineQuerySpec<ListOrdersQueryDto>({
+     filters: {
+       reference: { column: 'reference', operator: 'eq' },
+       customer: { column: 'customerName', operator: 'ilike' },
+     },
+     sort: {
+       createdAt: 'createdAt',
+       reference: 'reference',
+     },
+     defaultSort: 'createdAt',
+   });
    ```
 
-   Every one of them must be `NOT NULL` — a cursor carries its boundary as a
+   Every sortable column must be `NOT NULL` — a cursor carries its boundary as a
    string, and `null` would have to be encoded as something the decoder reads as
-   malformed. That restriction is the reason `nullable` columns are absent from
+   malformed. That restriction is the reason nullable columns are absent from
    these maps, and it is why adding one is a deliberate change rather than a line.
 
-2. Extend `CursorPaginationQueryDto` with the filters, as declared properties.
-   A DTO that accepted a `{ [column]: value }` bag and passed it to TypeORM would
-   let a caller read any column the entity has, `password` included.
-
-3. `resolveSort(query.sort, query.order, FIELDS, 'createdAt')`, then hand the
-   query builder to `paginateByCursor`, and return `PaginatedResultDto.of(items,
-meta)`.
+3. `buildCriteria(query, SPEC)` and `readPage({ query, criteria, alias })`.
 
 4. Add an index that leads with the sort column and carries the id immediately
    after it — `(createdAt, id)`. Ascending only; Postgres scans an index backwards
