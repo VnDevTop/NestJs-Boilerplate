@@ -13,11 +13,14 @@ import { MetricsService } from '../../core/metrics/index.js';
 import {
   CursorPaginationQueryDto,
   PaginatedResultDto,
-  paginateByCursor,
-  resolveSort,
 } from '../../common/pagination/index.js';
+import {
+  buildCriteria,
+  readPaginatedResult,
+} from '../../common/query/index.js';
 import { retentionConfig } from '../../configs/retention.config.js';
 import { MaintenanceLog } from './entities/maintenance-log.entity.js';
+import { RETENTION_QUERY_SPEC } from './retention-query.js';
 import { RetentionTrigger } from './entities/retention-trigger.enum.js';
 import {
   buildRetentionPolicy,
@@ -382,17 +385,12 @@ export class RetentionService {
   async history(
     query: CursorPaginationQueryDto,
   ): Promise<PaginatedResultDto<MaintenanceLog>> {
-    const sort = resolveSort(
-      query.sort,
-      query.order,
-      { createdAt: 'createdAt' },
-      'createdAt',
-    );
+    const criteria = buildCriteria(query, RETENTION_QUERY_SPEC);
 
-    return paginateByCursor(this.logs.createQueryBuilder('run'), {
-      limit: query.effectiveLimit,
-      cursor: query.cursor,
-      sort,
+    return readPaginatedResult({
+      query: this.logs.createQueryBuilder('run'),
+      criteria,
+      alias: 'run',
     });
   }
 

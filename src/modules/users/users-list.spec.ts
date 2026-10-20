@@ -144,8 +144,13 @@ describe('GET /users', () => {
 
     await service.findAll(query({ role: Role.Admin }));
 
+    // The column is quoted and qualified with the alias, and the value is a
+    // parameter. The SQL text carries no part of the value.
     expect(recorded.fragments).toEqual([
-      { sql: 'user.role = :role', params: { role: Role.Admin } },
+      {
+        sql: '"user"."role" = :filter_0',
+        params: { filter_0: Role.Admin },
+      },
     ]);
   });
 
@@ -158,7 +163,10 @@ describe('GET /users', () => {
     await service.findAll(query({ isActive: false }));
 
     expect(recorded.fragments).toEqual([
-      { sql: 'user.isActive = :isActive', params: { isActive: false } },
+      {
+        sql: '"user"."isActive" = :filter_0',
+        params: { filter_0: false },
+      },
     ]);
   });
 
@@ -179,8 +187,8 @@ describe('GET /users', () => {
 
     const [condition] = recorded.fragments;
 
-    expect(condition?.sql).toBe('user.email ILIKE :email');
-    expect(condition?.params?.email).toBe('%a\\_\\%b%');
+    expect(condition?.sql).toBe(`"user"."email" ILIKE :filter_0 ESCAPE '\\'`);
+    expect(condition?.params?.filter_0).toBe('%a\\_\\%b%');
   });
 
   it('ignores an email search that is only whitespace', async () => {
