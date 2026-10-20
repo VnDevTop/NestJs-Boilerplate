@@ -96,6 +96,15 @@ export class RetentionQueuedDto {
   queued!: boolean;
 
   @ApiProperty({
+    format: 'uuid',
+    description:
+      'The id of the queued job. It is the handle the run is watched with: ' +
+      'the history says what happened, the job says what is happening now.',
+    example: '11111111-1111-4111-8111-111111111111',
+  })
+  jobId!: string;
+
+  @ApiProperty({
     description:
       'Where to look for the outcome. The run happens in the queue, not in this ' +
       'request, so the answer arrives in the history rather than in this response.',

@@ -6,11 +6,15 @@ import type { QueueConfig } from '../../configs/queue.config.js';
 import type {
   Job,
   JobQueue,
+  JobRequest,
   JobResult,
   QueueDepth,
   QueueName,
 } from './queue.interface.js';
+import { statusOf } from './queue.interface.js';
 import type { DeadLetterService } from './dead-letter.service.js';
+import type { JobProgressService } from './job-progress.service.js';
+import { newJobId } from './job-id.js';
 import { backoffDelay } from './retry.policy.js';
 import {
   MailProcessor,
@@ -57,6 +61,7 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     private readonly processors: ProcessorRegistry,
+    private readonly progress: JobProgressService,
     private readonly deadLetter?: DeadLetterService,
     private readonly metrics: MetricsService = new MetricsService(),
   ) {}
@@ -70,12 +75,27 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
    *
    * The work is started from a detached promise with its own catch, so nothing
    * here can reject into a caller that is already returning an http response.
+   *
+   * The id is minted here and handed back, so the caller has a handle on the
+   * job it just queued. The progress record is written before the job is put on
+   * the backlog, because the worker and this method both write that record and
+   * the worker's write is the later one.
    */
-  async enqueue(queue: QueueName, job: Job): Promise<void> {
+  async enqueue(queue: QueueName, request: JobRequest): Promise<string> {
+    const job: Job = { ...request, id: newJobId() };
+
+    await this.progress.record(job, queue);
+
     if (this.shuttingDown) {
       this.logger.warn(`Dropping ${job.name}, the dispatcher is shutting down`);
 
-      return;
+      await this.progress.finish(
+        job.id,
+        'failed',
+        'the dispatcher was shutting down',
+      );
+
+      return job.id;
     }
 
     if (this.waiting.length >= this.maxBacklog) {
@@ -87,12 +107,20 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
           'Raise QUEUE_IN_PROCESS_CONCURRENCY or enable the queue.',
       );
 
-      return;
+      await this.progress.finish(
+        job.id,
+        'failed',
+        'the in-process backlog is full',
+      );
+
+      return job.id;
     }
 
     this.waiting.push({ queue, job, attempt: 1, enqueuedAt: Date.now() });
 
     void this.drain(queue);
+
+    return job.id;
   }
 
   /**
@@ -163,6 +191,8 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
       (Date.now() - entry.enqueuedAt) / 1000,
     );
 
+    await this.progress.markRunning(entry.job);
+
     try {
       result = await this.processors.process(entry.job);
     } catch (error) {
@@ -179,6 +209,8 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
         Math.max(0, (this.active.get(entry.queue) ?? 1) - 1),
       );
     }
+
+    await this.progress.finish(entry.job.id, statusOf(result), result.error);
 
     try {
       await this.afterAttempt(entry, result);

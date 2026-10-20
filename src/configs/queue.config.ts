@@ -43,6 +43,16 @@ export interface QueueConfig {
   /** How long a failed job is kept before the dead-letter list owns it. */
   removeOnFailAfter: number;
   /**
+   * How long a job's progress is kept, in milliseconds.
+   *
+   * Long enough for an operator to come back to a job that is still running,
+   * and long enough for a redelivery to find the record of its first attempt.
+   * Short enough that the store does not keep a history of every job the
+   * application has ever run: the progress of a job that finished three days
+   * ago is not progress, it is clutter.
+   */
+  progressTtl: number;
+  /**
    * Whether jobs run in process when the queue is disabled or redis is
    * unreachable. Off would mean silently dropping mail instead of sending it
    * late, so it is on by default.
@@ -105,6 +115,7 @@ export const queueConfig = registerAs('queue', (): QueueConfig => ({
     process.env.QUEUE_REMOVE_COMPLETE_AFTER ?? 3_600_000,
   ),
   removeOnFailAfter: Number(process.env.QUEUE_REMOVE_FAIL_AFTER ?? 86_400_000),
+  progressTtl: Number(process.env.QUEUE_PROGRESS_TTL ?? 86_400_000),
   inProcessFallback: flag(process.env.QUEUE_IN_PROCESS_FALLBACK, true),
   inProcessConcurrency: Number(process.env.QUEUE_IN_PROCESS_CONCURRENCY ?? 5),
 }));

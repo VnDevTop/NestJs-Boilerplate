@@ -11,6 +11,7 @@ const subject = { template: 'welcome', to: 'a@x.com', subjectId: 'u1' };
 
 function job(overrides: Partial<Job> = {}): Job {
   return {
+    id: '11111111-1111-4111-8111-111111111111',
     name: 'mail.send',
     payload: {},
     dedupeKey: dedupeKey(subject),

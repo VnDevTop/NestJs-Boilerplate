@@ -92,7 +92,11 @@ function harness(result: RetentionRunResult | Error = runResult()): Harness {
  * test.
  */
 const job = (payload: unknown): Job<RetentionJobPayload> =>
-  ({ name: RETENTION_JOB, payload }) as Job<RetentionJobPayload>;
+  ({
+    id: '11111111-1111-4111-8111-111111111111',
+    name: RETENTION_JOB,
+    payload,
+  }) as Job<RetentionJobPayload>;
 
 describe('RetentionProcessor', () => {
   let h: Harness;

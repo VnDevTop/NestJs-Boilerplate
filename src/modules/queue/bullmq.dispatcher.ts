@@ -7,11 +7,15 @@ import type { QueueConfig } from '../../configs/queue.config.js';
 import type {
   Job,
   JobQueue,
+  JobRequest,
   JobResult,
   QueueDepth,
   QueueName,
 } from './queue.interface.js';
+import { statusOf } from './queue.interface.js';
 import type { ProcessorRegistry } from './in-process.dispatcher.js';
+import type { JobProgressService } from './job-progress.service.js';
+import { newJobId } from './job-id.js';
 
 /**
  * The bullmq types this adapter uses, declared locally.
@@ -102,6 +106,7 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     private readonly processors: ProcessorRegistry,
+    private readonly progress: JobProgressService,
     private readonly bullmq: BullModuleLike | null = loadOptional<BullModuleLike>(
       BULLMQ_SPECIFIER,
     ),
@@ -254,8 +259,14 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
    * name and the dedupe key as well as the payload, and the queue backend has
    * nowhere else to keep them: bullmq's own `name` is the job's *name* on that
    * queue, not the name the processor is routed by.
+   *
+   * The id is minted here and the progress record is written before the job is
+   * handed over, because the worker and this method both write that record and
+   * the worker's write is the later one.
    */
-  async enqueue(queue: QueueName, job: Job): Promise<void> {
+  async enqueue(queue: QueueName, request: JobRequest): Promise<string> {
+    const job: Job = { ...request, id: newJobId() };
+
     const options: Record<string, unknown> = {
       attempts: this.config.retry.attempts,
       backoff: {
@@ -268,7 +279,20 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
       // so the handler has to signal it by throwing UnrecoverableError.
     };
 
-    await this.queue(queue).add(job.name, job, options);
+    await this.progress.record(job, queue);
+
+    try {
+      await this.queue(queue).add(job.name, job, options);
+    } catch (error) {
+      // The job never reached the queue, so the record of it is a lie. Removed
+      // rather than left to expire, because an operator polling this id would
+      // otherwise watch a job that does not exist.
+      await this.progress.forget(job.id);
+
+      throw error;
+    }
+
+    return job.id;
   }
 
   /**
@@ -280,7 +304,12 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
    */
   private async run(stored: unknown): Promise<unknown> {
     const job = this.toJob(stored);
+
+    await this.progress.markRunning(job);
+
     const result: JobResult = await this.processors.process(job);
+
+    await this.progress.finish(job.id, statusOf(result), result.error);
 
     if (result.ok) {
       return result;
@@ -307,13 +336,27 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
       throw this.unrecoverable('the stored job is not an object');
     }
 
-    const { name, payload, dedupeKey } = stored as Partial<Job>;
+    const { id, name, payload, dedupeKey } = stored as Partial<Job>;
 
     if (typeof name !== 'string' || name === '') {
       throw this.unrecoverable('the stored job has no name');
     }
 
-    const job: Job = { name, payload };
+    // A job stored by an older version has no id. It is given one rather than
+    // refused, because the work it describes is still work somebody asked for;
+    // but the id is new, so nobody can watch that particular run.
+    const jobId = typeof id === 'string' && id !== '' ? id : newJobId();
+
+    if (jobId !== id) {
+      logger.warn(
+        `The stored job ${name} has no id, which means it was queued by an ` +
+          'older version. It is running as ' +
+          jobId +
+          '.',
+      );
+    }
+
+    const job: Job = { id: jobId, name, payload };
 
     // Only carried over when it is a non-empty string, so a job that was enqueued
     // without one comes back without the key rather than with an empty one. An

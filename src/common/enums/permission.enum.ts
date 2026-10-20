@@ -33,6 +33,14 @@ export enum Permission {
   /** Run the retention job by hand or read its history. */
   MaintenanceRun = 'maintenance:run',
 
+  /**
+   * Read what a job is doing: its status, how far it has got and why it failed.
+   *
+   * Operational data about work the application is doing right now. Reading it
+   * changes nothing, so an administrator may.
+   */
+  JobRead = 'job:read',
+
   /** Read what the application last sent and to whom. */
   MailLogRead = 'mail-log:read',
 
@@ -79,6 +87,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> =
       Permission.MailLogRead,
       Permission.UserRead,
       Permission.UserWrite,
+      // Watching a job is reading, and reading is safe. Stopping one is not,
+      // so `JobCancel` is not here.
+      Permission.JobRead,
       // Read only. Granting an administrator the permission that edits roles would
       // let one administrator grant themselves another administrator's, which is
       // why `RoleWrite` is not here.
@@ -94,6 +105,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> =
       Permission.UserWrite,
       Permission.UserDelete,
       Permission.MaintenanceRun,
+      Permission.JobRead,
       Permission.RoleRead,
       Permission.RoleWrite,
     ]),

@@ -247,6 +247,7 @@ function createEnvSchema(strict: boolean) {
         QUEUE_CONCURRENCY_DIGEST: z.coerce.number().int().positive().optional(),
         QUEUE_REMOVE_COMPLETE_AFTER: z.coerce.number().nonnegative().optional(),
         QUEUE_REMOVE_FAIL_AFTER: z.coerce.number().nonnegative().optional(),
+        QUEUE_PROGRESS_TTL: z.coerce.number().positive().optional(),
         QUEUE_IN_PROCESS_FALLBACK: z.enum(['true', 'false']).optional(),
         QUEUE_IN_PROCESS_CONCURRENCY: z.coerce
           .number()

@@ -7,8 +7,9 @@ import {
   BullMqDispatcher,
   type BullMqDispatcherOptions,
 } from './bullmq.dispatcher.js';
+import type { JobProgressService } from './job-progress.service.js';
 import { MAIL_JOB, type MailJobPayload } from './processors/mail.processor.js';
-import type { Job, JobResult } from './queue.interface.js';
+import type { Job, JobRequest, JobResult } from './queue.interface.js';
 
 const config: QueueConfig = {
   enabled: true,
@@ -19,6 +20,7 @@ const config: QueueConfig = {
   concurrency: { mail: 3, notification: 2, maintenance: 1, digest: 1 },
   removeOnCompleteAfter: 60_000,
   removeOnFailAfter: 86_400_000,
+  progressTtl: 60_000,
   inProcessFallback: true,
   inProcessConcurrency: 5,
 };
@@ -33,7 +35,7 @@ const payload: MailJobPayload = {
   data: { firstName: 'Ada', appName: 'Example' },
 };
 
-const job: Job = { name: MAIL_JOB, payload };
+const job: JobRequest = { name: MAIL_JOB, payload };
 
 /** Stands in for the real bullmq module, recording what it was asked for. */
 function fakeBullmq() {
@@ -133,6 +135,36 @@ function deliver(
   return worker.handler({ name: entry.name, data: entry.data });
 }
 
+/**
+ * A progress store that records what it was told.
+ *
+ * The dispatcher writes to it on every state change, and a test that asserts
+ * nothing about it would pass whether the progress worked or not.
+ */
+function progress() {
+  const record = vi.fn().mockResolvedValue(undefined);
+  const markRunning = vi.fn().mockResolvedValue(undefined);
+  const finish = vi.fn().mockResolvedValue(undefined);
+  const forget = vi.fn().mockResolvedValue(undefined);
+
+  return {
+    service: {
+      record,
+      markRunning,
+      finish,
+      report: vi.fn().mockResolvedValue(undefined),
+      lookup: vi.fn(),
+      requestCancel: vi.fn(),
+      isCancelled: vi.fn().mockResolvedValue(false),
+      forget,
+    } as unknown as JobProgressService,
+    record,
+    markRunning,
+    finish,
+    forget,
+  };
+}
+
 function build(
   behaviour: () => Promise<JobResult> = async () => ({ ok: true }),
   bullmq: BullMqDispatcherOptions['bullmq'] = undefined,
@@ -141,14 +173,16 @@ function build(
   // Typed so a test can read back the job the registry was called with, which is
   // the only way to see what the processor would have received.
   const process = vi.fn<(job: Job) => Promise<JobResult>>(behaviour);
+  const store = progress();
 
   const dispatcher = new BullMqDispatcher(
     configService(),
     { process },
+    store.service,
     bullmq === undefined ? (fake.module as never) : bullmq,
   );
 
-  return { dispatcher, process, ...fake };
+  return { dispatcher, process, progress: store, ...fake };
 }
 
 describe('BullMqDispatcher availability', () => {
@@ -204,6 +238,7 @@ describe('BullMqDispatcher.enqueue', () => {
     const dispatcher = new BullMqDispatcher(
       configService(),
       { process: vi.fn() },
+      progress().service,
       module as never,
     );
 
@@ -237,6 +272,7 @@ describe('BullMqDispatcher.enqueue', () => {
     const dispatcher = new BullMqDispatcher(
       configService(),
       { process: vi.fn() },
+      progress().service,
       module as never,
     );
 
@@ -333,12 +369,15 @@ describe('BullMqDispatcher worker routing', () => {
   it('runs the job through the shared registry', async () => {
     const fake = build(async () => ({ ok: true }));
 
-    await fake.dispatcher.enqueue('mail', job);
+    const id = await fake.dispatcher.enqueue('mail', job);
     await deliver(fake, 'mail');
 
     // The same registry the in-process dispatcher uses, which is what makes the
     // fallback a fallback rather than a second implementation.
-    expect(fake.process).toHaveBeenCalledWith({ name: MAIL_JOB, payload });
+    //
+    // The id is the one the enqueue handed back, so the caller can watch the
+    // exact run the processor is doing.
+    expect(fake.process).toHaveBeenCalledWith({ id, name: MAIL_JOB, payload });
   });
 
   it('hands the processor the payload, not the stored envelope', async () => {
@@ -359,12 +398,16 @@ describe('BullMqDispatcher worker routing', () => {
   it('carries the dedupe key through the queue', async () => {
     const fake = build(async () => ({ ok: true }));
 
-    await fake.dispatcher.enqueue('mail', { ...job, dedupeKey: 'dedupe:abc' });
+    const id = await fake.dispatcher.enqueue('mail', {
+      ...job,
+      dedupeKey: 'dedupe:abc',
+    });
     await deliver(fake, 'mail');
 
     // The key is what stops a redelivery sending the same mail twice, and it
     // only does that if it survives the trip through redis.
     expect(fake.process).toHaveBeenCalledWith({
+      id,
       name: MAIL_JOB,
       payload,
       dedupeKey: 'dedupe:abc',
@@ -414,6 +457,99 @@ describe('BullMqDispatcher worker routing', () => {
 
     expect(maintenance?.options.concurrency).toBe(1);
     expect(mail?.options.concurrency).toBe(3);
+  });
+});
+
+describe('BullMqDispatcher progress', () => {
+  it('gives the caller the id of the job it queued', async () => {
+    const fake = build(async () => ({ ok: true }));
+
+    // The id is the handle: without it a caller cannot ask what happened to
+    // the job it asked for.
+    await expect(fake.dispatcher.enqueue('mail', job)).resolves.toEqual(
+      expect.any(String),
+    );
+  });
+
+  it('records the job under that id before it is handed to bullmq', async () => {
+    const fake = build(async () => ({ ok: true }));
+
+    const id = await fake.dispatcher.enqueue('mail', job);
+
+    // The record is written first, so a worker that picks the job up
+    // immediately cannot have its "running" overwritten by "queued".
+    expect(fake.progress.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id, name: MAIL_JOB }),
+      'mail',
+    );
+  });
+
+  it('records that the job started, and how it ended', async () => {
+    const fake = build(async () => ({ ok: true }));
+
+    const id = await fake.dispatcher.enqueue('mail', job);
+    await deliver(fake, 'mail');
+
+    expect(fake.progress.markRunning).toHaveBeenCalledWith(
+      expect.objectContaining({ id }),
+    );
+    expect(fake.progress.finish).toHaveBeenCalledWith(
+      id,
+      'completed',
+      undefined,
+    );
+  });
+
+  it('records a failure as a failure, with the reason', async () => {
+    const fake = build(async () => ({
+      ok: false,
+      error: 'the database went away',
+      retryable: false,
+    }));
+
+    const id = await fake.dispatcher.enqueue('mail', job);
+
+    await expect(deliver(fake, 'mail')).rejects.toThrow(/database went away/);
+
+    expect(fake.progress.finish).toHaveBeenCalledWith(
+      id,
+      'failed',
+      'the database went away',
+    );
+  });
+
+  it('forgets a job that bullmq refused, rather than leaving a record of it', async () => {
+    const fake = build();
+    const broken = {
+      Queue: class {
+        constructor() {}
+        async add() {
+          throw new Error('redis is down');
+        }
+        async close() {}
+      },
+      Worker: class {
+        constructor() {}
+        on() {
+          return this;
+        }
+      },
+    };
+
+    const dispatcher = new BullMqDispatcher(
+      configService(),
+      { process: vi.fn() },
+      fake.progress.service,
+      broken as never,
+    );
+
+    await expect(dispatcher.enqueue('mail', job)).rejects.toThrow(
+      /redis is down/,
+    );
+
+    // A record of a job that never reached the queue is a lie an operator would
+    // watch.
+    expect(fake.progress.forget).toHaveBeenCalled();
   });
 });
 
@@ -496,6 +632,7 @@ describe('BullMqDispatcher shutdown', () => {
     const dispatcher = new BullMqDispatcher(
       configService(),
       { process: vi.fn() },
+      progress().service,
       module as never,
     );
 
