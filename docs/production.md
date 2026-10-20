@@ -78,6 +78,12 @@ RETENTION_RUN_TIMEOUT=3600000  # give up rather than run forever
 | `POST /admin/retention/run`     | Queues a real run                               |
 | `GET /admin/retention/runs`     | The run history                                 |
 
+**The run can be watched and stopped.** `POST /admin/retention/run` returns the
+id of the job it queued; `GET /jobs/:id` reports how far the run has got and
+which table it is on, and `POST /jobs/:id/cancel` asks it to stop at the next
+batch boundary. Stopping needs the super administrator — `job:cancel` — while
+watching needs only `job:read`.
+
 **The schedule does not catch up a missed run.** If the process is not running at
 `RETENTION_SCHEDULE`, that night is skipped and nothing logs an error. Do not
 schedule deploys around that minute.
@@ -581,6 +587,21 @@ Sharing the two would mean a cache sweep evicting pending jobs, or a short queue
 TTL expiring cached authentication claims. That rule is in `env.validation.ts`
 rather than in a comment, because a namespace collision is silent until one of
 the two misbehaves in production.
+
+## Job progress
+
+| Variable             | Default    | Notes                                                         |
+| -------------------- | ---------- | ------------------------------------------------------------- |
+| `QUEUE_PROGRESS_TTL` | `86400000` | How long a job's progress is kept, in milliseconds (24 hours) |
+
+The progress of a job — how far it has got, what it is working on — is kept in
+redis under the queue's own prefix, and the TTL is the cleanup: the store deletes
+the record, so nothing has to be scheduled to. It is not a table, because it is
+live state about work that is happening now and is worthless a day later.
+
+A day is long enough for an operator to come back to a job that is still running,
+and short enough that the store is not a history of every job the application has
+ever run.
 
 ## Alerts
 

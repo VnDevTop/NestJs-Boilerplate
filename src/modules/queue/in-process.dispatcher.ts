@@ -5,12 +5,17 @@ import { MetricsService } from '../../core/metrics/index.js';
 import type { QueueConfig } from '../../configs/queue.config.js';
 import type {
   Job,
+  JobContext,
   JobQueue,
+  JobRequest,
   JobResult,
   QueueDepth,
   QueueName,
 } from './queue.interface.js';
+import { statusOf } from './queue.interface.js';
 import type { DeadLetterService } from './dead-letter.service.js';
+import type { JobProgressService } from './job-progress.service.js';
+import { newJobId } from './job-id.js';
 import { backoffDelay } from './retry.policy.js';
 import {
   MailProcessor,
@@ -57,6 +62,7 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     private readonly processors: ProcessorRegistry,
+    private readonly progress: JobProgressService,
     private readonly deadLetter?: DeadLetterService,
     private readonly metrics: MetricsService = new MetricsService(),
   ) {}
@@ -70,12 +76,27 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
    *
    * The work is started from a detached promise with its own catch, so nothing
    * here can reject into a caller that is already returning an http response.
+   *
+   * The id is minted here and handed back, so the caller has a handle on the
+   * job it just queued. The progress record is written before the job is put on
+   * the backlog, because the worker and this method both write that record and
+   * the worker's write is the later one.
    */
-  async enqueue(queue: QueueName, job: Job): Promise<void> {
+  async enqueue(queue: QueueName, request: JobRequest): Promise<string> {
+    const job: Job = { ...request, id: newJobId() };
+
+    await this.progress.record(job, queue);
+
     if (this.shuttingDown) {
       this.logger.warn(`Dropping ${job.name}, the dispatcher is shutting down`);
 
-      return;
+      await this.progress.finish(
+        job.id,
+        'failed',
+        'the dispatcher was shutting down',
+      );
+
+      return job.id;
     }
 
     if (this.waiting.length >= this.maxBacklog) {
@@ -87,12 +108,20 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
           'Raise QUEUE_IN_PROCESS_CONCURRENCY or enable the queue.',
       );
 
-      return;
+      await this.progress.finish(
+        job.id,
+        'failed',
+        'the in-process backlog is full',
+      );
+
+      return job.id;
     }
 
     this.waiting.push({ queue, job, attempt: 1, enqueuedAt: Date.now() });
 
     void this.drain(queue);
+
+    return job.id;
   }
 
   /**
@@ -163,8 +192,13 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
       (Date.now() - entry.enqueuedAt) / 1000,
     );
 
+    await this.progress.markRunning(entry.job);
+
     try {
-      result = await this.processors.process(entry.job);
+      result = await this.processors.process(
+        entry.job,
+        this.progress.context(entry.job),
+      );
     } catch (error) {
       // The mail processor catches its own failures, so reaching this is a bug in
       // a processor rather than a provider problem. Retried, because discarding
@@ -179,6 +213,8 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
         Math.max(0, (this.active.get(entry.queue) ?? 1) - 1),
       );
     }
+
+    await this.progress.finish(entry.job.id, statusOf(result), result.error);
 
     try {
       await this.afterAttempt(entry, result);
@@ -199,6 +235,18 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
     result: JobResult,
   ): Promise<void> {
     if (result.ok) {
+      return;
+    }
+
+    // A cancelled job is not a failure. It was asked to stop and it stopped, so
+    // it is neither retried nor dead-lettered: retrying it would do the work
+    // nobody wanted done, and a dead-letter entry would put a line in front of
+    // an operator that says nothing is wrong.
+    if (result.cancelled === true) {
+      this.logger.log(
+        `Job ${entry.job.name} stopped at a safe point because it was cancelled`,
+      );
+
       return;
     }
 
@@ -300,9 +348,13 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
  *
  * An interface rather than a direct `MailProcessor` call so adding a notification
  * processor is a provider in the module and not an edit to the dispatcher.
+ *
+ * The context is optional and is passed straight through: a processor that does
+ * not need it does not have to declare it, and the ones that do — the long jobs —
+ * get it without the queue knowing what they are doing with it.
  */
 export interface ProcessorRegistry {
-  process(job: Job): Promise<JobResult>;
+  process(job: Job, context?: JobContext): Promise<JobResult>;
 }
 
 /** Payload type re-exported so callers do not import the processor's file. */

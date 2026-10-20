@@ -65,6 +65,18 @@ export class MaintenanceLog {
   @Column({ type: 'boolean', default: false })
   timedOut!: boolean;
 
+  /**
+   * True when the run stopped because somebody asked it to.
+   *
+   * Its own column for the same reason `timedOut` has one, and because the two
+   * mean opposite things: a timed-out run needs attention and a cancelled run
+   * was stopped on purpose. Both leave targets unreached, so `pending` alone
+   * cannot tell them apart, and a record that cannot tell them apart is a
+   * record an operator has to guess at.
+   */
+  @Column({ type: 'boolean', default: false })
+  cancelled!: boolean;
+
   @Column({ type: 'varchar', length: 20, default: RetentionTrigger.Cron })
   trigger!: RetentionTrigger;
 

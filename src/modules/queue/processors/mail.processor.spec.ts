@@ -17,7 +17,12 @@ function payload(overrides: Partial<MailJobPayload> = {}): MailJobPayload {
 function job(
   overrides: Partial<Job<MailJobPayload>> = {},
 ): Job<MailJobPayload> {
-  return { name: MAIL_JOB, payload: payload(), ...overrides };
+  return {
+    id: '11111111-1111-4111-8111-111111111111',
+    name: MAIL_JOB,
+    payload: payload(),
+    ...overrides,
+  };
 }
 
 /** A MailService whose result the test decides. */

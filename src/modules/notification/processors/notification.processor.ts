@@ -12,11 +12,13 @@ import type { ChannelDelivery } from '../types/index.js';
 /**
  * The one job name this processor answers to.
  *
- * `notify.` rather than `notification.` because `BullMqDispatcher.queueOf` routes
- * by prefix and its notification branch tests for `notify`. A name starting
- * `notification` would land on the mail queue, where mail concurrency and the mail
- * dedupe key apply to a message that is not mail. The prefix is load-bearing and
- * this comment is where the next person finds out.
+ * `notify.` rather than `notification.` is a naming convention, not a routing
+ * rule: the queue a job lands on is chosen by the caller at enqueue time
+ * (`QUEUE_NAMES.notification`), and the processor is found by an exact name
+ * match in `ProcessorRouter`. The prefix still matters, because a job name is
+ * what an operator reads in a dead-letter entry and in the logs, and `mail.send`
+ * and `notify.send` saying what they are is worth more than the symmetry with the
+ * queue name.
  */
 export const NOTIFICATION_JOB = 'notify.send';
 

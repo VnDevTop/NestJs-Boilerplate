@@ -10,6 +10,7 @@ import type { Job, JobResult } from './queue.interface.js';
 import type { RedisClientService } from './redis-client.service.js';
 
 const job: Job = {
+  id: '11111111-1111-4111-8111-111111111111',
   name: 'mail.send',
   payload: {},
   dedupeKey: 'dedupe:abc',
@@ -113,7 +114,11 @@ describe('DeadLetterService.record', () => {
     const { redis: service, pushToList } = redis();
 
     await new DeadLetterService(service, 'mail').record(
-      { name: 'mail.send', payload: {} },
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'mail.send',
+        payload: {},
+      },
       { ok: false, error: 'x' },
       1,
     );

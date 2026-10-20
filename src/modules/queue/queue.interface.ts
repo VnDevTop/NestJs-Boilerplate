@@ -38,13 +38,17 @@ export const QUEUE_NAMES = {
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
 /**
- * A unit of work, addressed by name.
+ * What a caller hands to the queue.
  *
  * `payload` is `unknown` deliberately: the processor for a name is the only thing
  * that knows its shape, and a union here would couple every enqueue site to every
  * job type. The processor validates on the way in.
+ *
+ * No `id`. The queue mints it, so a caller cannot enqueue a job it cannot find
+ * again, and the id that ends up in the progress record is the same one the
+ * worker reports against.
  */
-export interface Job<TPayload = unknown> {
+export interface JobRequest<TPayload = unknown> {
   name: string;
   payload: TPayload;
   /**
@@ -55,6 +59,19 @@ export interface Job<TPayload = unknown> {
    * want every enqueue to run.
    */
   dedupeKey?: string;
+}
+
+/**
+ * A unit of work, addressed by name and by id.
+ *
+ * The same shape the caller submitted, plus the id the queue minted for it. The
+ * processor sees the id so that its log lines and its progress reports can be
+ * tied to one run of one job — a retried job is the same job twice, and the
+ * second attempt is a different run of it.
+ */
+export interface Job<TPayload = unknown> extends JobRequest<TPayload> {
+  /** Identifies this run of this job. Minted by the queue. */
+  id: string;
 }
 
 /**
@@ -74,6 +91,106 @@ export interface JobResult {
    * transient fault.
    */
   retryable?: boolean;
+  /**
+   * True when the job stopped because somebody asked it to.
+   *
+   * Distinct from a failure on purpose. A cancelled job did not break: it was
+   * asked to stop and it stopped at the first safe point. So it is neither
+   * retried nor dead-lettered — retrying it would do the work nobody wanted
+   * done, and dead-lettering it would put an entry in front of an operator that
+   * says nothing is wrong.
+   */
+  cancelled?: boolean;
+}
+
+/**
+ * Where a job has got to.
+ *
+ * The states are the ones an operator can act on: a job that is waiting, a job
+ * that is running, a job that finished, a job that broke, and a job that was
+ * stopped on request. `failed` and `cancelled` are separate because they mean
+ * opposite things — one needs attention, the other was asked for.
+ */
+export type JobStatus =
+  'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+/**
+ * What a job's outcome means for its record.
+ *
+ * One place, because both dispatchers write the same record and a rule that
+ * lived in each of them would drift: the in-process one calling a job "failed"
+ * while the bullmq one calls it "completed" is a difference an operator sees as
+ * a bug in the wrong place.
+ */
+export const statusOf = (
+  result: JobResult,
+): Exclude<JobStatus, 'queued' | 'running'> => {
+  // Checked before the success flag: a job that stopped because it was asked
+  // to did not finish, and reporting it as completed would say the work was
+  // done when it was not.
+  if (result.cancelled === true) {
+    return 'cancelled';
+  }
+
+  return result.ok ? 'completed' : 'failed';
+};
+
+/**
+ * What a job reports about how far it has got.
+ *
+ * `processed` and `total` count the job's own items, not rows and not bytes:
+ * what an item is depends on the work, and only the processor knows. `current`
+ * names the item in flight, which is the part an operator actually reads — "it is
+ * on table 7 of 9" says more than "67%".
+ *
+ * `total` is null rather than zero when the work does not know its size up
+ * front, because zero would be a division by zero in every progress display
+ * and a claim that the job has nothing to do.
+ */
+export interface JobProgressUpdate {
+  /** How many items are done. */
+  processed?: number;
+  /** How many items there are in total, when that is known. */
+  total?: number | null;
+  /** The item in flight, named the way the job names its items. */
+  current?: string | null;
+}
+
+/**
+ * What a processor is told about the job it is running.
+ *
+ * The two operations here are the whole of the cancellation story: report how
+ * far you have got, and find out whether you should stop. Both are optional in
+ * the sense that a processor that ignores the context still works — a mail job
+ * has one item and finishes in milliseconds — and both are what turn a
+ * five-minute import from a black box into something an operator can watch and
+ * stop.
+ *
+ * Passed in rather than imported, so a processor that wants to report progress
+ * does not have to know that redis exists, and so the queue module stays
+ * importable from below the processors.
+ */
+export interface JobContext {
+  /** The id of this run of this job. */
+  readonly id: string;
+  /** The name of this job. */
+  readonly name: string;
+  /**
+   * Reports how far the job has got.
+   *
+   * Best effort: a report that cannot be stored is dropped rather than failing
+   * the job, because the work is the point and the progress is only a report on
+   * it.
+   */
+  report(update: JobProgressUpdate): Promise<void>;
+  /**
+   * True when somebody asked for this job to stop.
+   *
+   * Checked at a boundary the job chooses, never inside one. A job that stops
+   * halfway through a write leaves the data in a state nobody planned for, so
+   * the answer to this question is only useful where stopping is safe.
+   */
+  isCancelled(): Promise<boolean>;
 }
 
 /** How a job should be retried. Mirrors what a queue backend needs. */
@@ -97,8 +214,12 @@ export interface JobQueue {
    * That distinction is the point: a registration must not wait for SMTP, and an
    * enqueue that resolved on completion would put the provider's latency back into
    * the request.
+   *
+   * Resolves with the id the job was given, which is the handle the caller uses
+   * to watch it and to stop it. The id is minted here rather than by the caller,
+   * so a job cannot be enqueued without one and every job can be found again.
    */
-  enqueue(queue: QueueName, job: Job): Promise<void>;
+  enqueue(queue: QueueName, request: JobRequest): Promise<string>;
 
   /**
    * Current counts for one queue, or `null` when the implementation cannot answer.

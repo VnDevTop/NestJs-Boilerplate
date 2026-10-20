@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 
-import type { Job, JobResult } from './queue.interface.js';
+import type { Job, JobContext, JobResult } from './queue.interface.js';
 import type { RedisClientService } from './redis-client.service.js';
 import type { ProcessorRegistry } from './in-process.dispatcher.js';
 import { retryWindowMs, type BackoffOptions } from './retry.policy.js';
@@ -67,11 +67,11 @@ export class DedupeGuard implements ProcessorRegistry {
     return this.ttlSeconds;
   }
 
-  async process(job: Job): Promise<JobResult> {
+  async process(job: Job, context?: JobContext): Promise<JobResult> {
     const key = job.dedupeKey;
 
     if (key === undefined || key === '') {
-      return this.inner.process(job);
+      return this.inner.process(job, context);
     }
 
     const claimed = await this.redis.setIfAbsent(
@@ -97,15 +97,28 @@ export class DedupeGuard implements ProcessorRegistry {
           'A duplicate is possible; a lost email is not.',
       );
 
-      return this.inner.process(job);
+      return this.inner.process(job, context);
     }
 
-    return this.claimed(key, job);
+    return this.claimed(key, job, context);
   }
 
-  private async claimed(key: string, job: Job): Promise<JobResult> {
+  private async claimed(
+    key: string,
+    job: Job,
+    context?: JobContext,
+  ): Promise<JobResult> {
     try {
-      const result = await this.inner.process(job);
+      const result = await this.inner.process(job, context);
+
+      if (result.cancelled === true) {
+        // The work was not done, so the key must not be held. The operator may
+        // well run it again, and a held key would skip the second attempt —
+        // which is the opposite of what cancelling a job should mean.
+        await this.redis.release(key);
+
+        return result;
+      }
 
       if (result.ok || result.retryable === false) {
         // Success keeps the key, which is the entire mechanism. A permanent

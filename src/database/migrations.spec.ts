@@ -56,12 +56,32 @@ const ALTER_MIGRATIONS: {
   adds: string[];
   /** Table each one was added to, for folding into the CREATE TABLE comparison. */
   tables?: Record<string, string>;
+  /**
+   * Columns that are legitimately `NOT NULL`.
+   *
+   * The rule the check below enforces is about *correlation* columns: a column
+   * that identifies something which may not exist has to be nullable, or the
+   * rows that do not have it become unrecordable.
+   *
+   * A flag with a default is not that. Adding a column with a default gives
+   * every existing row that default, so no row is left unusable, and making the
+   * column nullable instead would leave every reader to handle a null that
+   * means "false". Listing the column here is the amendment, written down
+   * rather than smuggled in.
+   */
+  notNull?: string[];
 }[] = [
   { file: '1791900000000-AddVersionColumns.ts', adds: ['version'] },
   {
     file: '1792100000000-AddMailLogs.ts',
     adds: ['requestId'],
     tables: { requestId: 'notification_logs' },
+  },
+  {
+    file: '1792500000000-AddMaintenanceCancelled.ts',
+    adds: ['cancelled'],
+    tables: { cancelled: 'maintenance_logs' },
+    notNull: ['cancelled'],
   },
 ];
 
@@ -264,65 +284,74 @@ describe.each(MIGRATIONS)('the $file migration', ({ file, tables: TABLES }) => {
   });
 });
 
-describe.each(ALTER_MIGRATIONS)('the $file migration', ({ file, adds }) => {
-  const { up } = read(file);
+describe.each(ALTER_MIGRATIONS)(
+  'the $file migration',
+  ({ file, adds, notNull }) => {
+    const { up } = read(file);
 
-  it('adds every column it claims to', () => {
-    // Grepped out of the source rather than compared against the entity: this one
-    // adds a subset, and the subset is the point.
-    for (const column of adds) {
-      expect(up, column).toContain(`ADD "${column}"`);
-    }
-  });
+    it('adds every column it claims to', () => {
+      // Grepped out of the source rather than compared against the entity: this one
+      // adds a subset, and the subset is the point.
+      for (const column of adds) {
+        expect(up, column).toContain(`ADD "${column}"`);
+      }
+    });
 
-  it('makes a version column NOT NULL, so no existing row is left unusable', () => {
-    // A nullable version would need a null case in every comparison, and the one
-    // place that would compare it is exactly the place that must not have an
-    // exception. Conditional because a `requestId` is *supposed* to be nullable — a
-    // retention job's own mail has no request behind it — and not every ALTER
-    // migration here adds a version.
-    if (!adds.includes('version')) {
-      return;
-    }
-
-    expect(up).toMatch(/ADD "version" \w+ NOT NULL DEFAULT/);
-  });
-
-  it('leaves a correlation column nullable, because some sends have no request', () => {
-    // The opposite requirement, and it is a real one: a send from a scheduled job
-    // has no request id, and a NOT NULL column would make it unrecordable — which
-    // is how a table ends up with no row for the failures nobody asked about.
-    for (const column of adds) {
-      if (column === 'version') {
-        continue;
+    it('makes a version column NOT NULL, so no existing row is left unusable', () => {
+      // A nullable version would need a null case in every comparison, and the one
+      // place that would compare it is exactly the place that must not have an
+      // exception. Conditional because a `requestId` is *supposed* to be nullable — a
+      // retention job's own mail has no request behind it — and not every ALTER
+      // migration here adds a version.
+      if (!adds.includes('version')) {
+        return;
       }
 
-      expect(up, column).not.toMatch(
-        new RegExp(`ADD "${column}"[^;]*NOT NULL`),
+      expect(up).toMatch(/ADD "version" \w+ NOT NULL DEFAULT/);
+    });
+
+    it('leaves a correlation column nullable, because some sends have no request', () => {
+      // The opposite requirement, and it is a real one: a send from a scheduled job
+      // has no request id, and a NOT NULL column would make it unrecordable — which
+      // is how a table ends up with no row for the failures nobody asked about.
+      for (const column of adds) {
+        if (column === 'version') {
+          continue;
+        }
+
+        // A flag with a default is the documented exception: every existing row
+        // gets the default, so no row is left unusable.
+        if (notNull?.includes(column)) {
+          continue;
+        }
+
+        expect(up, column).not.toMatch(
+          new RegExp(`ADD "${column}"[^;]*NOT NULL`),
+        );
+      }
+    });
+
+    it('is declared on an entity, so `save()` actually uses it', () => {
+      // The migration alone changes nothing: `@VersionColumn()` is what makes
+      // TypeORM put the version in the WHERE clause.
+      const declared = ENTITIES.filter((entity) =>
+        getMetadataArgsStorage()
+          .columns.filter((column) => column.target === entity)
+          .some((column) => column.options?.type === 'integer'),
       );
-    }
-  });
 
-  it('is declared on an entity, so `save()` actually uses it', () => {
-    // The migration alone changes nothing: `@VersionColumn()` is what makes
-    // TypeORM put the version in the WHERE clause.
-    const declared = ENTITIES.filter((entity) =>
-      getMetadataArgsStorage()
-        .columns.filter((column) => column.target === entity)
-        .some((column) => column.options?.type === 'integer'),
-    );
+      expect(declared.length).toBeGreaterThan(0);
+    });
 
-    expect(declared.length).toBeGreaterThan(0);
-  });
+    it('can be rolled back without leaving the entities expecting a column that is gone', () => {
+      const { down } = read(file);
 
-  it('can be rolled back without leaving the entities expecting a column that is gone', () => {
-    const { down } = read(file);
-
-    for (const column of adds) {
-      expect(down, column).toContain(`DROP COLUMN "${column}"`);
-    }
-  });
-});
+      for (const column of adds) {
+        expect(down, column).toContain(`DROP COLUMN "${column}"`);
+      }
+    });
+  },
+);
 
 describe('the notification tables migration', () => {
   const { up } = read(MIGRATIONS[0]!.file);

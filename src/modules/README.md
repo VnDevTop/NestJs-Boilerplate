@@ -103,7 +103,22 @@ GET    /users
 PATCH  /users/:id
 DELETE /users/:id
 PATCH  /auth/account/:id/unlock
+GET    /jobs/:id
 ```
+
+`GET /jobs/:id` needs `job:read`, which the administrator holds. Watching a job
+changes nothing.
+
+### Super admin
+
+```text
+POST   /jobs/:id/cancel
+```
+
+`POST /jobs/:id/cancel` needs `job:cancel`, which only the super administrator
+holds: stopping a job is irreversible and leaves the work half done. Watching and
+stopping are two permissions because they are two different capabilities — see
+[src/modules/queue/README.md](src/modules/queue/README.md).
 
 ### Manager, via `@ManagerOnly()` on the controller
 

@@ -20,6 +20,7 @@ const RUN: RetentionRunResult = {
   startedAt: '2026-10-03T03:17:00.000Z',
   durationMs: 1_234,
   timedOut: false,
+  cancelled: false,
   pending: [],
   totalDeleted: 0,
   failed: [],
@@ -66,7 +67,7 @@ function harness(
     }),
   );
   const latest = vi.fn().mockResolvedValue(options.latestFound ?? entry());
-  const enqueue = vi.fn().mockResolvedValue(undefined);
+  const enqueue = vi.fn().mockResolvedValue('job-id-1');
 
   const controller = new AdminRetentionController(
     { run, record, history, latest } as unknown as RetentionService,
@@ -186,6 +187,14 @@ describe('AdminRetentionController', () => {
 
       expect(result.queued).toBe(true);
       expect(result.see).toBe('/admin/retention/runs/latest');
+    });
+
+    it('hands back the id of the job, so the run can be watched', async () => {
+      const result = await h.controller.run();
+
+      // The history says what happened; the job says what is happening now, and
+      // a run that takes minutes raises that question while it is still going.
+      expect(result.jobId).toBe('job-id-1');
     });
   });
 

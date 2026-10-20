@@ -269,32 +269,32 @@ Each folder documents itself, so an explanation sits where you are already
 looking. The `docs/` folder is also published as a site at
 <https://vndevtop.github.io/NestJs-Boilerplate/>.
 
-|                                                                |                                                           |
-| -------------------------------------------------------------- | --------------------------------------------------------- |
-| [PLAN.md](PLAN.md)                                             | the phases, their status, and what is still open          |
-| [ROADMAP.md](ROADMAP.md)                                       | what is shipped, open decisions, and enhancement plans    |
-| [CHANGELOG.md](CHANGELOG.md)                                   | what each change did and why, per commit                  |
-| [docs/](docs/)                                                 | the guides, also published as a site                      |
-| [docs/installation.md](docs/installation.md)                   | installing it, the two gotchas, and how to verify it      |
-| [docs/production.md](docs/production.md)                       | rate limiting, headers, CORS, logging, health, Docker, CI |
-| [docs/optional-integrations.md](docs/optional-integrations.md) | how an optional dependency stays out of the install       |
-| [docs/runbook.md](docs/runbook.md)                             | what to do when mail, redis or the queue misbehave        |
-| [src/configs](src/configs/README.md)                           | configuration namespaces and environment validation       |
-| [src/database](src/database/README.md)                         | migrations, seeds, the standalone data source             |
-| [src/common](src/common/README.md)                             | guards, decorators, middleware, utilities                 |
-| [src/core](src/core/README.md)                                 | technical capabilities                                    |
-| [src/core/cache](src/core/cache/README.md)                     | coalescing, stale while revalidate, invalidation          |
-| [src/core/health](src/core/health/README.md)                   | liveness vs readiness                                     |
-| [src/core/logger](src/core/logger/README.md)                   | development colours vs production JSON                    |
-| [src/modules](src/modules/README.md)                           | module rules, and an index of the per-module summaries    |
-| [src/modules/auth](src/modules/auth/README.md)                 | sessions, rotation, devices, two-factor                   |
-| [src/modules/users](src/modules/users/README.md)               | the user domain and its authorisation                     |
-| [src/modules/admin](src/modules/admin/README.md)               | operator-only routes                                      |
-| [src/modules/audit](src/modules/audit/README.md)               | what is recorded, and what deliberately is not            |
-| [src/modules/mail](src/modules/mail/README.md)                 | templates, transports, the delivery record                |
-| [src/modules/queue](src/modules/queue/README.md)               | the two drivers, deduplication, the dead-letter list      |
-| [src/modules/maintenance](src/modules/maintenance/README.md)   | nightly retention, batching, dry run, run history         |
-| [src/modules/notification](src/modules/notification/README.md) | operator alerts, channels, per-user preferences           |
+|                                                                |                                                                    |
+| -------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [PLAN.md](PLAN.md)                                             | the phases, their status, and what is still open                   |
+| [ROADMAP.md](ROADMAP.md)                                       | what is shipped, open decisions, and enhancement plans             |
+| [CHANGELOG.md](CHANGELOG.md)                                   | what each change did and why, per commit                           |
+| [docs/](docs/)                                                 | the guides, also published as a site                               |
+| [docs/installation.md](docs/installation.md)                   | installing it, the two gotchas, and how to verify it               |
+| [docs/production.md](docs/production.md)                       | rate limiting, headers, CORS, logging, health, Docker, CI          |
+| [docs/optional-integrations.md](docs/optional-integrations.md) | how an optional dependency stays out of the install                |
+| [docs/runbook.md](docs/runbook.md)                             | what to do when mail, redis or the queue misbehave                 |
+| [src/configs](src/configs/README.md)                           | configuration namespaces and environment validation                |
+| [src/database](src/database/README.md)                         | migrations, seeds, the standalone data source                      |
+| [src/common](src/common/README.md)                             | guards, decorators, middleware, utilities                          |
+| [src/core](src/core/README.md)                                 | technical capabilities                                             |
+| [src/core/cache](src/core/cache/README.md)                     | coalescing, stale while revalidate, invalidation                   |
+| [src/core/health](src/core/health/README.md)                   | liveness vs readiness                                              |
+| [src/core/logger](src/core/logger/README.md)                   | development colours vs production JSON                             |
+| [src/modules](src/modules/README.md)                           | module rules, and an index of the per-module summaries             |
+| [src/modules/auth](src/modules/auth/README.md)                 | sessions, rotation, devices, two-factor                            |
+| [src/modules/users](src/modules/users/README.md)               | the user domain and its authorisation                              |
+| [src/modules/admin](src/modules/admin/README.md)               | operator-only routes                                               |
+| [src/modules/audit](src/modules/audit/README.md)               | what is recorded, and what deliberately is not                     |
+| [src/modules/mail](src/modules/mail/README.md)                 | templates, transports, the delivery record                         |
+| [src/modules/queue](src/modules/queue/README.md)               | the two drivers, deduplication, job progress, the dead-letter list |
+| [src/modules/maintenance](src/modules/maintenance/README.md)   | nightly retention, batching, dry run, run history                  |
+| [src/modules/notification](src/modules/notification/README.md) | operator alerts, channels, per-user preferences                    |
 
 ## Known limitations
 

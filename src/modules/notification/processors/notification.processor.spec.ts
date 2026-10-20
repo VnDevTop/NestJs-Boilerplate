@@ -55,7 +55,11 @@ function harness(
 }
 
 const job = (payload: unknown): Job<never> =>
-  ({ name: NOTIFICATION_JOB, payload }) as Job<never>;
+  ({
+    id: '11111111-1111-4111-8111-111111111111',
+    name: NOTIFICATION_JOB,
+    payload,
+  }) as Job<never>;
 
 beforeEach(() => {
   vi.clearAllMocks();

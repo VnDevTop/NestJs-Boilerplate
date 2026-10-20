@@ -18,6 +18,8 @@ import { DeadLetterService } from './dead-letter.service.js';
 import { DedupeGuard } from './dedupe.guard.js';
 import { InProcessDispatcher } from './in-process.dispatcher.js';
 import type { ProcessorRegistry } from './in-process.dispatcher.js';
+import { JobProgressService } from './job-progress.service.js';
+import { JobsController } from './jobs.controller.js';
 import { RetentionProcessor } from '../maintenance/processors/retention.processor.js';
 import {
   RedisThrottlerStorage,
@@ -68,6 +70,11 @@ const configOf = (configService: ConfigService): QueueConfig =>
     // `AppModule` importing `TracingModule` makes it available to `AppModule`.
     TracingModule,
   ],
+  // The routes that watch and stop a job. They live here rather than in the
+  // admin module because the queue owns the id they are addressed by, and
+  // because the admin module is about the application's own data rather than
+  // about the work the application is doing.
+  controllers: [JobsController],
   providers: [
     // The mail delivery record comes from `MailModule`, which `QueueModule` already
     // imports. The processor takes it as an optional constructor dependency rather
@@ -95,6 +102,10 @@ const configOf = (configService: ConfigService): QueueConfig =>
     // `RedisClientService` is provided; the guard itself imports nothing from the
     // queue beyond this one class.
     IdempotencyService,
+    // Where a job's progress is kept, and where a cancellation is registered.
+    // Provided here rather than in the module that owns the jobs because the
+    // queue is what mints the id the progress is filed under.
+    JobProgressService,
 
     /**
      * The registry every dispatcher calls, wrapped in the deduplication guard.
@@ -140,14 +151,20 @@ const configOf = (configService: ConfigService): QueueConfig =>
      */
     {
       provide: JOB_QUEUE,
-      inject: [ConfigService, PROCESSOR_REGISTRY, DeadLetterService],
+      inject: [
+        ConfigService,
+        PROCESSOR_REGISTRY,
+        DeadLetterService,
+        JobProgressService,
+      ],
       useFactory: (
         configService: ConfigService,
         registry: ProcessorRegistry,
         deadLetter: DeadLetterService,
+        progress: JobProgressService,
       ): JobQueue => {
         const config = configOf(configService);
-        const bullmq = new BullMqDispatcher(configService, registry);
+        const bullmq = new BullMqDispatcher(configService, registry, progress);
 
         if (config.enabled && bullmq.isAvailable()) {
           return bullmq;
@@ -163,6 +180,7 @@ const configOf = (configService: ConfigService): QueueConfig =>
         return new InProcessDispatcher(
           configService,
           registry,
+          progress,
           config.inProcessFallback ? deadLetter : undefined,
         );
       },
@@ -171,6 +189,7 @@ const configOf = (configService: ConfigService): QueueConfig =>
   exports: [
     JOB_QUEUE,
     IdempotencyService,
+    JobProgressService,
     PROCESSOR_REGISTRY,
     RedisClientService,
     DeadLetterService,

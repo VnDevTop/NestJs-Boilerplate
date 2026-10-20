@@ -22,6 +22,7 @@ function runResult(
     startedAt: '2026-10-03T03:17:00.000Z',
     durationMs: 1_234,
     timedOut: false,
+    cancelled: false,
     pending: [],
     totalDeleted: 42,
     failed: [],
@@ -92,7 +93,11 @@ function harness(result: RetentionRunResult | Error = runResult()): Harness {
  * test.
  */
 const job = (payload: unknown): Job<RetentionJobPayload> =>
-  ({ name: RETENTION_JOB, payload }) as Job<RetentionJobPayload>;
+  ({
+    id: '11111111-1111-4111-8111-111111111111',
+    name: RETENTION_JOB,
+    payload,
+  }) as Job<RetentionJobPayload>;
 
 describe('RetentionProcessor', () => {
   let h: Harness;
@@ -109,6 +114,90 @@ describe('RetentionProcessor', () => {
 
     it('publishes the job name the queue will enqueue', () => {
       expect(RETENTION_JOB).toBe('maintenance.run-retention');
+    });
+  });
+
+  describe('a cancelled run', () => {
+    it('reports the job as cancelled, not as a failure', async () => {
+      h = harness(runResult({ cancelled: true }));
+
+      const result = await h.processor.process(job({}));
+
+      // A cancelled run is neither a success nor a failure: the work is
+      // unfinished and it was asked to be. The dispatcher reads `cancelled`
+      // before it reads anything else, so the two cannot be confused.
+      expect(result.cancelled).toBe(true);
+      expect(result.ok).toBe(false);
+    });
+
+    it('asks the context whether to stop, and reports what it is doing', async () => {
+      const report = vi.fn().mockResolvedValue(undefined);
+      const isCancelled = vi.fn().mockResolvedValue(false);
+      const context = {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: RETENTION_JOB,
+        report,
+        isCancelled,
+      };
+
+      await h.processor.process(job({}), context);
+
+      // The two seams the run needs: one to be told when to stop, one to say
+      // where it is. Without them the run cannot be watched or stopped.
+      expect(h.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shouldStop: expect.any(Function),
+          onProgress: expect.any(Function),
+        }),
+      );
+    });
+
+    it('passes the cancellation check straight to the context', async () => {
+      const report = vi.fn().mockResolvedValue(undefined);
+      const isCancelled = vi.fn().mockResolvedValue(true);
+      const context = {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: RETENTION_JOB,
+        report,
+        isCancelled,
+      };
+
+      await h.processor.process(job({}), context);
+
+      const options = h.run.mock.calls[0]?.[0] as {
+        shouldStop: () => Promise<boolean>;
+      };
+
+      await expect(options.shouldStop()).resolves.toBe(true);
+      expect(isCancelled).toHaveBeenCalled();
+    });
+
+    it('reports the progress the run gives it', async () => {
+      const report = vi.fn().mockResolvedValue(undefined);
+      const context = {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: RETENTION_JOB,
+        report,
+        isCancelled: vi.fn().mockResolvedValue(false),
+      };
+
+      await h.processor.process(job({}), context);
+
+      const options = h.run.mock.calls[0]?.[0] as {
+        onProgress: (progress: {
+          processed: number;
+          total: number;
+          current: string;
+        }) => Promise<void>;
+      };
+
+      await options.onProgress({ processed: 2, total: 9, current: 'users' });
+
+      expect(report).toHaveBeenCalledWith({
+        processed: 2,
+        total: 9,
+        current: 'users',
+      });
     });
   });
 

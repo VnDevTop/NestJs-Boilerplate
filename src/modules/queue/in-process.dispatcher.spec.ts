@@ -7,8 +7,9 @@ import {
   InProcessDispatcher,
   type ProcessorRegistry,
 } from './in-process.dispatcher.js';
+import type { JobProgressService } from './job-progress.service.js';
 import { MAIL_JOB, type MailJobPayload } from './processors/mail.processor.js';
-import type { Job, JobResult } from './queue.interface.js';
+import type { Job, JobRequest, JobResult } from './queue.interface.js';
 
 const config: QueueConfig = {
   enabled: false,
@@ -19,6 +20,7 @@ const config: QueueConfig = {
   concurrency: { mail: 2, notification: 2, maintenance: 1, digest: 1 },
   removeOnCompleteAfter: 1000,
   removeOnFailAfter: 1000,
+  progressTtl: 1000,
   inProcessFallback: true,
   inProcessConcurrency: 5,
 };
@@ -27,6 +29,44 @@ interface Counters {
   calls: Job[];
   concurrent: number;
   peak: number;
+}
+
+/**
+ * A progress store that records what it was told.
+ *
+ * The dispatcher writes to it on every state change, and a test that asserts
+ * nothing about it would pass whether the progress worked or not.
+ */
+function progress() {
+  const record = vi.fn().mockResolvedValue(undefined);
+  const markRunning = vi.fn().mockResolvedValue(undefined);
+  const finish = vi.fn().mockResolvedValue(undefined);
+  const forget = vi.fn().mockResolvedValue(undefined);
+
+  return {
+    service: {
+      record,
+      markRunning,
+      finish,
+      report: vi.fn().mockResolvedValue(undefined),
+      lookup: vi.fn(),
+      requestCancel: vi.fn(),
+      isCancelled: vi.fn().mockResolvedValue(false),
+      forget,
+      // The context the dispatcher hands to a processor. A fake one, so a test
+      // that does not care about the progress does not have to build one.
+      context: vi.fn((job: Job) => ({
+        id: job.id,
+        name: job.name,
+        report: vi.fn().mockResolvedValue(undefined),
+        isCancelled: vi.fn().mockResolvedValue(false),
+      })),
+    } as unknown as JobProgressService,
+    record,
+    markRunning,
+    finish,
+    forget,
+  };
 }
 
 function build(
@@ -57,13 +97,17 @@ function build(
     getOrThrow: (key: string) => (key === 'queue' ? config : undefined),
   } as unknown as ConfigService;
 
+  const store = progress();
+
   return {
     dispatcher: new InProcessDispatcher(
       configService,
       processors,
+      store.service,
       deadLetter as never,
     ),
     counters,
+    progress: store,
   };
 }
 
@@ -75,7 +119,7 @@ const payload: MailJobPayload = {
   data: { firstName: 'Ada', appName: 'Example' },
 };
 
-const job: Job = { name: MAIL_JOB, payload };
+const job: JobRequest = { name: MAIL_JOB, payload };
 
 /** Lets the detached promise chain settle, including any backoff timers. */
 const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -119,9 +163,12 @@ describe('InProcessDispatcher.enqueue', () => {
       throw new Error('processor exploded');
     });
 
-    await expect(
-      throwing.dispatcher.enqueue('mail', job),
-    ).resolves.toBeUndefined();
+    // The enqueue resolves with the id of the job, so a caller has a handle on
+    // it. It resolves even when the processor throws, because the throw happens
+    // later, in the worker.
+    await expect(throwing.dispatcher.enqueue('mail', job)).resolves.toEqual(
+      expect.any(String),
+    );
   });
 
   it('leaves no unhandled rejection when a processor throws', async () => {
@@ -152,6 +199,115 @@ describe('InProcessDispatcher.enqueue', () => {
     await settle();
 
     expect(counters.calls).toHaveLength(0);
+  });
+});
+
+describe('InProcessDispatcher progress', () => {
+  it('gives the caller the id of the job it queued', async () => {
+    const { dispatcher } = build(async () => ok);
+
+    // The id is the handle: without it a caller cannot ask what happened to
+    // the job it asked for.
+    await expect(dispatcher.enqueue('mail', job)).resolves.toEqual(
+      expect.any(String),
+    );
+  });
+
+  it('records the job under that id before it is queued', async () => {
+    const { dispatcher, progress } = build(async () => ok);
+
+    const id = await dispatcher.enqueue('mail', job);
+
+    // The record is written first, so a worker that picks the job up
+    // immediately cannot have its "running" overwritten by "queued".
+    expect(progress.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id, name: MAIL_JOB }),
+      'mail',
+    );
+  });
+
+  it('records that the job started, and how it ended', async () => {
+    const { dispatcher, progress } = build(async () => ok);
+
+    const id = await dispatcher.enqueue('mail', job);
+    await settle();
+
+    expect(progress.markRunning).toHaveBeenCalledWith(
+      expect.objectContaining({ id }),
+    );
+    expect(progress.finish).toHaveBeenCalledWith(id, 'completed', undefined);
+  });
+
+  it('records a failure as a failure, with the reason', async () => {
+    const { dispatcher, progress } = build(async () => ({
+      ok: false,
+      error: 'the database went away',
+      retryable: false,
+    }));
+
+    const id = await dispatcher.enqueue('mail', job);
+    await settle();
+
+    expect(progress.finish).toHaveBeenCalledWith(
+      id,
+      'failed',
+      'the database went away',
+    );
+  });
+});
+
+describe('InProcessDispatcher cancellation', () => {
+  it('does not retry a job that was cancelled', async () => {
+    const { dispatcher, counters } = build(async () => ({
+      ok: false,
+      cancelled: true,
+      error: 'stopped on request',
+      retryable: false,
+    }));
+
+    await dispatcher.enqueue('mail', job);
+    await settle(80);
+
+    // A retry would do the work nobody wanted done.
+    expect(counters.calls).toHaveLength(1);
+  });
+
+  it('does not dead-letter a job that was cancelled', async () => {
+    const record = vi.fn().mockResolvedValue(true);
+    const deadLetter = { record, size: vi.fn() } as never;
+    const { dispatcher } = build(
+      async () => ({
+        ok: false,
+        cancelled: true,
+        error: 'stopped on request',
+        retryable: false,
+      }),
+      deadLetter,
+    );
+
+    await dispatcher.enqueue('mail', job);
+    await settle(80);
+
+    // A dead-letter entry says something is broken. Nothing is.
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('records the job as cancelled, not as a failure', async () => {
+    const { dispatcher, progress } = build(async () => ({
+      ok: false,
+      cancelled: true,
+      error: 'stopped on request',
+      retryable: false,
+    }));
+
+    const id = await dispatcher.enqueue('mail', job);
+    await settle(80);
+
+    expect(progress.finish).toHaveBeenCalledWith(
+      id,
+      'cancelled',
+      'stopped on request',
+    );
   });
 });
 

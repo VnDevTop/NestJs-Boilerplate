@@ -174,6 +174,7 @@ function entry(): MaintenanceLog {
     dryRun: true,
     totalDeleted: 0,
     timedOut: false,
+    cancelled: false,
     trigger: RetentionTrigger.Cron,
     pending: [],
     failedTargets: [],
@@ -536,6 +537,122 @@ describe('RetentionService', () => {
     });
   });
 
+  describe('a run that is cancelled', () => {
+    it('stops at the next batch boundary', async () => {
+      h = harness({
+        batchSize: 2,
+        respond: (sql) => (sql.startsWith('DELETE') ? deleted(2) : []),
+      });
+
+      // Asked before the target, then before every batch. The third answer is
+      // the one that says stop, which is the check in front of the second batch.
+      let checks = 0;
+      const shouldStop = vi.fn(async () => {
+        checks += 1;
+
+        return checks > 2;
+      });
+
+      const result = await h.run({ shouldStop });
+
+      // The batch that was in flight finished and the next one never started.
+      // Stopping inside a batch would leave a half-deleted table.
+      expect(h.runner.deletes()).toHaveLength(1);
+      expect(result.cancelled).toBe(true);
+    });
+
+    it('does not call it a timeout, because it was asked for', async () => {
+      h = harness({
+        batchSize: 2,
+        respond: (sql) => (sql.startsWith('DELETE') ? deleted(2) : []),
+      });
+
+      let checks = 0;
+      const result = await h.run({
+        shouldStop: async () => {
+          checks += 1;
+
+          return checks > 2;
+        },
+      });
+
+      // A timeout needs attention; a cancellation does not. The two are
+      // opposite facts and the record has to keep them apart.
+      expect(result.timedOut).toBe(false);
+      expect(result.cancelled).toBe(true);
+    });
+
+    it('lists the targets it did not reach as pending', async () => {
+      h = harness({
+        batchSize: 2,
+        respond: (sql) => (sql.startsWith('DELETE') ? deleted(2) : []),
+      });
+
+      let checks = 0;
+      const result = await h.run({
+        shouldStop: async () => {
+          checks += 1;
+
+          return checks > 2;
+        },
+      });
+
+      // One target was cleaned and the rest were not, which is exactly what
+      // `pending` has always meant for a run that stopped early.
+      expect(result.targets).toHaveLength(1);
+      expect(result.pending).toHaveLength(POLICY_LENGTH - 1);
+    });
+
+    it('never starts a target it is going to abandon', async () => {
+      h = harness({});
+
+      // The very first answer is the one in front of the first target.
+      const result = await h.run({ shouldStop: async () => true });
+
+      expect(h.runner.deletes()).toHaveLength(0);
+      expect(result.targets).toHaveLength(0);
+      expect(result.pending).toHaveLength(POLICY_LENGTH);
+      expect(result.cancelled).toBe(true);
+    });
+  });
+
+  describe('the run progress', () => {
+    it('reports each target as it starts and as it finishes', async () => {
+      const onProgress = vi.fn();
+
+      await h.run({ onProgress });
+
+      // The two reports are the point: one says which target is being worked on
+      // and the other says how many are done, which is what an operator watching
+      // a five-minute run reads.
+      expect(onProgress).toHaveBeenCalledWith({
+        processed: 0,
+        total: POLICY_LENGTH,
+        current: RETENTION_TARGETS[0]?.id,
+      });
+      expect(onProgress).toHaveBeenCalledWith({
+        processed: 1,
+        total: POLICY_LENGTH,
+        current: RETENTION_TARGETS[0]?.id,
+      });
+    });
+
+    it('counts the targets it has done', async () => {
+      const onProgress = vi.fn();
+
+      await h.run({ onProgress });
+
+      const reports = onProgress.mock.calls.map(([progress]) => progress);
+
+      // The last report says every target is done, which is the number a
+      // progress bar ends on.
+      expect(reports[reports.length - 1]).toMatchObject({
+        processed: POLICY_LENGTH,
+        total: POLICY_LENGTH,
+      });
+    });
+  });
+
   describe('the run timeout', () => {
     it('stops the run instead of finishing the batch in progress', async () => {
       // A timeout here is almost always a lost connection. Completing the batch
@@ -647,6 +764,7 @@ describe('RetentionService', () => {
       startedAt: '2026-10-03T03:17:00.000Z',
       durationMs: 1_234,
       timedOut: false,
+      cancelled: false,
       pending: ['user-devices'],
       totalDeleted: 42,
       failed: ['refresh-tokens'],

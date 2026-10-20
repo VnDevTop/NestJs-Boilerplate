@@ -650,12 +650,16 @@ export class AuthService {
     // is backed up — and by then the async context that held it is gone. A
     // `mail_logs` row that cannot be joined to the request that produced it is a
     // row nobody can follow back to a person.
+    //
+    // The job's id is dropped: a password-reset mail is not something an
+    // operator watches, and the id is only useful to somebody holding it.
     return this.jobQueue
       .enqueue('mail', {
         name: MAIL_JOB,
         payload: { ...payload, requestId: getRequestId() },
         dedupeKey: key,
       })
+      .then(() => undefined)
       .catch(() => undefined);
   }
 

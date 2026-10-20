@@ -7,11 +7,15 @@ import type { QueueConfig } from '../../configs/queue.config.js';
 import type {
   Job,
   JobQueue,
+  JobRequest,
   JobResult,
   QueueDepth,
   QueueName,
 } from './queue.interface.js';
+import { statusOf } from './queue.interface.js';
 import type { ProcessorRegistry } from './in-process.dispatcher.js';
+import type { JobProgressService } from './job-progress.service.js';
+import { newJobId } from './job-id.js';
 
 /**
  * The bullmq types this adapter uses, declared locally.
@@ -102,6 +106,7 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     private readonly processors: ProcessorRegistry,
+    private readonly progress: JobProgressService,
     private readonly bullmq: BullModuleLike | null = loadOptional<BullModuleLike>(
       BULLMQ_SPECIFIER,
     ),
@@ -115,18 +120,6 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
   /** False when the package is absent, which is how the factory chooses a driver. */
   isAvailable(): boolean {
     return this.bullmq !== null;
-  }
-
-  /** Which queue a job name belongs on, so a worker only sees its own work. */
-  private queueOf(job: Job): QueueName {
-    return job.name.startsWith('retention') ||
-      job.name.startsWith('maintenance')
-      ? 'maintenance'
-      : job.name.startsWith('notify')
-        ? 'notification'
-        : job.name.startsWith('digest')
-          ? 'digest'
-          : 'mail';
   }
 
   /**
@@ -199,7 +192,11 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
       async (job: BullWorkerJob) => {
         this.observeLag(queue, job);
 
-        return this.run(job.name, job.data);
+        // The stored value *is* the job — `enqueue` puts the whole job in
+        // `data` — so the worker hands it over as it is. Rebuilding a job from
+        // the name and the data is what used to happen here, and it put the job
+        // inside its own payload and dropped the dedupe key on the way.
+        return this.run(job.data);
       },
       {
         connection: { url: this.config.url },
@@ -257,8 +254,19 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
    * The retry options mirror what the in-process dispatcher does by hand, and both
    * read the numbers from `queue.config.ts`, so turning the queue on does not
    * change how many attempts a job gets.
+   *
+   * The whole job goes into `data`, not just the payload. The processor needs the
+   * name and the dedupe key as well as the payload, and the queue backend has
+   * nowhere else to keep them: bullmq's own `name` is the job's *name* on that
+   * queue, not the name the processor is routed by.
+   *
+   * The id is minted here and the progress record is written before the job is
+   * handed over, because the worker and this method both write that record and
+   * the worker's write is the later one.
    */
-  async enqueue(queue: QueueName, job: Job): Promise<void> {
+  async enqueue(queue: QueueName, request: JobRequest): Promise<string> {
+    const job: Job = { ...request, id: newJobId() };
+
     const options: Record<string, unknown> = {
       attempts: this.config.retry.attempts,
       backoff: {
@@ -271,7 +279,20 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
       // so the handler has to signal it by throwing UnrecoverableError.
     };
 
-    await this.queue(queue).add(job.name, job, options);
+    await this.progress.record(job, queue);
+
+    try {
+      await this.queue(queue).add(job.name, job, options);
+    } catch (error) {
+      // The job never reached the queue, so the record of it is a lie. Removed
+      // rather than left to expire, because an operator polling this id would
+      // otherwise watch a job that does not exist.
+      await this.progress.forget(job.id);
+
+      throw error;
+    }
+
+    return job.id;
   }
 
   /**
@@ -281,18 +302,80 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
    * explicitly. Wrapping it in `UnrecoverableError` is the documented way, and it
    * is why the classification has to survive the trip through `MailService`.
    */
-  private async run(name: string, payload: unknown): Promise<unknown> {
-    const result: JobResult = await this.processors.process({ name, payload });
+  private async run(stored: unknown): Promise<unknown> {
+    const job = this.toJob(stored);
+
+    await this.progress.markRunning(job);
+
+    const result: JobResult = await this.processors.process(
+      job,
+      this.progress.context(job),
+    );
+
+    await this.progress.finish(job.id, statusOf(result), result.error);
 
     if (result.ok) {
       return result;
     }
 
+    // A cancelled job is not a failure: it was asked to stop and it stopped at a
+    // safe point. Returning normally keeps bullmq from retrying it — a retry
+    // would do the work nobody wanted done.
+    if (result.cancelled === true) {
+      return result;
+    }
+
     if (result.retryable === false) {
-      throw this.unrecoverable(result);
+      throw this.unrecoverable(result.error ?? 'job failed');
     }
 
     throw new Error(result.error ?? 'job failed');
+  }
+
+  /**
+   * The stored job, read back out of redis.
+   *
+   * The shape check is not defensive tidiness: it is the only place the stored
+   * value is read, and a value that is not a job cannot be processed. It fails
+   * permanently rather than being retried, because redis will hand back the same
+   * bytes on the next attempt and the budget would be spent on a job that cannot
+   * ever succeed.
+   */
+  private toJob(stored: unknown): Job {
+    if (typeof stored !== 'object' || stored === null) {
+      throw this.unrecoverable('the stored job is not an object');
+    }
+
+    const { id, name, payload, dedupeKey } = stored as Partial<Job>;
+
+    if (typeof name !== 'string' || name === '') {
+      throw this.unrecoverable('the stored job has no name');
+    }
+
+    // A job stored by an older version has no id. It is given one rather than
+    // refused, because the work it describes is still work somebody asked for;
+    // but the id is new, so nobody can watch that particular run.
+    const jobId = typeof id === 'string' && id !== '' ? id : newJobId();
+
+    if (jobId !== id) {
+      logger.warn(
+        `The stored job ${name} has no id, which means it was queued by an ` +
+          'older version. It is running as ' +
+          jobId +
+          '.',
+      );
+    }
+
+    const job: Job = { id: jobId, name, payload };
+
+    // Only carried over when it is a non-empty string, so a job that was enqueued
+    // without one comes back without the key rather than with an empty one. An
+    // empty dedupe key would be a key every such job shares.
+    if (typeof dedupeKey === 'string' && dedupeKey !== '') {
+      job.dedupeKey = dedupeKey;
+    }
+
+    return job;
   }
 
   /**
@@ -302,8 +385,8 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
    * package is installed, and reaching for the class would make this file fail to
    * load in a deployment that does not have it.
    */
-  private unrecoverable(result: JobResult): Error {
-    const error = new Error(result.error ?? 'job failed') as Error & {
+  private unrecoverable(message: string): Error {
+    const error = new Error(message) as Error & {
       name: string;
     };
 

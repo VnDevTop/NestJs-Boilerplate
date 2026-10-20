@@ -11,6 +11,7 @@ const subject = { template: 'welcome', to: 'a@x.com', subjectId: 'u1' };
 
 function job(overrides: Partial<Job> = {}): Job {
   return {
+    id: '11111111-1111-4111-8111-111111111111',
     name: 'mail.send',
     payload: {},
     dedupeKey: dedupeKey(subject),
@@ -214,6 +215,25 @@ describe('DedupeGuard on a retryable failure', () => {
     ).rejects.toThrow('processor exploded');
 
     // The job did not complete, so a later delivery has to be allowed to try.
+    expect(release).toHaveBeenCalled();
+  });
+});
+
+describe('DedupeGuard on a cancelled job', () => {
+  const cancelled: JobResult = {
+    ok: false,
+    cancelled: true,
+    error: 'stopped on request',
+    retryable: false,
+  };
+
+  it('releases the key, so the work can be run again', async () => {
+    const { redis: service, release } = redis(true);
+
+    await new DedupeGuard(inner(cancelled), service).process(job());
+
+    // The work was not done. Holding the key would skip the next attempt, which
+    // is the opposite of what cancelling a job should mean.
     expect(release).toHaveBeenCalled();
   });
 });

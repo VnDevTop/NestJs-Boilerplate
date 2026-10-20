@@ -91,6 +91,10 @@ export class AdminRetentionController {
    * minutes: far longer than a request should hold open. Queuing it also means the
    * operator gets the same execution path as the nightly schedule, rather than a
    * second one that only the HTTP route uses.
+   *
+   * The job's id comes back with it, which is the handle the operator watches
+   * the run with. The history says what happened; the job says what is
+   * happening now, which is the question a five-minute run raises.
    */
   @Roles(Role.Admin, Role.SuperAdmin)
   @Permissions(Permission.MaintenanceRun)
@@ -101,12 +105,16 @@ export class AdminRetentionController {
   async run(): Promise<RetentionQueuedDto> {
     const payload: RetentionJobPayload = { trigger: RetentionTrigger.Admin };
 
-    await this.queue.enqueue(QUEUE_NAMES.maintenance, {
+    const jobId = await this.queue.enqueue(QUEUE_NAMES.maintenance, {
       name: RETENTION_JOB,
       payload,
     });
 
-    return { queued: true, see: '/admin/retention/runs/latest' };
+    return {
+      queued: true,
+      jobId,
+      see: '/admin/retention/runs/latest',
+    };
   }
 
   /**
@@ -167,6 +175,7 @@ export class AdminRetentionController {
       dryRun: entry.dryRun,
       totalDeleted: entry.totalDeleted,
       timedOut: entry.timedOut,
+      cancelled: entry.cancelled,
       trigger: entry.trigger,
       // Spread, because the service types both as readonly and the DTO promises
       // a mutable array to whoever consumes it.

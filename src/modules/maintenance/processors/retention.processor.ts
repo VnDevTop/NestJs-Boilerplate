@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import type { Job, JobResult } from '../../queue/queue.interface.js';
+import type {
+  Job,
+  JobContext,
+  JobResult,
+} from '../../queue/queue.interface.js';
 import { NotificationService } from '../../notification/notification.service.js';
 import { RetentionTrigger } from '../entities/retention-trigger.enum.js';
 import {
@@ -29,6 +33,11 @@ export interface RetentionJobPayload {
  *
  * Both dispatchers call this, the same as `MailProcessor`, which is what makes
  * the in-process path a real fallback rather than a second implementation.
+ *
+ * The context is what makes the run watchable and stoppable: the run reports
+ * what it is doing through it, and asks it whether it should carry on. A run
+ * without one — the admin route's dry run, a run from a terminal — still
+ * works; it just cannot be watched or stopped.
  */
 @Injectable()
 export class RetentionProcessor {
@@ -44,7 +53,10 @@ export class RetentionProcessor {
     return name === RETENTION_JOB;
   }
 
-  async process(job: Job<RetentionJobPayload>): Promise<JobResult> {
+  async process(
+    job: Job<RetentionJobPayload>,
+    context?: JobContext,
+  ): Promise<JobResult> {
     const payload = this.validate(job.payload);
 
     if (payload === null) {
@@ -59,7 +71,18 @@ export class RetentionProcessor {
     let result: RetentionRunResult;
 
     try {
-      result = await this.retentionService.run({ dryRun: payload.dryRun });
+      result = await this.retentionService.run({
+        dryRun: payload.dryRun,
+        shouldStop: context ? () => context.isCancelled() : undefined,
+        onProgress: context
+          ? (progress) =>
+              context.report({
+                processed: progress.processed,
+                total: progress.total,
+                current: progress.current,
+              })
+          : undefined,
+      });
     } catch (error) {
       // The service catches per target, so a throw here came from outside the
       // loop: no connection, or a pool that would not hand one out. No log row is
@@ -153,8 +176,24 @@ export class RetentionProcessor {
    * reported as a failure and left retryable: the run is idempotent, so finishing
    * the remaining tables costs nothing but the time the lost connection was not
    * using anyway.
+   *
+   * A cancelled run is neither. It was asked to stop and it stopped at a point
+   * where stopping was safe, so it is not a failure and not a success either:
+   * the work is unfinished, and the remaining tables are the next run's job.
    */
   private toJobResult(result: RetentionRunResult): JobResult {
+    if (result.cancelled) {
+      return {
+        ok: false,
+        cancelled: true,
+        error: 'the run was cancelled before it finished',
+        // Not retryable, and not dead-lettered either: the dispatcher checks
+        // `cancelled` before either of those, because retrying would do the
+        // work nobody asked for.
+        retryable: false,
+      };
+    }
+
     if (result.timedOut) {
       return {
         ok: false,

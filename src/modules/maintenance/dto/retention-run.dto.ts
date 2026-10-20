@@ -68,6 +68,15 @@ export class RetentionRunDto {
   })
   timedOut!: boolean;
 
+  @ApiProperty({
+    description:
+      'True when the run was stopped on request. The opposite of a timeout in ' +
+      'what it means: this one was asked to, and the tables it did not reach ' +
+      "are the next run's work rather than a fault.",
+    example: false,
+  })
+  cancelled!: boolean;
+
   @ApiProperty({ enum: RetentionTrigger, example: RetentionTrigger.Cron })
   trigger!: RetentionTrigger;
 
@@ -94,6 +103,15 @@ export class RetentionRunDto {
 export class RetentionQueuedDto {
   @ApiProperty({ example: true })
   queued!: boolean;
+
+  @ApiProperty({
+    format: 'uuid',
+    description:
+      'The id of the queued job. It is the handle the run is watched with: ' +
+      'the history says what happened, the job says what is happening now.',
+    example: '11111111-1111-4111-8111-111111111111',
+  })
+  jobId!: string;
 
   @ApiProperty({
     description:

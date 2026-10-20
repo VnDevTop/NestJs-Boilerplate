@@ -248,6 +248,36 @@ export class RedisClientService implements OnModuleDestroy {
   }
 
   /**
+   * `GET key`, telling "absent" apart from "unreachable".
+   *
+   * `get` answers `null` for both, which is the right answer for a caller that
+   * treats a miss and an outage the same way — a deduplication key that cannot
+   * be read is a key to proceed without.
+   *
+   * It is the wrong answer for a caller that has to tell the user. "No such job"
+   * and "the store is down" are different facts, and answering the second with
+   * the first tells an operator their job does not exist while it is running.
+   */
+  async inspect(
+    key: string,
+  ): Promise<{ value: string | null; reachable: boolean }> {
+    try {
+      const client = await this.getClient();
+      const value = await client.get(this.key(key));
+
+      return { value, reachable: true };
+    } catch (error) {
+      logger.warn(
+        `Redis command failed, treating as absent: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      return { value: null, reachable: false };
+    }
+  }
+
+  /**
    * `SET key value EX ttl`, overwriting.
    *
    * The counterpart to `setIfAbsent` for a caller that is replacing a value it
