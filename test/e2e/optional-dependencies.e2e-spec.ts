@@ -132,7 +132,12 @@ describe.skipIf(!e2eEnabled())('empty optional dependencies (e2e)', () => {
           data: { firstName: 'Job', appName: 'Boilerplate E2E' },
         },
       }),
-    ).resolves.toBeUndefined();
+      // The id of the job, which is the handle it is watched and stopped by.
+      // It resolves before the work runs — the claim this file exists to check
+      // is that the work ran at all.
+    ).resolves.toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
 
     await waitFor(
       async () =>
