@@ -68,6 +68,15 @@ export class RetentionRunDto {
   })
   timedOut!: boolean;
 
+  @ApiProperty({
+    description:
+      'True when the run was stopped on request. The opposite of a timeout in ' +
+      'what it means: this one was asked to, and the tables it did not reach ' +
+      "are the next run's work rather than a fault.",
+    example: false,
+  })
+  cancelled!: boolean;
+
   @ApiProperty({ enum: RetentionTrigger, example: RetentionTrigger.Cron })
   trigger!: RetentionTrigger;
 

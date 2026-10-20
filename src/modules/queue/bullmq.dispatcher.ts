@@ -307,11 +307,21 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
 
     await this.progress.markRunning(job);
 
-    const result: JobResult = await this.processors.process(job);
+    const result: JobResult = await this.processors.process(
+      job,
+      this.progress.context(job),
+    );
 
     await this.progress.finish(job.id, statusOf(result), result.error);
 
     if (result.ok) {
+      return result;
+    }
+
+    // A cancelled job is not a failure: it was asked to stop and it stopped at a
+    // safe point. Returning normally keeps bullmq from retrying it — a retry
+    // would do the work nobody wanted done.
+    if (result.cancelled === true) {
       return result;
     }
 

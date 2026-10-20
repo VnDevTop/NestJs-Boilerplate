@@ -41,6 +41,18 @@ export enum Permission {
    */
   JobRead = 'job:read',
 
+  /**
+   * Ask a running job to stop.
+   *
+   * Held by the super administrator alone, like `MaintenanceRun` and
+   * `UserDelete`. Stopping a job is irreversible and leaves the work half
+   * done: a cancelled import has written some of its rows and not the rest,
+   * and a cancelled cleanup has left tables unclean. The person who starts a
+   * job is not always the person who should be able to stop it, which is why
+   * watching and stopping are two permissions rather than one.
+   */
+  JobCancel = 'job:cancel',
+
   /** Read what the application last sent and to whom. */
   MailLogRead = 'mail-log:read',
 
@@ -106,6 +118,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> =
       Permission.UserDelete,
       Permission.MaintenanceRun,
       Permission.JobRead,
+      Permission.JobCancel,
       Permission.RoleRead,
       Permission.RoleWrite,
     ]),

@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { QueueConfig } from '../../configs/queue.config.js';
 import type {
   Job,
+  JobContext,
   JobProgressUpdate,
   JobStatus,
   QueueName,
@@ -264,6 +265,22 @@ export class JobProgressService {
   async forget(id: string): Promise<void> {
     await this.redis.delete(this.progressKey(id));
     await this.redis.delete(this.cancelKey(id));
+  }
+
+  /**
+   * The context handed to a processor.
+   *
+   * Built here rather than by the dispatcher so that both drivers give the
+   * processor the same thing, and so the processor never learns that the
+   * progress is kept in redis.
+   */
+  context(job: Job): JobContext {
+    return {
+      id: job.id,
+      name: job.name,
+      report: (update) => this.report(job.id, update),
+      isCancelled: () => this.isCancelled(job.id),
+    };
   }
 
   /**

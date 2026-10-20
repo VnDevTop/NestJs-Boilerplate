@@ -53,6 +53,14 @@ function progress() {
       requestCancel: vi.fn(),
       isCancelled: vi.fn().mockResolvedValue(false),
       forget,
+      // The context the dispatcher hands to a processor. A fake one, so a test
+      // that does not care about the progress does not have to build one.
+      context: vi.fn((job: Job) => ({
+        id: job.id,
+        name: job.name,
+        report: vi.fn().mockResolvedValue(undefined),
+        isCancelled: vi.fn().mockResolvedValue(false),
+      })),
     } as unknown as JobProgressService,
     record,
     markRunning,
@@ -244,6 +252,61 @@ describe('InProcessDispatcher progress', () => {
       id,
       'failed',
       'the database went away',
+    );
+  });
+});
+
+describe('InProcessDispatcher cancellation', () => {
+  it('does not retry a job that was cancelled', async () => {
+    const { dispatcher, counters } = build(async () => ({
+      ok: false,
+      cancelled: true,
+      error: 'stopped on request',
+      retryable: false,
+    }));
+
+    await dispatcher.enqueue('mail', job);
+    await settle(80);
+
+    // A retry would do the work nobody wanted done.
+    expect(counters.calls).toHaveLength(1);
+  });
+
+  it('does not dead-letter a job that was cancelled', async () => {
+    const record = vi.fn().mockResolvedValue(true);
+    const deadLetter = { record, size: vi.fn() } as never;
+    const { dispatcher } = build(
+      async () => ({
+        ok: false,
+        cancelled: true,
+        error: 'stopped on request',
+        retryable: false,
+      }),
+      deadLetter,
+    );
+
+    await dispatcher.enqueue('mail', job);
+    await settle(80);
+
+    // A dead-letter entry says something is broken. Nothing is.
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('records the job as cancelled, not as a failure', async () => {
+    const { dispatcher, progress } = build(async () => ({
+      ok: false,
+      cancelled: true,
+      error: 'stopped on request',
+      retryable: false,
+    }));
+
+    const id = await dispatcher.enqueue('mail', job);
+    await settle(80);
+
+    expect(progress.finish).toHaveBeenCalledWith(
+      id,
+      'cancelled',
+      'stopped on request',
     );
   });
 });

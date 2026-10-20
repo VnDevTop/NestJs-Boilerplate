@@ -50,11 +50,37 @@ export interface RetentionRunResult {
   readonly durationMs: number;
   /** True when the run hit `runTimeout` and stopped early. */
   readonly timedOut: boolean;
+  /**
+   * True when the run stopped because somebody asked it to.
+   *
+   * Separate from `timedOut` because the two mean opposite things to whoever
+   * reads the record: a timed-out run needs attention, and a cancelled run was
+   * stopped on purpose. Both leave targets unreached, so the reason is the only
+   * thing that distinguishes them.
+   */
+  readonly cancelled: boolean;
   /** Targets never reached because the run stopped early. */
   readonly pending: readonly string[];
   readonly totalDeleted: number;
   readonly targets: readonly RetentionTargetResult[];
   readonly failed: readonly string[];
+}
+
+/**
+ * How far a run has got.
+ *
+ * The items are the run's targets — the tables it cleans — because that is the
+ * one count it knows up front. The rows in them are not known until they are
+ * counted, and counting them would mean scanning every table twice: once to
+ * count and once to delete.
+ */
+export interface RetentionProgress {
+  /** How many targets are done. */
+  processed: number;
+  /** How many targets there are in all. */
+  total: number;
+  /** The target in flight. */
+  current: string;
 }
 
 export interface RetentionRunOptions {
@@ -64,6 +90,17 @@ export interface RetentionRunOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Injected so a test can move past the run timeout without waiting an hour. */
   now?: () => number;
+  /**
+   * Asked before each batch whether the run should stop.
+   *
+   * Asked at a batch boundary and never inside one, because each batch is its
+   * own transaction: stopping between two batches leaves the database in a
+   * state somebody could have written by hand, and stopping inside one leaves a
+   * half-deleted table that nobody asked for.
+   */
+  shouldStop?: () => Promise<boolean> | boolean;
+  /** Told how far the run has got, after each target. */
+  onProgress?: (progress: RetentionProgress) => void | Promise<void>;
 }
 
 const wait = (ms: number): Promise<void> =>
@@ -138,6 +175,8 @@ export class RetentionService {
     const dryRun = options.dryRun ?? this.config.dryRun;
     const sleep = options.sleep ?? wait;
     const now = options.now ?? Date.now;
+    const shouldStop = options.shouldStop ?? (() => false);
+    const onProgress = options.onProgress ?? (() => undefined);
 
     const startedAtMs = now();
     const deadline = startedAtMs + this.config.runTimeout;
@@ -146,6 +185,8 @@ export class RetentionService {
     const targets: RetentionTargetResult[] = [];
     const pending: string[] = [];
     let timedOut = false;
+    let cancelled = false;
+    let processed = 0;
 
     // One runner for the whole run so the connection is reused across batches.
     // Each batch still gets its own transaction, so a failure rolls back only
@@ -161,14 +202,39 @@ export class RetentionService {
           break;
         }
 
+        // Asked before the target starts rather than inside it, so a cancelled
+        // run never begins work it is about to abandon.
+        if (await shouldStop()) {
+          cancelled = true;
+          pending.push(...policy.slice(index).map((entry) => entry.id));
+          break;
+        }
+
+        await onProgress({
+          processed,
+          total: policy.length,
+          current: target.id,
+        });
+
         const outcome = await this.runTarget(runner, target, {
           dryRun,
           deadline,
           now,
           sleep,
+          shouldStop,
+          onProgress,
+          processed,
+          total: policy.length,
         });
 
         targets.push(outcome.result);
+        processed += 1;
+
+        if (outcome.cancelled) {
+          cancelled = true;
+          pending.push(...policy.slice(index + 1).map((entry) => entry.id));
+          break;
+        }
 
         if (outcome.timedOut) {
           timedOut = true;
@@ -185,6 +251,7 @@ export class RetentionService {
       startedAt: new Date(startedAtMs).toISOString(),
       durationMs: now() - startedAtMs,
       timedOut,
+      cancelled,
       pending,
       totalDeleted: targets.reduce((sum, entry) => sum + entry.deleted, 0),
       targets,
@@ -219,9 +286,17 @@ export class RetentionService {
       deadline: number;
       now: () => number;
       sleep: (ms: number) => Promise<void>;
+      shouldStop: () => Promise<boolean> | boolean;
+      onProgress: (progress: RetentionProgress) => void | Promise<void>;
+      processed: number;
+      total: number;
     },
-  ): Promise<{ result: RetentionTargetResult; timedOut: boolean }> {
-    const { dryRun, deadline, now, sleep } = context;
+  ): Promise<{
+    result: RetentionTargetResult;
+    timedOut: boolean;
+    cancelled: boolean;
+  }> {
+    const { dryRun, deadline, now, sleep, shouldStop, onProgress } = context;
     const startedAtMs = now();
     const predicate = target.buildPredicate(resolveCutoff(target.ageDays));
 
@@ -248,16 +323,27 @@ export class RetentionService {
             durationMs: now() - startedAtMs,
           },
           timedOut: false,
+          cancelled: false,
         };
       }
 
       let deleted = 0;
       let batches = 0;
       let timedOut = false;
+      let cancelled = false;
 
       while (true) {
         if (now() >= deadline) {
           timedOut = true;
+          break;
+        }
+
+        // The boundary. Asked before a batch and never inside one: each batch
+        // is its own transaction, so stopping here leaves the table in a state
+        // that a run which had simply been interrupted would also leave, and
+        // stopping inside one would leave a half-deleted table.
+        if (await shouldStop()) {
+          cancelled = true;
           break;
         }
 
@@ -277,9 +363,16 @@ export class RetentionService {
         await sleep(this.config.batchDelay);
       }
 
+      await onProgress({
+        processed: context.processed + 1,
+        total: context.total,
+        current: target.id,
+      });
+
       return {
         result: { ...base, deleted, batches, durationMs: now() - startedAtMs },
         timedOut,
+        cancelled,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -297,6 +390,7 @@ export class RetentionService {
           error: message,
         },
         timedOut: false,
+        cancelled: false,
       };
     }
   }
@@ -359,6 +453,7 @@ export class RetentionService {
       dryRun: result.dryRun,
       totalDeleted: result.totalDeleted,
       timedOut: result.timedOut,
+      cancelled: result.cancelled,
       trigger,
       pending: [...result.pending],
       failedTargets: [...result.failed],
@@ -421,6 +516,17 @@ export class RetentionService {
     const message =
       `${result.dryRun ? 'Dry run' : 'Retention run'} finished in ${result.durationMs}ms, ` +
       `${result.totalDeleted} rows: ${summary}`;
+
+    if (result.cancelled) {
+      // Not a warning. The run was asked to stop and it stopped; the tables it
+      // did not reach are the next run's work, exactly as they are after a
+      // timeout.
+      this.logger.log(
+        `${message} Stopped because it was cancelled; not reached: ${result.pending.join(', ')}`,
+      );
+
+      return;
+    }
 
     if (result.timedOut) {
       this.logger.warn(

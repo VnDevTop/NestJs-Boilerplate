@@ -76,3 +76,29 @@ export class JobProgressDto {
   })
   cancelRequested!: boolean;
 }
+
+/**
+ * The answer to a cancellation request.
+ *
+ * `cancelRequested` is true because the request was accepted, not because the
+ * job has stopped. A job that is halfway through a batch stops at the next
+ * batch boundary, and the operator watches the status change to `cancelled` to
+ * see that it happened.
+ */
+export class JobCancelDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({
+    description: 'True when the job was asked to stop.',
+    example: true,
+  })
+  cancelRequested!: boolean;
+
+  @ApiProperty({
+    description: 'Where the job was when the request was accepted.',
+    enum: ['queued', 'running', 'completed', 'failed', 'cancelled'],
+    example: 'running',
+  })
+  status!: JobStatus;
+}

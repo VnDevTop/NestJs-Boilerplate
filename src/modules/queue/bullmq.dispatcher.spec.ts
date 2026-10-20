@@ -157,6 +157,14 @@ function progress() {
       requestCancel: vi.fn(),
       isCancelled: vi.fn().mockResolvedValue(false),
       forget,
+      // The context the dispatcher hands to a processor. A fake one, so a test
+      // that does not care about the progress does not have to build one.
+      context: vi.fn((job: Job) => ({
+        id: job.id,
+        name: job.name,
+        report: vi.fn().mockResolvedValue(undefined),
+        isCancelled: vi.fn().mockResolvedValue(false),
+      })),
     } as unknown as JobProgressService,
     record,
     markRunning,
@@ -377,7 +385,10 @@ describe('BullMqDispatcher worker routing', () => {
     //
     // The id is the one the enqueue handed back, so the caller can watch the
     // exact run the processor is doing.
-    expect(fake.process).toHaveBeenCalledWith({ id, name: MAIL_JOB, payload });
+    expect(fake.process).toHaveBeenCalledWith(
+      { id, name: MAIL_JOB, payload },
+      expect.objectContaining({ id }),
+    );
   });
 
   it('hands the processor the payload, not the stored envelope', async () => {
@@ -406,12 +417,15 @@ describe('BullMqDispatcher worker routing', () => {
 
     // The key is what stops a redelivery sending the same mail twice, and it
     // only does that if it survives the trip through redis.
-    expect(fake.process).toHaveBeenCalledWith({
-      id,
-      name: MAIL_JOB,
-      payload,
-      dedupeKey: 'dedupe:abc',
-    });
+    expect(fake.process).toHaveBeenCalledWith(
+      {
+        id,
+        name: MAIL_JOB,
+        payload,
+        dedupeKey: 'dedupe:abc',
+      },
+      expect.objectContaining({ id }),
+    );
   });
 
   it('leaves the dedupe key off a job that was enqueued without one', async () => {
@@ -550,6 +564,43 @@ describe('BullMqDispatcher progress', () => {
     // A record of a job that never reached the queue is a lie an operator would
     // watch.
     expect(fake.progress.forget).toHaveBeenCalled();
+  });
+});
+
+describe('BullMqDispatcher cancellation', () => {
+  it('does not retry a job that was cancelled', async () => {
+    const fake = build(async () => ({
+      ok: false,
+      cancelled: true,
+      error: 'stopped on request',
+      retryable: false,
+    }));
+
+    await fake.dispatcher.enqueue('mail', job);
+
+    // Returning normally is what stops bullmq retrying. Throwing would spend
+    // the budget on work nobody wanted done.
+    await expect(deliver(fake, 'mail')).resolves.toMatchObject({
+      cancelled: true,
+    });
+  });
+
+  it('records the job as cancelled, not as a failure', async () => {
+    const fake = build(async () => ({
+      ok: false,
+      cancelled: true,
+      error: 'stopped on request',
+      retryable: false,
+    }));
+
+    const id = await fake.dispatcher.enqueue('mail', job);
+    await deliver(fake, 'mail');
+
+    expect(fake.progress.finish).toHaveBeenCalledWith(
+      id,
+      'cancelled',
+      'stopped on request',
+    );
   });
 });
 

@@ -20,6 +20,7 @@ const RUN: RetentionRunResult = {
   startedAt: '2026-10-03T03:17:00.000Z',
   durationMs: 1_234,
   timedOut: false,
+  cancelled: false,
   pending: [],
   totalDeleted: 0,
   failed: [],

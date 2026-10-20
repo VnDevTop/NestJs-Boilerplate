@@ -1,9 +1,14 @@
-import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ConflictException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 
 import { describe, expect, it } from 'vitest';
 
 import { JobsController } from './jobs.controller.js';
 import type {
+  JobCancelOutcome,
   JobProgress,
   JobProgressLookup,
   JobProgressService,
@@ -27,10 +32,12 @@ const progress: JobProgress = {
 function build(
   lookup: JobProgressLookup,
   cancelRequested = false,
+  outcome: JobCancelOutcome = { outcome: 'accepted', status: 'running' },
 ): JobsController {
   const service = {
     lookup: async () => lookup,
     isCancelled: async () => cancelRequested,
+    requestCancel: async () => outcome,
   } as unknown as JobProgressService;
 
   return new JobsController(service);
@@ -67,6 +74,56 @@ describe('JobsController.read', () => {
     // exists, and an operator told "no such job" would stop waiting for a job
     // that is running.
     await expect(controller.read(id)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+  });
+});
+
+describe('JobsController.cancel', () => {
+  it('accepts the request and says where the job was', async () => {
+    const controller = build({ status: 'found', progress }, false, {
+      outcome: 'accepted',
+      status: 'running',
+    });
+
+    await expect(controller.cancel(id)).resolves.toEqual({
+      id,
+      cancelRequested: true,
+      status: 'running',
+    });
+  });
+
+  it('answers 404 for a job it has never heard of', async () => {
+    const controller = build({ status: 'absent' }, false, {
+      outcome: 'absent',
+    });
+
+    await expect(controller.cancel(id)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('answers 409 for a job that has already finished', async () => {
+    const controller = build({ status: 'found', progress }, false, {
+      outcome: 'finished',
+      status: 'completed',
+    });
+
+    // Not a 404 and not a 202. The job exists and there is nothing left to
+    // stop, which is a different thing from "no such job" and from "stopped".
+    await expect(controller.cancel(id)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('answers 503 when the store cannot be reached', async () => {
+    const controller = build({ status: 'unreachable' }, false, {
+      outcome: 'unreachable',
+    });
+
+    // The request could not be recorded, so it did not happen. Saying "no such
+    // job" would be a different lie.
+    await expect(controller.cancel(id)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
   });

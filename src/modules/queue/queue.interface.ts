@@ -91,6 +91,16 @@ export interface JobResult {
    * transient fault.
    */
   retryable?: boolean;
+  /**
+   * True when the job stopped because somebody asked it to.
+   *
+   * Distinct from a failure on purpose. A cancelled job did not break: it was
+   * asked to stop and it stopped at the first safe point. So it is neither
+   * retried nor dead-lettered — retrying it would do the work nobody wanted
+   * done, and dead-lettering it would put an entry in front of an operator that
+   * says nothing is wrong.
+   */
+  cancelled?: boolean;
 }
 
 /**
@@ -114,8 +124,16 @@ export type JobStatus =
  */
 export const statusOf = (
   result: JobResult,
-): Exclude<JobStatus, 'queued' | 'running'> =>
-  result.ok ? 'completed' : 'failed';
+): Exclude<JobStatus, 'queued' | 'running'> => {
+  // Checked before the success flag: a job that stopped because it was asked
+  // to did not finish, and reporting it as completed would say the work was
+  // done when it was not.
+  if (result.cancelled === true) {
+    return 'cancelled';
+  }
+
+  return result.ok ? 'completed' : 'failed';
+};
 
 /**
  * What a job reports about how far it has got.
@@ -136,6 +154,43 @@ export interface JobProgressUpdate {
   total?: number | null;
   /** The item in flight, named the way the job names its items. */
   current?: string | null;
+}
+
+/**
+ * What a processor is told about the job it is running.
+ *
+ * The two operations here are the whole of the cancellation story: report how
+ * far you have got, and find out whether you should stop. Both are optional in
+ * the sense that a processor that ignores the context still works — a mail job
+ * has one item and finishes in milliseconds — and both are what turn a
+ * five-minute import from a black box into something an operator can watch and
+ * stop.
+ *
+ * Passed in rather than imported, so a processor that wants to report progress
+ * does not have to know that redis exists, and so the queue module stays
+ * importable from below the processors.
+ */
+export interface JobContext {
+  /** The id of this run of this job. */
+  readonly id: string;
+  /** The name of this job. */
+  readonly name: string;
+  /**
+   * Reports how far the job has got.
+   *
+   * Best effort: a report that cannot be stored is dropped rather than failing
+   * the job, because the work is the point and the progress is only a report on
+   * it.
+   */
+  report(update: JobProgressUpdate): Promise<void>;
+  /**
+   * True when somebody asked for this job to stop.
+   *
+   * Checked at a boundary the job chooses, never inside one. A job that stops
+   * halfway through a write leaves the data in a state nobody planned for, so
+   * the answer to this question is only useful where stopping is safe.
+   */
+  isCancelled(): Promise<boolean>;
 }
 
 /** How a job should be retried. Mirrors what a queue backend needs. */

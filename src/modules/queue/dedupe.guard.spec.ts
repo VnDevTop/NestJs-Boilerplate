@@ -219,6 +219,25 @@ describe('DedupeGuard on a retryable failure', () => {
   });
 });
 
+describe('DedupeGuard on a cancelled job', () => {
+  const cancelled: JobResult = {
+    ok: false,
+    cancelled: true,
+    error: 'stopped on request',
+    retryable: false,
+  };
+
+  it('releases the key, so the work can be run again', async () => {
+    const { redis: service, release } = redis(true);
+
+    await new DedupeGuard(inner(cancelled), service).process(job());
+
+    // The work was not done. Holding the key would skip the next attempt, which
+    // is the opposite of what cancelling a job should mean.
+    expect(release).toHaveBeenCalled();
+  });
+});
+
 describe('DedupeGuard when redis is unavailable', () => {
   it('runs the work anyway, because a lost email is worse than a duplicate', async () => {
     const processor = inner(ok);

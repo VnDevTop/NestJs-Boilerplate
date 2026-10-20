@@ -5,6 +5,7 @@ import { MetricsService } from '../../core/metrics/index.js';
 import type { QueueConfig } from '../../configs/queue.config.js';
 import type {
   Job,
+  JobContext,
   JobQueue,
   JobRequest,
   JobResult,
@@ -194,7 +195,10 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
     await this.progress.markRunning(entry.job);
 
     try {
-      result = await this.processors.process(entry.job);
+      result = await this.processors.process(
+        entry.job,
+        this.progress.context(entry.job),
+      );
     } catch (error) {
       // The mail processor catches its own failures, so reaching this is a bug in
       // a processor rather than a provider problem. Retried, because discarding
@@ -231,6 +235,18 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
     result: JobResult,
   ): Promise<void> {
     if (result.ok) {
+      return;
+    }
+
+    // A cancelled job is not a failure. It was asked to stop and it stopped, so
+    // it is neither retried nor dead-lettered: retrying it would do the work
+    // nobody wanted done, and a dead-letter entry would put a line in front of
+    // an operator that says nothing is wrong.
+    if (result.cancelled === true) {
+      this.logger.log(
+        `Job ${entry.job.name} stopped at a safe point because it was cancelled`,
+      );
+
       return;
     }
 
@@ -332,9 +348,13 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
  *
  * An interface rather than a direct `MailProcessor` call so adding a notification
  * processor is a provider in the module and not an edit to the dispatcher.
+ *
+ * The context is optional and is passed straight through: a processor that does
+ * not need it does not have to declare it, and the ones that do — the long jobs —
+ * get it without the queue knowing what they are doing with it.
  */
 export interface ProcessorRegistry {
-  process(job: Job): Promise<JobResult>;
+  process(job: Job, context?: JobContext): Promise<JobResult>;
 }
 
 /** Payload type re-exported so callers do not import the processor's file. */

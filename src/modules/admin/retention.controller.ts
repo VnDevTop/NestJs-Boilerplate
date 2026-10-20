@@ -175,6 +175,7 @@ export class AdminRetentionController {
       dryRun: entry.dryRun,
       totalDeleted: entry.totalDeleted,
       timedOut: entry.timedOut,
+      cancelled: entry.cancelled,
       trigger: entry.trigger,
       // Spread, because the service types both as readonly and the DTO promises
       // a mutable array to whoever consumes it.
