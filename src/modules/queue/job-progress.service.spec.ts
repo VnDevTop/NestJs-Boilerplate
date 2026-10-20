@@ -197,6 +197,26 @@ describe('JobProgressService', () => {
     ).toBeTruthy();
   });
 
+  it('says a record it cannot understand is absent, rather than guessing', async () => {
+    const { service, keys } = build();
+
+    // A record with a queue this application does not know is not one of ours,
+    // and reporting it with a guessed queue would put a job on the wrong queue
+    // in the one place that says what is happening.
+    keys.set(
+      'job-progress:11111111-1111-4111-8111-111111111111',
+      JSON.stringify({
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'x',
+        queue: 'nope',
+      }),
+    );
+
+    await expect(
+      service.lookup('11111111-1111-4111-8111-111111111111'),
+    ).resolves.toEqual({ status: 'absent' });
+  });
+
   it('says a job it never heard of is absent', async () => {
     const { service } = build();
 

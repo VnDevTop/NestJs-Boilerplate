@@ -9,6 +9,7 @@ import type {
   JobStatus,
   QueueName,
 } from './queue.interface.js';
+import { QUEUE_NAMES } from './queue.interface.js';
 // A value import, not a type import. The parameter is injected, and a type-only
 // import is erased before `design:paramtypes` is emitted, so the parameter
 // arrives at Nest as `Object` — which the injector tries to resolve as a
@@ -344,10 +345,18 @@ export class JobProgressService {
         return null;
       }
 
+      // The queue has to be one this application knows. Defaulting it to
+      // something would put a job on the wrong queue in the one place that
+      // reports what is happening, and a record that cannot be understood is
+      // better reported as absent than as understood wrongly.
+      if (!isQueueName(parsed.queue)) {
+        return null;
+      }
+
       return {
         id: parsed.id,
         name: parsed.name,
-        queue: parsed.queue ?? 'mail',
+        queue: parsed.queue,
         status: parsed.status ?? 'queued',
         processed: parsed.processed ?? 0,
         total: parsed.total ?? null,
@@ -361,3 +370,8 @@ export class JobProgressService {
     }
   }
 }
+
+/** True for a queue this application has. */
+const isQueueName = (value: unknown): value is QueueName =>
+  typeof value === 'string' &&
+  (Object.values(QUEUE_NAMES) as string[]).includes(value);
