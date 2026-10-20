@@ -375,6 +375,26 @@ ORDER BY "createdAt" DESC
 LIMIT 50;
 ```
 
+**Read it through the API, not through SQL.** `GET /admin/audit` is the same
+question asked over HTTP — a page of entries, filtered by actor, action, target,
+outcome and window:
+
+```text
+GET /admin/audit?action=users.update&targetId=<id>
+GET /admin/audit?actorId=<id>&from=2026-10-20T00:00:00Z&to=2026-10-21T00:00:00Z
+GET /admin/audit?outcome=failure
+```
+
+It is cursor paged: pass `meta.nextCursor` back as `cursor`. There is no total,
+and the window bounds carry an explicit timezone offset because a timestamp
+without one means different instants on two deployments.
+
+**It needs the super administrator.** `audit:read` is held by the super
+administrator alone, because the trail describes what every privileged actor did
+— including the administrators — and the manager check cannot decide it:
+`isManager` is a column an administrator can set on any account through
+`PATCH /users/:id`.
+
 **A password never reaches a row.** An audit diff is built from whatever object
 the action was performed on, and that object is usually a `User` — which carries a
 scrypt hash. `AuditService` walks every diff on the way in and replaces the value

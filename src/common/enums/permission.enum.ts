@@ -40,7 +40,6 @@ export enum Permission {
    * changes nothing, so an administrator may.
    */
   JobRead = 'job:read',
-
   /**
    * Ask a running job to stop.
    *
@@ -52,6 +51,26 @@ export enum Permission {
    * watching and stopping are two permissions rather than one.
    */
   JobCancel = 'job:cancel',
+
+  /**
+   * Read the audit trail.
+   *
+   * Held by the super administrator alone, and the reason is not that the trail
+   * is dangerous to look at. It is *who* it describes: every privileged actor,
+   * with the failures included, because a refused request is evidence.
+   *
+   * An administrator already holds `UserRead`, so the personal data in the
+   * snapshots is not new to them. What is new is reading the conduct of their
+   * peers — and the manager gate cannot be the thing that decides it, because
+   * `isManager` is a column an administrator can set on any account through
+   * `PATCH /users/:id`. A gate the people the trail reports on can widen is not
+   * a gate.
+   *
+   * The cost is stated rather than hidden: an ordinary administrator
+   * investigating an incident needs an escalation. That is the right default for
+   * the one read surface that describes what the operators did.
+   */
+  AuditRead = 'audit:read',
 
   /** Read what the application last sent and to whom. */
   MailLogRead = 'mail-log:read',
@@ -102,6 +121,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> =
       // Watching a job is reading, and reading is safe. Stopping one is not,
       // so `JobCancel` is not here.
       Permission.JobRead,
+      // `AuditRead` is not here either, and that is a decision rather than an
+      // omission: it is the trail of what every privileged actor did, and an
+      // administrator is one of them. See the permission's own comment.
       // Read only. Granting an administrator the permission that edits roles would
       // let one administrator grant themselves another administrator's, which is
       // why `RoleWrite` is not here.
@@ -119,6 +141,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> =
       Permission.MaintenanceRun,
       Permission.JobRead,
       Permission.JobCancel,
+      Permission.AuditRead,
       Permission.RoleRead,
       Permission.RoleWrite,
     ]),

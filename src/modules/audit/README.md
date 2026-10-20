@@ -187,7 +187,87 @@ A service that performs a privileged write **without a controller calls
 a controller": an explicit call at the write site, rather than a hook that fires on
 writes it cannot describe.
 
+## The read surface
+
+`GET /admin/audit` reads the trail: a page of entries, filtered by actor,
+action, target, outcome and window, cursor paged like every other listing.
+
+The route lives in the [admin module](../admin/README.md) because every
+`/admin/` route lives there; the query surface — the spec, the DTO and the
+service call — lives here, beside the trail it reads.
+
+**The query surface is one object.** `AUDIT_QUERY_SPEC` says which fields may be
+filtered and which column each one means; `AuditQueryDto` says what the request
+may contain. The two are checked against each other at compile time in both
+directions, so a filter the DTO does not declare — one that could never arrive
+— and a DTO property no filter declares — one the client can send and the route
+ignores — are both compile errors.
+
+| Filter       | Column       | Comparison | Notes                                           |
+| ------------ | ------------ | ---------- | ----------------------------------------------- |
+| `actorId`    | `actorId`    | `=`        | an id is an id                                  |
+| `actorEmail` | `actorEmail` | `ilike`    | a substring, so a client can search by domain   |
+| `actorType`  | `actorType`  | `=`        | `user`, `system`, `anonymous`                   |
+| `action`     | `action`     | `=`        | the closed vocabulary the audit policy names    |
+| `targetType` | `targetType` | `=`        |                                                 |
+| `targetId`   | `targetId`   | `=`        | a string, not a uuid — a target need not be one |
+| `outcome`    | `outcome`    | `=`        | `success`, `failure`                            |
+| `requestId`  | `requestId`  | `=`        | the handle that ties a row to the logs          |
+| `from`       | `createdAt`  | `>=`       | the start of the window                         |
+| `to`         | `createdAt`  | `<=`       | the end of the window                           |
+
+**Every value is bound.** The column names come from the spec; the values reach
+postgres as parameters, which is the only place a value can go without being
+able to change the meaning of the statement.
+
+**The window is two bounds rather than a direction the client picks.** `from` is
+`>=` and `to` is `<=`, and the request says _what_ to filter by and never _how_.
+A client that could choose the operator could choose the one that makes the
+window mean something else.
+
+**The offset on a timestamp is required.** A timestamp without one is
+interpreted in the _server's_ timezone, so `2026-10-20T09:00:00` means different
+instants on two deployments — and the two answers are both correct. The DTO
+refuses the naive form.
+
+**The action is matched exactly.** The action names are a closed vocabulary, one
+per privileged route, and `audit-policy.spec.ts` fails when two routes share
+one. "Every `users.update`" is not "every action containing the text
+`users.update`".
+
+### Who may read it
+
+`audit:read`, held by the **super administrator alone**, and the reason is not
+that the trail is dangerous to look at. An administrator already holds
+`UserRead`, so the personal data in the snapshots is not new to them.
+
+What is new is reading the **conduct of the operators** rather than the data of
+the users: every privileged actor, with the failures included, because a refused
+request is evidence.
+
+The manager gate cannot be the thing that decides it. `isManager` is a column an
+administrator can set on any account through `PATCH /users/:id`, so a route
+gated on it can be widened by the very people it reports on.
+
+The cost is stated rather than hidden: an ordinary administrator investigating an
+incident needs an escalation. That is the right default for the one read
+surface that describes what the people with the keys did.
+
+### The read fails where the write does not
+
+`record()` never throws: an outage in the log must not become an outage in the
+product. The read does the opposite, and it has to. A read that failed and
+answered "no rows" would be a lie an investigator would act on — "nobody touched
+this account" and "the database was down" are different facts, and the second
+one looks exactly like the first until somebody checks the logs.
+
+### Reading the trail does not write to it
+
+A read that wrote to the trail would make it grow every time somebody looked at
+it, and every investigation would add an entry about the investigation.
+`audit-policy.spec.ts` asserts that the route carries no `@Audited`.
+
 ## Not in this phase
 
-The admin query surface — a route to read the trail — is not here yet. The entity,
-the writer, the interceptor and the coverage spec are.
+The tamper-evidence gap: append-only is a convention, and an operator with SQL
+can rewrite history undetected. That is Phase 75.

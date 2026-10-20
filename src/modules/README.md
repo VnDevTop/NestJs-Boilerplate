@@ -113,12 +113,18 @@ changes nothing.
 
 ```text
 POST   /jobs/:id/cancel
+GET    /admin/audit
 ```
 
 `POST /jobs/:id/cancel` needs `job:cancel`, which only the super administrator
 holds: stopping a job is irreversible and leaves the work half done. Watching and
 stopping are two permissions because they are two different capabilities — see
 [src/modules/queue/README.md](src/modules/queue/README.md).
+
+`GET /admin/audit` reads the audit trail, filtered and cursor paged. It needs
+`audit:read`, which only the super administrator holds: the trail describes what
+every privileged actor did, and an administrator is one of them — see
+[src/modules/audit/README.md](src/modules/audit/README.md).
 
 ### Manager, via `@ManagerOnly()` on the controller
 

@@ -81,6 +81,20 @@ describe('role grants', () => {
     );
   });
 
+  it('keeps the audit trail off the administrator, because it reports on them', () => {
+    // The one read permission that is not held by the administrator, and the
+    // reason is not the data in it: an administrator already holds `UserRead`, so
+    // the personal data in the snapshots is not new to them. What is new is
+    // reading the conduct of their peers — the failures included.
+    //
+    // The manager gate cannot be the thing that decides it either, because
+    // `isManager` is a column an administrator can set on any account through
+    // `PATCH /users/:id`. A gate the people the trail reports on can widen is
+    // not a gate.
+    expect(ROLE_PERMISSIONS[Role.Admin]).not.toContain(Permission.AuditRead);
+    expect(ROLE_PERMISSIONS[Role.SuperAdmin]).toContain(Permission.AuditRead);
+  });
+
   it('is frozen, so a caller cannot grant a role more permissions at runtime', () => {
     expect(Object.isFrozen(ROLE_PERMISSIONS)).toBe(true);
     expect(Object.isFrozen(ROLE_PERMISSIONS[Role.Admin])).toBe(true);
