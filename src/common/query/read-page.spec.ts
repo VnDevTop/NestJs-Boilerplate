@@ -1,9 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 
-import { decodeCursor, encodeCursor } from './cursor.js';
-import { paginateByCursor } from './cursor-pagination.js';
-import { resolveSort } from './sort.js';
+import { decodeCursor, encodeCursor } from '../pagination/index.js';
+import { buildCriteria } from './build-criteria.js';
+import { readPage } from './read-page.js';
+import type { QuerySpec } from './query-spec.js';
 
 interface Row extends Record<string, unknown> {
   id: string;
@@ -11,9 +12,15 @@ interface Row extends Record<string, unknown> {
   email?: string;
 }
 
+const SPEC = {
+  filters: {},
+  sort: { createdAt: 'createdAt' },
+  defaultSort: 'createdAt',
+} as const satisfies QuerySpec;
+
 /**
- * A stand-in for a TypeORM query builder that *executes* the boundary the helper
- * emits.
+ * A stand-in for a TypeORM query builder that *executes* the boundary the query
+ * layer emits.
  *
  * **Why not assert on SQL strings.** That proves the query looks the way it did
  * last time, which is not the property Phase 23 is done when. The property is
@@ -21,14 +28,14 @@ interface Row extends Record<string, unknown> {
  * pages or on neither. Only something that actually applies the condition can
  * demonstrate it.
  *
- * The condition this recognises is the one `paginateByCursor` emits — a tuple
+ * The condition this recognises is the one the query layer emits — a tuple
  * comparison `(sort, id) <op> (:value, :id)` — and the pattern is asserted
- * separately in "builds the boundary as a tuple". If the helper ever changes shape,
- * this simulator fails to match and the tests fail loudly rather than quietly
- * passing on an unfiltered query.
+ * separately in "builds the boundary as a tuple". If the layer ever changes
+ * shape, this simulator fails to match and the tests fail loudly rather than
+ * quietly passing on an unfiltered query.
  */
 const TUPLE_FRAGMENT =
-  /^\("\w+" (<|>) :cursorValue OR \("\w+" = :cursorValue AND "\w+" (<|>) :cursorId\)\)$/;
+  /^\("\w+"\."\w+" (<|>) :cursorValue OR \("\w+"\."\w+" = :cursorValue AND "\w+"\."\w+" (<|>) :cursorId\)\)$/;
 
 function fakeQueryBuilder(rows: Row[]): {
   qb: never;
@@ -69,8 +76,8 @@ function fakeQueryBuilder(rows: Row[]): {
       }
 
       const [operator, , idOperator] = match;
-      const sortColumn = fragment.match(/"(\w+)" [<>:]/)?.[1] ?? '';
-      const idColumn = fragment.match(/AND "(\w+)"/)?.[1] ?? '';
+      const sortColumn = fragment.match(/"\w+"\."(\w+)"/)?.[1] ?? '';
+      const idColumn = fragment.match(/AND "\w+"\."(\w+)"/)?.[1] ?? '';
 
       // `Date` values come back as ISO strings when the boundary is bound, so the
       // comparison normalises both sides the way postgres would.
@@ -91,13 +98,13 @@ function fakeQueryBuilder(rows: Row[]): {
       return qb;
     },
     orderBy(column: string, direction: string): FakeQueryBuilder {
-      // Unquoted for the comparison, the way postgres reads a quoted identifier.
-      recorded.order.push([column.replaceAll('"', ''), direction]);
+      // Unqualified for the comparison, the way postgres reads a quoted identifier.
+      recorded.order.push([unqualify(column), direction]);
 
       return qb;
     },
     addOrderBy(column: string, direction: string): FakeQueryBuilder {
-      recorded.order.push([column.replaceAll('"', ''), direction]);
+      recorded.order.push([unqualify(column), direction]);
 
       return qb;
     },
@@ -137,16 +144,14 @@ function fakeQueryBuilder(rows: Row[]): {
   return { qb: qb as never, recorded };
 }
 
+/** `"row"."createdAt"` becomes `createdAt`, which is how the row is keyed. */
+function unqualify(column: string): string {
+  return column.replace(/"/g, '').split('.').pop() ?? column;
+}
+
 function normalise(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value ?? '');
 }
-
-const SORT = resolveSort(
-  undefined,
-  undefined,
-  { createdAt: 'createdAt' },
-  'createdAt',
-);
 
 function rows(count: number, prefix = 'u'): Row[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -159,11 +164,15 @@ function rows(count: number, prefix = 'u'): Row[] {
   }));
 }
 
-describe('paginateByCursor', () => {
+describe('reading a page', () => {
   it('reads one row past the limit rather than counting the table', async () => {
     const { qb, recorded } = fakeQueryBuilder(rows(5));
 
-    await paginateByCursor(qb, { limit: 2, sort: SORT });
+    await readPage({
+      query: qb,
+      criteria: buildCriteria({ limit: 2 }, SPEC),
+      alias: 'row',
+    });
 
     // The extra row *is* the `hasMore` answer. A count would be the expensive
     // query this replaces.
@@ -173,7 +182,11 @@ describe('paginateByCursor', () => {
   it('orders by the sort column and then by id, in one direction', async () => {
     const { qb, recorded } = fakeQueryBuilder(rows(5));
 
-    await paginateByCursor(qb, { limit: 2, sort: SORT });
+    await readPage({
+      query: qb,
+      criteria: buildCriteria({ limit: 2 }, SPEC),
+      alias: 'row',
+    });
 
     expect(recorded.order).toEqual([
       ['createdAt', 'DESC'],
@@ -184,33 +197,46 @@ describe('paginateByCursor', () => {
   it('builds the boundary as a tuple, with both values bound', async () => {
     const { qb, recorded } = fakeQueryBuilder(rows(5));
 
-    await paginateByCursor(qb, {
-      limit: 2,
-      cursor: encodeCursor({ value: '2026-10-03T03:17:00.000Z', id: 'u000' }),
-      sort: SORT,
+    await readPage({
+      query: qb,
+      criteria: buildCriteria(
+        {
+          limit: 2,
+          cursor: encodeCursor({
+            value: '2026-10-03T03:17:00.000Z',
+            id: 'u000',
+          }),
+        },
+        SPEC,
+      ),
+      alias: 'row',
     });
 
     // No client-supplied text reaches the SQL. The sort column is the one the
-    // allow-list resolved; the two boundary values are parameters, which is the
-    // only reason a cursor can be treated as opaque.
+    // spec resolved; the two boundary values are parameters, which is the only
+    // reason a cursor can be treated as opaque.
     expect(recorded.fragments).toHaveLength(1);
-    expect(recorded.fragments[0]).toContain('"createdAt" < :cursorValue');
-    expect(recorded.fragments[0]).toContain('"id" < :cursorId');
+    expect(recorded.fragments[0]).toContain('"row"."createdAt" < :cursorValue');
+    expect(recorded.fragments[0]).toContain('"row"."id" < :cursorId');
   });
 
   it('flips the operator for ascending order', async () => {
-    const sort = resolveSort(
-      undefined,
-      'asc',
-      { createdAt: 'createdAt' },
-      'createdAt',
-    );
     const { qb, recorded } = fakeQueryBuilder(rows(5));
 
-    await paginateByCursor(qb, {
-      limit: 2,
-      cursor: encodeCursor({ value: '2026-10-03T03:17:01.000Z', id: 'u000' }),
-      sort,
+    await readPage({
+      query: qb,
+      criteria: buildCriteria(
+        {
+          limit: 2,
+          order: 'asc',
+          cursor: encodeCursor({
+            value: '2026-10-03T03:17:01.000Z',
+            id: 'u000',
+          }),
+        },
+        SPEC,
+      ),
+      alias: 'row',
     });
 
     expect(recorded.fragments[0]).toContain('>');
@@ -220,7 +246,11 @@ describe('paginateByCursor', () => {
   it('emits no boundary on the first page', async () => {
     const { qb, recorded } = fakeQueryBuilder(rows(5));
 
-    await paginateByCursor(qb, { limit: 2, sort: SORT });
+    await readPage({
+      query: qb,
+      criteria: buildCriteria({ limit: 2 }, SPEC),
+      alias: 'row',
+    });
 
     expect(recorded.fragments).toEqual([]);
   });
@@ -228,7 +258,11 @@ describe('paginateByCursor', () => {
   it('reports another page and hands back a cursor for it', async () => {
     const { qb } = fakeQueryBuilder(rows(5));
 
-    const page = await paginateByCursor(qb, { limit: 2, sort: SORT });
+    const page = await readPage({
+      query: qb,
+      criteria: buildCriteria({ limit: 2 }, SPEC),
+      alias: 'row',
+    });
 
     expect(page.items).toHaveLength(2);
     expect(page.meta.hasMore).toBe(true);
@@ -239,7 +273,11 @@ describe('paginateByCursor', () => {
   it('ends the walk with hasMore false and no cursor', async () => {
     const { qb } = fakeQueryBuilder(rows(4));
 
-    const page = await paginateByCursor(qb, { limit: 10, sort: SORT });
+    const page = await readPage({
+      query: qb,
+      criteria: buildCriteria({ limit: 10 }, SPEC),
+      alias: 'row',
+    });
 
     expect(page.items).toHaveLength(4);
     expect(page.meta.hasMore).toBe(false);
@@ -257,7 +295,11 @@ describe('paginateByCursor', () => {
     // its own rather than needing the client to notice the end.
     for (let attempt = 0; attempt < 7; attempt += 1) {
       const { qb } = fakeQueryBuilder(all);
-      const page = await paginateByCursor(qb, { limit: 2, cursor, sort: SORT });
+      const page = await readPage({
+        query: qb,
+        criteria: buildCriteria({ limit: 2, cursor }, SPEC),
+        alias: 'row',
+      });
 
       seen.push(...page.items.map((row) => row.id));
 
@@ -285,7 +327,11 @@ describe('paginateByCursor', () => {
     const original = rows(9);
     const { qb } = fakeQueryBuilder(original);
 
-    const first = await paginateByCursor(qb, { limit: 4, sort: SORT });
+    const first = await readPage({
+      query: qb,
+      criteria: buildCriteria({ limit: 4 }, SPEC),
+      alias: 'row',
+    });
 
     // A row created after the read, with the newest timestamp — the case that
     // shifts an offset walk by one.
@@ -302,10 +348,10 @@ describe('paginateByCursor', () => {
     while (more) {
       const page = fakeQueryBuilder([...original, inserted]);
 
-      const result = await paginateByCursor(page.qb, {
-        limit: 4,
-        cursor,
-        sort: SORT,
+      const result = await readPage({
+        query: page.qb,
+        criteria: buildCriteria({ limit: 4, cursor }, SPEC),
+        alias: 'row',
       });
 
       seen.push(...result.items.map((row) => row.id));
@@ -328,7 +374,11 @@ describe('paginateByCursor', () => {
 
     while (more) {
       const { qb } = fakeQueryBuilder(all);
-      const page = await paginateByCursor(qb, { limit: 4, cursor, sort: SORT });
+      const page = await readPage({
+        query: qb,
+        criteria: buildCriteria({ limit: 4, cursor }, SPEC),
+        alias: 'row',
+      });
 
       seen.push(...page.items.map((row) => row.id));
       more = page.meta.hasMore;
@@ -341,28 +391,42 @@ describe('paginateByCursor', () => {
     expect(new Set(seen).size).toBe(all.length);
   });
 
-  it('refuses a malformed cursor rather than silently returning page one', async () => {
-    const { qb } = fakeQueryBuilder(rows(5));
-
-    await expect(
-      paginateByCursor(qb, { limit: 2, cursor: 'rubbish', sort: SORT }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+  it('refuses a malformed cursor rather than silently returning page one', () => {
+    // The refusal happens when the criteria are built, before any query runs.
+    expect(() => buildCriteria({ limit: 2, cursor: 'rubbish' }, SPEC)).toThrow(
+      BadRequestException,
+    );
   });
 
   it('clamps an oversized or unparseable page size', async () => {
     const tooBig = fakeQueryBuilder(rows(500));
-    await paginateByCursor(tooBig.qb, { limit: 10_000, sort: SORT });
+
+    await readPage({
+      query: tooBig.qb,
+      criteria: buildCriteria({ limit: 10_000 }, SPEC),
+      alias: 'row',
+    });
     expect(tooBig.recorded.limit).toBe(101);
 
     const nonsense = fakeQueryBuilder(rows(5));
-    await paginateByCursor(nonsense.qb, { limit: Number.NaN, sort: SORT });
+
+    await readPage({
+      query: nonsense.qb,
+      criteria: buildCriteria({ limit: Number.NaN }, SPEC),
+      alias: 'row',
+    });
     expect(nonsense.recorded.limit).toBe(21);
   });
 
   it('honours a custom tie-break column', async () => {
     const { qb, recorded } = fakeQueryBuilder(rows(5));
 
-    await paginateByCursor(qb, { limit: 2, sort: SORT, idColumn: 'uuid' });
+    await readPage({
+      query: qb,
+      criteria: buildCriteria({ limit: 2 }, SPEC),
+      alias: 'row',
+      idColumn: 'uuid',
+    });
 
     expect(recorded.order[1]).toEqual(['uuid', 'DESC']);
   });
@@ -371,7 +435,11 @@ describe('paginateByCursor', () => {
     const source = rows(5);
     const { qb } = fakeQueryBuilder(source);
 
-    const page = await paginateByCursor(qb, { limit: 1, sort: SORT });
+    const page = await readPage({
+      query: qb,
+      criteria: buildCriteria({ limit: 1 }, SPEC),
+      alias: 'row',
+    });
     const decoded = decodeCursor(page.meta.nextCursor ?? undefined);
 
     // A cursor that rounded to the millisecond would re-read the boundary row on

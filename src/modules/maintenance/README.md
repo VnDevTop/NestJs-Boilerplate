@@ -43,7 +43,7 @@ rather than an administrator.
 The history route returns `meta.nextCursor` and `meta.hasMore`, and **no total**.
 It used to return one, from a `COUNT(*) OVER()` that read every run ever recorded —
 a table nothing prunes — on the screen an operator opens when something has already
-gone wrong. See [common/pagination](../../common/README.md#pagination).
+gone wrong. See [common/query](../../common/README.md#the-query-layer).
 
 ## Three decisions that shape the job
 

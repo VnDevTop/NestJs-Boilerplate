@@ -15,11 +15,10 @@ import { revokedSessionKey, CacheService } from '../../core/cache/index.js';
 import {
   CursorPaginationQueryDto,
   PaginatedResultDto,
-  paginateByCursor,
-  resolveSort,
-  type SortFieldMap,
 } from '../../common/pagination/index.js';
+import { buildCriteria, readPage } from '../../common/query/index.js';
 
+import { SESSION_QUERY_SPEC } from './session-query.js';
 import { RefreshTokenRevokedReason } from './enums/index.js';
 import { RefreshToken } from './entities/index.js';
 import { RefreshTokenPayload, TokenMetadata } from './types/index.js';
@@ -32,24 +31,6 @@ import { RefreshTokenPayload, TokenMetadata } from './types/index.js';
  * tokens start working again, so the fallback errs long.
  */
 const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 900;
-
-/**
- * Sortable columns for `GET /auth/sessions`.
- *
- * **`createdAt` only, and the omission is deliberate.** The other candidates are
- * `expiresAt` and `sessionStartedAt`, both of which answer a question about the
- * session's age rather than about the list, and sorting a live-session list by
- * either produces an order that shuffles underneath the reader as tokens are
- * rotated — the page they are on stops being the page they were reading.
- * `sessionStartedAt` is in fact what Phase 23's `GET /auth/sessions` filter by
- * age should use, and when that filter exists it belongs in the WHERE clause, not
- * in the ORDER BY.
- */
-const SESSION_SORT_FIELDS = {
-  createdAt: 'createdAt',
-} as const satisfies SortFieldMap<keyof SessionSortableColumns>;
-
-type SessionSortableColumns = { createdAt: unknown };
 
 export interface IssuedRefreshToken {
   token: string;
@@ -180,23 +161,20 @@ export class RefreshTokenService {
     userId: string,
     query: CursorPaginationQueryDto,
   ): Promise<PaginatedResultDto<RefreshToken>> {
-    const sort = resolveSort(
-      query.sort,
-      query.order,
-      SESSION_SORT_FIELDS,
-      'createdAt',
-    );
+    const criteria = buildCriteria(query, SESSION_QUERY_SPEC);
 
-    const qb = this.refreshTokensRepository
-      .createQueryBuilder('token')
-      .andWhere('token.userId = :userId', { userId })
-      .andWhere('token.revokedAt IS NULL')
-      .andWhere('token.expiresAt > :now', { now: new Date() });
-
-    const page = await paginateByCursor(qb, {
-      limit: query.effectiveLimit,
-      cursor: query.cursor,
-      sort,
+    // The scope is not a filter: the caller sees their own live sessions, and
+    // no query parameter can widen that. The revoked and expired rows are
+    // excluded here rather than after the page is assembled, so an expired row
+    // cannot consume one of the twenty slots.
+    const page = await readPage({
+      query: this.refreshTokensRepository
+        .createQueryBuilder('token')
+        .andWhere('token.userId = :userId', { userId })
+        .andWhere('token.revokedAt IS NULL')
+        .andWhere('token.expiresAt > :now', { now: new Date() }),
+      criteria,
+      alias: 'token',
     });
 
     return PaginatedResultDto.of(page.items, page.meta);

@@ -6,36 +6,17 @@ import { EntityManager, In, IsNull, Repository } from 'typeorm';
 import {
   CursorPaginationQueryDto,
   PaginatedResultDto,
-  paginateByCursor,
-  resolveSort,
-  type SortFieldMap,
 } from '../../common/pagination/index.js';
+import { buildCriteria, readPage } from '../../common/query/index.js';
 
 import { authDeviceSessionsKey, CacheService } from '../../core/cache/index.js';
 import type { CacheConfig } from '../../configs/index.js';
 import { UsersService } from '../users/users.service.js';
 
+import { DEVICE_QUERY_SPEC } from './device-query.js';
 import { UserDeviceDto } from './dto/index.js';
 import { UserDevice } from './entities/index.js';
 import { DeviceMetadata } from './types/index.js';
-
-/**
- * Sortable columns for `GET /auth/devices`.
- *
- * **Two columns, both `NOT NULL`.** `createdAt` is the one anybody asks for — "what
- * did I sign in on most recently" — and `deviceName` is there because the list is
- * read by looking for a machine. `lastUsedAt` is deliberately absent: it is
- * nullable, and a nullable column cannot carry a keyset cursor boundary.
- */
-const DEVICE_SORT_FIELDS = {
-  createdAt: 'createdAt',
-  deviceName: 'deviceName',
-} as const satisfies SortFieldMap<keyof DeviceSortableColumns>;
-
-type DeviceSortableColumns = {
-  createdAt: unknown;
-  deviceName: unknown;
-};
 
 @Injectable()
 export class DeviceService {
@@ -118,20 +99,19 @@ export class DeviceService {
     userId: string,
     query: CursorPaginationQueryDto,
   ): Promise<PaginatedResultDto<UserDeviceDto>> {
-    const sort = resolveSort(
-      query.sort,
-      query.order,
-      DEVICE_SORT_FIELDS,
-      'createdAt',
-    );
+    const criteria = buildCriteria(query, DEVICE_QUERY_SPEC);
 
-    const page = await paginateByCursor(
-      this.devicesRepository
+    // The scope is not a filter and never was: the caller sees their own
+    // active devices, and no query parameter can widen that. It is applied to
+    // the builder here, and the criteria's filters are applied on top of it.
+    const page = await readPage({
+      query: this.devicesRepository
         .createQueryBuilder('device')
         .andWhere('device.userId = :userId', { userId })
         .andWhere('device.isActive = :isActive', { isActive: true }),
-      { limit: query.effectiveLimit, cursor: query.cursor, sort },
-    );
+      criteria,
+      alias: 'device',
+    });
 
     return PaginatedResultDto.of(
       UserDeviceDto.fromEntities(page.items),

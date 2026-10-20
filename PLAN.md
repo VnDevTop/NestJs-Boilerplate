@@ -89,12 +89,35 @@ that leads with that column and carries the id after it.
 
 ### Phase 24: A reusable query criteria object
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
-- [ ] `QueryCriteria` built once from a DTO and consumed by any repository
-- [ ] Sorting, filtering and paging in one place rather than per service
+- [x] `QueryCriteria` built once from a DTO and consumed by any repository
+- [x] Sorting, filtering and paging in one place rather than per service
 
-Done when adding a list route needs no new pagination code.
+Done when adding a list route needs no new pagination code. **Met, and asserted
+as a test** rather than argued in a comment: `query/adding-a-route.spec.ts` adds
+a route that does not exist — a fictional table — and shows the whole of it is a
+DTO, a spec, and one call.
+
+What replaced what: `common/query/` now owns sorting, filtering and the keyset
+walk, and the two Phase 23 pieces that it subsumed — `pagination/sort.ts`'s
+`resolveSort` and `pagination/cursor-pagination.ts`'s `paginateByCursor` — are
+deleted rather than kept as a second way to do the same thing. `common/pagination/`
+keeps the cursor codec and the two response shapes, which are transport details
+rather than query details.
+
+**A route's query surface is now one object.** `USER_QUERY_SPEC` says which
+fields may be filtered and sorted and which column each one means, and it is
+checked against the DTO at compile time in both directions: a filter the DTO does
+not declare is a filter that could never fire, and a DTO property no filter
+declares is a parameter the client can send and the route ignores.
+
+**The operator comes from the spec, never from the request.** The set is closed
+and each operator is a literal in the source, so there is no path from a request
+to a fragment of SQL.
+
+**The scope is not a filter.** `GET /auth/devices` answers "your own devices", and
+that is applied by the service rather than by anything the client sends.
 
 ### Phase 25: Job progress and cancellation
 
@@ -722,7 +745,7 @@ exists means writing the same retry logic twice.
 | Phase 21  | Testing Depth and Documentation                | Done    |
 | Phase 22  | Configurable Email Templates                   | Done    |
 | Phase 23  | Cursor pagination                              | Done    |
-| Phase 24  | A reusable query criteria object               | Planned |
+| Phase 24  | A reusable query criteria object               | Done    |
 | Phase 25  | Job progress and cancellation                  | Planned |
 | Phase 26  | An audit read surface                          | Planned |
 | Phase 27  | A Lucene query parser                          | Planned |

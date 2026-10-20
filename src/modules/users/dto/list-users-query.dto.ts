@@ -9,43 +9,7 @@ import {
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 import { Role } from '../../../common/enums/index.js';
-import {
-  CursorPaginationQueryDto,
-  type SortFieldMap,
-} from '../../../common/pagination/index.js';
-
-/**
- * The columns `GET /users` may be sorted on.
- *
- * **Every entry is `NOT NULL`, which the cursor format requires.** A cursor carries
- * its boundary value as a string; a `null` would have to be encoded as something
- * the decoder reads as "malformed", so sortable columns are restricted to ones
- * that always hold a value. Adding a nullable column here means encoding nulls in
- * the cursor and defining what `< NULL` means for a keyset walk — do that
- * deliberately, not by adding a line.
- *
- * `email`, `role` and `isActive` are here because an operator paging a user list
- * asks "the admins", "the inactive ones" — usually as a filter, but sorting by the
- * same columns is what makes a filtered list navigable.
- *
- * `firstName` and `lastName` are absent on purpose. Sorting by either is legal
- * SQL and useless in practice — the answer is "do you mean the full name?" — and
- * an index on either would be maintained forever for a question nobody asks.
- */
-export const USER_SORT_FIELDS = {
-  createdAt: 'createdAt',
-  email: 'email',
-  role: 'role',
-  isActive: 'isActive',
-} as const satisfies SortFieldMap<keyof UserResponseLike>;
-
-/** The shape the allow-list must satisfy, spelled out so a rename is a type error. */
-type UserResponseLike = {
-  createdAt: unknown;
-  email: unknown;
-  role: unknown;
-  isActive: unknown;
-};
+import { CursorPaginationQueryDto } from '../../../common/pagination/index.js';
 
 /**
  * `GET /users` query parameters.
@@ -56,6 +20,12 @@ type UserResponseLike = {
  * per-entity deny-list to stop it. Declaring the four filters this route supports
  * makes the readable surface exactly the written one, and the global validation
  * pipe's `forbidNonWhitelisted` turns anything else into a 400 naming the field.
+ *
+ * **The DTO says what the request may contain; the spec says what each field
+ * means.** `USER_QUERY_SPEC` is the other half, and the two are checked against
+ * each other at compile time — a property here with no filter there, or a filter
+ * there with no property here, is an error rather than a parameter the client can
+ * send and the route ignores.
  */
 export class ListUsersQueryDto extends CursorPaginationQueryDto {
   @ApiPropertyOptional({

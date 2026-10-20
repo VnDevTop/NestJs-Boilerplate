@@ -15,11 +15,8 @@ import {
 import type { CacheConfig } from '../../configs/index.js';
 import { ConfigService } from '@nestjs/config';
 
-import {
-  PaginatedResultDto,
-  paginateByCursor,
-  resolveSort,
-} from '../../common/pagination/index.js';
+import { PaginatedResultDto } from '../../common/pagination/index.js';
+import { buildCriteria, readPage } from '../../common/query/index.js';
 
 import { hashPassword } from '../../common/utils/index.js';
 
@@ -28,10 +25,10 @@ import { NotificationPreferencesService } from '../notification/notification-pre
 import {
   CreateUserDto,
   ListUsersQueryDto,
-  USER_SORT_FIELDS,
   UpdateUserDto,
   UserResponseDto,
 } from './dto/index.js';
+import { USER_QUERY_SPEC } from './dto/user-query.js';
 import { User } from './entities/index.js';
 
 /**
@@ -165,18 +162,17 @@ export class UsersService {
   /**
    * A page of users, newest first by default.
    *
-   * **Every filter is a parameter and every sort field comes from an allow-list.**
-   * The sort is resolved in the controller, which is where the declared sortable
-   * columns live; the resolved column is interpolated into the ORDER BY because an
-   * identifier cannot be a bound parameter, and its only possible values are the
-   * ones `resolveSort` accepts. The `email` substring is bound as a value, so the
-   * `%` and `_` a caller types are searched for literally rather than acting as
-   * wildcards — a search box that treats `_` as "any character" is a box that
-   * returns rows nobody asked for.
+   * **One call, and the route's whole query surface is declared elsewhere.**
+   * `USER_QUERY_SPEC` says which fields may be filtered and sorted and which
+   * column each one means; the DTO says what the request may contain; this
+   * method hands both to the query layer and reads a page. There is no `if` per
+   * filter here, and there is no way for a filter to be added to one of those
+   * two places and not the other.
    *
-   * **Fuzzy is spelled out, so it cannot become a coincidence.** `ILIKE` with the
-   * wildcards wrapped around an escaped term is deliberate; leaving them implicit
-   * would work until somebody searched for a literal `_`.
+   * **The values are bound and the columns are not.** The `email` substring is
+   * a parameter, so the `%` and `_` a caller types are searched for literally
+   * rather than acting as wildcards — a search box that treats `_` as "any
+   * character" is a box that returns rows nobody asked for.
    *
    * No `total`, deliberately. See `PageMetaDto`: the honest paging answer is the
    * one carried by the page itself, and a count over the same rows is a second
@@ -185,44 +181,12 @@ export class UsersService {
   async findAll(
     query: ListUsersQueryDto,
   ): Promise<PaginatedResultDto<UserResponseDto>> {
-    const sort = resolveSort(
-      query.sort,
-      query.order,
-      USER_SORT_FIELDS,
-      'createdAt',
-    );
+    const criteria = buildCriteria(query, USER_QUERY_SPEC);
 
-    const qb = this.usersRepository.createQueryBuilder('user');
-
-    if (query.role !== undefined) {
-      qb.andWhere('user.role = :role', { role: query.role });
-    }
-
-    if (query.isActive !== undefined) {
-      qb.andWhere('user.isActive = :isActive', { isActive: query.isActive });
-    }
-
-    if (query.isEmailVerified !== undefined) {
-      qb.andWhere('user.isEmailVerified = :isEmailVerified', {
-        isEmailVerified: query.isEmailVerified,
-      });
-    }
-
-    if (query.email !== undefined && query.email.trim() !== '') {
-      // The wildcards are ours and the term is escaped, because a `%` typed into
-      // the search box should find addresses containing a percent sign and not
-      // every row on the table.
-      const escaped = query.email
-        .trim()
-        .replace(/[\\%_]/g, (character) => `\\${character}`);
-
-      qb.andWhere('user.email ILIKE :email', { email: `%${escaped}%` });
-    }
-
-    const page = await paginateByCursor(qb, {
-      limit: query.effectiveLimit,
-      cursor: query.cursor,
-      sort,
+    const page = await readPage({
+      query: this.usersRepository.createQueryBuilder('user'),
+      criteria,
+      alias: 'user',
     });
 
     return PaginatedResultDto.of(

@@ -15,6 +15,102 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: a reusable query criteria object
+
+`feat(query): a reusable query criteria object`
+
+**What changed**
+
+- `src/common/query/`: `query-spec.ts` (a route's whole query surface, and
+  `defineQuerySpec`), `query-criteria.ts` (the request as data),
+  `build-criteria.ts` (a DTO plus a spec becomes a criteria),
+  `apply-criteria.ts` (a criteria becomes SQL), `read-page.ts` (the one call a
+  list route makes), `filter-operator.ts` (the closed operator set)
+- `USER_QUERY_SPEC`, `DEVICE_QUERY_SPEC`, `SESSION_QUERY_SPEC` and
+  `RETENTION_QUERY_SPEC` — one object per list route
+- `GET /users`, `GET /auth/sessions`, `GET /auth/devices` and
+  `GET /admin/retention/runs` migrated onto it
+- Deleted: `common/pagination/sort.ts` (`resolveSort`), `common/pagination/cursor-pagination.ts`
+  (`paginateByCursor`), `USER_SORT_FIELDS`, `DEVICE_SORT_FIELDS`,
+  `SESSION_SORT_FIELDS`
+- `common/pagination/` keeps the cursor codec, the query DTO and the page result
+
+**Why**
+
+Phase 23 built the paging. Every list route then assembled its own query around
+it — the sort allow-list in one place, the filters as a hand-written `if` per
+field in another, and the paging call in a third. A filter added to one of those
+and not the other was a filter that never fired, and nothing said so.
+
+**A route's query surface is one object.** The spec says which fields may be
+filtered and sorted and which column each one means. The DTO says what the
+request may contain. The service says "give me a page of this". There is no query
+builder in the service, no filter loop, and no `hasMore` arithmetic.
+
+**The spec and the DTO are checked against each other, in both directions.** A
+filter the DTO does not declare could never arrive — the global validation pipe
+strips a parameter the DTO does not name — so it would be a filter that can never
+fire. A DTO property no filter declares is a parameter the client can send and
+the route ignores: a client that asks for the inactive accounts and gets the
+unfiltered list has been told a lie, and nothing in the code says the filter was
+forgotten. Both are compile errors now.
+
+**The operator comes from the spec, never from the request.** A request says
+_what_ to filter by, not _how_. The set of operators is closed — `eq`, `neq`,
+`gt`, `gte`, `lt`, `lte`, `in`, `ilike` — and each one is a literal in
+`apply-criteria.ts`. There is no general-purpose "expression" operator, because
+the mechanism is safe precisely because the set of shapes it can produce is finite
+and each one is written out by hand.
+
+**Every value is bound.** The SQL text carries column names and comparison
+operators, both from the spec, and never a value. A value reaches postgres as a
+parameter, which is the only place a value can go without being able to change
+the meaning of the statement.
+
+**The columns are qualified with the alias.** An unqualified column is ambiguous
+the moment the query joins a second table, which is exactly what a future route
+on the same entity will do. Phase 23 emitted `"createdAt"`, which was correct
+only because no route joined anything.
+
+**`ilike` owns the wildcards and the escaping.** A caller who had to write
+`%term%` would eventually write `%` on its own, and the search would become a
+full scan of the table with a filter that matches everything. A term that is only
+whitespace is dropped rather than applied: `ILIKE '%   %'` matches nearly every
+address, which is a filter that looks like a filter and behaves like no filter
+while costing a scan.
+
+**The scope is not a filter.** `GET /auth/devices` answers "your own devices" and
+`GET /auth/sessions` answers "your own live sessions". That is applied by the
+service to the query builder, and no query parameter can widen it. A filter the
+client controls and a scope the server decides are different things, and the code
+says which is which.
+
+**`hasMore`, still not a total.** One row past the limit answers it for free;
+`COUNT(*)` answers it by reading every matching row, and goes stale between pages
+anyway.
+
+**What it gives up**
+
+- Two things that were separate are now one. `resolveSort` and `paginateByCursor`
+  are deleted rather than kept as a second way to do the same thing, so a future
+  change to the boundary is a change in one place. The two Phase 23 spec files
+  moved with the code they tested; the behavioural suite — including the
+  concurrent-insert proof — is now `query/read-page.spec.ts`.
+- The `QueryCriteria` is a plain object, not a class. It is data, and it is
+  compared and asserted on in tests, and a class would buy nothing here.
+- The spec is per _route_, not per entity. Two routes over one entity declare
+  two specs, and they may differ — which is right, because a route's query
+  surface is a property of the route.
+
+**Carried into Phase 25**
+
+A job that reports progress needs to say "the first N of M rows" and a
+cancellation needs to be honoured at a chunk boundary. Both are easier against a
+criteria that is data than against a query builder that has been half-built, and
+Phase 26's audit read surface is a filter set like any other.
+
+---
+
 ## feat: cursor pagination
 
 `feat(pagination): cursor pagination`
