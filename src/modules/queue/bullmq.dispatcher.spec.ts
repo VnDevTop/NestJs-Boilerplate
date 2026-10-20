@@ -45,6 +45,15 @@ function fakeBullmq() {
   }[] = [];
   const closed: string[] = [];
 
+  /**
+   * What each queue was asked to store, per queue name.
+   *
+   * The fake keeps it so a test can hand the worker exactly what bullmq would
+   * hand it. A test that invents its own `data` is testing a path that does not
+   * exist, and that is how a double-wrapped payload survived in this file.
+   */
+  const stored = new Map<string, { name: string; data: unknown }[]>();
+
   /** Per-queue counts, so a test can say what the backlog looks like. */
   const counts: Record<string, Record<string, number>> = {};
 
@@ -57,11 +66,12 @@ function fakeBullmq() {
         queues.push({ name, options });
       }
 
-      async add(
-        _name: string,
-        _data: unknown,
-        options: Record<string, unknown>,
-      ) {
+      async add(name: string, data: unknown, options: Record<string, unknown>) {
+        const entries = stored.get(this.name) ?? [];
+
+        entries.push({ name, data });
+        stored.set(this.name, entries);
+
         return { id: 'job-1', options };
       }
 
@@ -96,23 +106,49 @@ function fakeBullmq() {
     },
   };
 
-  return { module, queues, workers, closed, counts };
+  return { module, queues, workers, closed, counts, stored };
+}
+
+type FakeBullmq = ReturnType<typeof fakeBullmq>;
+
+/**
+ * Hands a stored job to the worker the way bullmq does.
+ *
+ * BullMQ gives the worker the name the job was added under and the data that
+ * was stored with it, so a test that passes anything else is not testing the
+ * delivery path.
+ */
+function deliver(
+  fake: FakeBullmq,
+  queueName: string,
+  index = 0,
+): Promise<unknown> {
+  const worker = fake.workers.find((w) => w.queue.name === queueName);
+  const entry = fake.stored.get(queueName)?.[index];
+
+  if (worker === undefined || entry === undefined) {
+    throw new Error(`no stored job ${index} on the ${queueName} queue`);
+  }
+
+  return worker.handler({ name: entry.name, data: entry.data });
 }
 
 function build(
   behaviour: () => Promise<JobResult> = async () => ({ ok: true }),
   bullmq: BullMqDispatcherOptions['bullmq'] = undefined,
 ) {
-  const { module, queues, workers, closed, counts } = fakeBullmq();
-  const process = vi.fn(behaviour);
+  const fake = fakeBullmq();
+  // Typed so a test can read back the job the registry was called with, which is
+  // the only way to see what the processor would have received.
+  const process = vi.fn<(job: Job) => Promise<JobResult>>(behaviour);
 
   const dispatcher = new BullMqDispatcher(
     configService(),
     { process },
-    bullmq === undefined ? (module as never) : bullmq,
+    bullmq === undefined ? (fake.module as never) : bullmq,
   );
 
-  return { dispatcher, process, queues, workers, closed, counts };
+  return { dispatcher, process, ...fake };
 }
 
 describe('BullMqDispatcher availability', () => {
@@ -295,24 +331,86 @@ describe('BullMqDispatcher.depth', () => {
 
 describe('BullMqDispatcher worker routing', () => {
   it('runs the job through the shared registry', async () => {
-    const { dispatcher, process, workers } = build(async () => ({ ok: true }));
+    const fake = build(async () => ({ ok: true }));
 
-    await dispatcher.enqueue('mail', job);
-    await workers[0].handler({ name: MAIL_JOB, data: payload });
+    await fake.dispatcher.enqueue('mail', job);
+    await deliver(fake, 'mail');
 
     // The same registry the in-process dispatcher uses, which is what makes the
     // fallback a fallback rather than a second implementation.
-    expect(process).toHaveBeenCalledWith({ name: MAIL_JOB, payload });
+    expect(fake.process).toHaveBeenCalledWith({ name: MAIL_JOB, payload });
+  });
+
+  it('hands the processor the payload, not the stored envelope', async () => {
+    const fake = build(async () => ({ ok: true }));
+
+    await fake.dispatcher.enqueue('mail', job);
+    await deliver(fake, 'mail');
+
+    // The whole job is stored, because the processor needs the name and the
+    // dedupe key as well as the payload. Wrapping it again on the way out put
+    // the job *inside* the payload, so `payload.to` did not exist and every mail
+    // failed validation as malformed.
+    const received = fake.process.mock.calls[0]?.[0] as Job;
+
+    expect(received.payload).toEqual(payload);
+  });
+
+  it('carries the dedupe key through the queue', async () => {
+    const fake = build(async () => ({ ok: true }));
+
+    await fake.dispatcher.enqueue('mail', { ...job, dedupeKey: 'dedupe:abc' });
+    await deliver(fake, 'mail');
+
+    // The key is what stops a redelivery sending the same mail twice, and it
+    // only does that if it survives the trip through redis.
+    expect(fake.process).toHaveBeenCalledWith({
+      name: MAIL_JOB,
+      payload,
+      dedupeKey: 'dedupe:abc',
+    });
+  });
+
+  it('leaves the dedupe key off a job that was enqueued without one', async () => {
+    const fake = build(async () => ({ ok: true }));
+
+    await fake.dispatcher.enqueue('mail', job);
+    await deliver(fake, 'mail');
+
+    // An empty key would be a key every such job shares, which would collapse
+    // unrelated work into one.
+    const received = fake.process.mock.calls[0]?.[0] as Job;
+
+    expect(received.dedupeKey).toBeUndefined();
+  });
+
+  it('fails a stored value that is not a job, permanently', async () => {
+    const fake = build(async () => ({ ok: true }));
+
+    await fake.dispatcher.enqueue('mail', job);
+
+    // BullMQ hands back whatever was stored. A value that is not a job cannot be
+    // processed, and a retry would read the same bytes again, so this must not
+    // burn the retry budget.
+    const outcome = await fake.workers[0]
+      .handler({ name: MAIL_JOB, data: { to: 'a@x.com' } })
+      .then(() => ({ threw: false, name: '' }))
+      .catch((error: Error) => ({ threw: true, name: error.name }));
+
+    expect(outcome.threw).toBe(true);
+    expect(outcome.name).toBe('UnrecoverableError');
   });
 
   it('gives each queue the concurrency its config names', async () => {
-    const { dispatcher, workers } = build();
+    const fake = build();
 
-    await dispatcher.enqueue('maintenance', job);
-    await dispatcher.enqueue('mail', job);
+    await fake.dispatcher.enqueue('maintenance', job);
+    await fake.dispatcher.enqueue('mail', job);
 
-    const maintenance = workers.find((w) => w.queue.name === 'maintenance');
-    const mail = workers.find((w) => w.queue.name === 'mail');
+    const maintenance = fake.workers.find(
+      (w) => w.queue.name === 'maintenance',
+    );
+    const mail = fake.workers.find((w) => w.queue.name === 'mail');
 
     expect(maintenance?.options.concurrency).toBe(1);
     expect(mail?.options.concurrency).toBe(3);
@@ -324,11 +422,12 @@ describe('BullMqDispatcher failure signalling', () => {
   async function runHandler(
     behaviour: () => Promise<JobResult>,
   ): Promise<{ threw: boolean; name: string; message: string }> {
-    const { dispatcher, workers } = build(behaviour);
-    await dispatcher.enqueue('mail', job);
+    const fake = build(behaviour);
+
+    await fake.dispatcher.enqueue('mail', job);
 
     try {
-      await workers[0].handler({ name: MAIL_JOB, data: payload });
+      await deliver(fake, 'mail');
 
       return { threw: false, name: '', message: '' };
     } catch (error) {

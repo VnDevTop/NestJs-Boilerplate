@@ -117,18 +117,6 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
     return this.bullmq !== null;
   }
 
-  /** Which queue a job name belongs on, so a worker only sees its own work. */
-  private queueOf(job: Job): QueueName {
-    return job.name.startsWith('retention') ||
-      job.name.startsWith('maintenance')
-      ? 'maintenance'
-      : job.name.startsWith('notify')
-        ? 'notification'
-        : job.name.startsWith('digest')
-          ? 'digest'
-          : 'mail';
-  }
-
   /**
    * Current counts for one queue, or `null` when Redis cannot be asked.
    *
@@ -199,7 +187,11 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
       async (job: BullWorkerJob) => {
         this.observeLag(queue, job);
 
-        return this.run(job.name, job.data);
+        // The stored value *is* the job — `enqueue` puts the whole job in
+        // `data` — so the worker hands it over as it is. Rebuilding a job from
+        // the name and the data is what used to happen here, and it put the job
+        // inside its own payload and dropped the dedupe key on the way.
+        return this.run(job.data);
       },
       {
         connection: { url: this.config.url },
@@ -257,6 +249,11 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
    * The retry options mirror what the in-process dispatcher does by hand, and both
    * read the numbers from `queue.config.ts`, so turning the queue on does not
    * change how many attempts a job gets.
+   *
+   * The whole job goes into `data`, not just the payload. The processor needs the
+   * name and the dedupe key as well as the payload, and the queue backend has
+   * nowhere else to keep them: bullmq's own `name` is the job's *name* on that
+   * queue, not the name the processor is routed by.
    */
   async enqueue(queue: QueueName, job: Job): Promise<void> {
     const options: Record<string, unknown> = {
@@ -281,18 +278,51 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
    * explicitly. Wrapping it in `UnrecoverableError` is the documented way, and it
    * is why the classification has to survive the trip through `MailService`.
    */
-  private async run(name: string, payload: unknown): Promise<unknown> {
-    const result: JobResult = await this.processors.process({ name, payload });
+  private async run(stored: unknown): Promise<unknown> {
+    const job = this.toJob(stored);
+    const result: JobResult = await this.processors.process(job);
 
     if (result.ok) {
       return result;
     }
 
     if (result.retryable === false) {
-      throw this.unrecoverable(result);
+      throw this.unrecoverable(result.error ?? 'job failed');
     }
 
     throw new Error(result.error ?? 'job failed');
+  }
+
+  /**
+   * The stored job, read back out of redis.
+   *
+   * The shape check is not defensive tidiness: it is the only place the stored
+   * value is read, and a value that is not a job cannot be processed. It fails
+   * permanently rather than being retried, because redis will hand back the same
+   * bytes on the next attempt and the budget would be spent on a job that cannot
+   * ever succeed.
+   */
+  private toJob(stored: unknown): Job {
+    if (typeof stored !== 'object' || stored === null) {
+      throw this.unrecoverable('the stored job is not an object');
+    }
+
+    const { name, payload, dedupeKey } = stored as Partial<Job>;
+
+    if (typeof name !== 'string' || name === '') {
+      throw this.unrecoverable('the stored job has no name');
+    }
+
+    const job: Job = { name, payload };
+
+    // Only carried over when it is a non-empty string, so a job that was enqueued
+    // without one comes back without the key rather than with an empty one. An
+    // empty dedupe key would be a key every such job shares.
+    if (typeof dedupeKey === 'string' && dedupeKey !== '') {
+      job.dedupeKey = dedupeKey;
+    }
+
+    return job;
   }
 
   /**
@@ -302,8 +332,8 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
    * package is installed, and reaching for the class would make this file fail to
    * load in a deployment that does not have it.
    */
-  private unrecoverable(result: JobResult): Error {
-    const error = new Error(result.error ?? 'job failed') as Error & {
+  private unrecoverable(message: string): Error {
+    const error = new Error(message) as Error & {
       name: string;
     };
 
