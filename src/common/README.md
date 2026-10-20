@@ -14,6 +14,7 @@ common
 ├── middlewares   RequestIdMiddleware
 ├── pagination    the cursor and the two shapes a paged response has
 ├── query         the query layer: a spec, a criteria, and the SQL they produce
+├── search        the search language: a tokenizer, a parser and a tree
 ├── pipes         global validation pipe
 └── utils         password, encryption, recovery codes, user agent, request id
 ```
@@ -199,6 +200,62 @@ things, and the code says which is which.
 The only thing this buys that matters is the last one: **Phase 24 is a no-op for
 every route that follows this one.** Adding a list route after this phase needs no
 new pagination code.
+
+## The search language
+
+`search/` is where a search box's text becomes a tree. It holds the tokenizer, the
+parser and the tree, and **nothing else** — no entity, no column, no database.
+
+| File           | Decision                                                  |
+| -------------- | --------------------------------------------------------- |
+| `ast.ts`       | the eight shapes a parsed query can take                  |
+| `tokenizer.ts` | the words, and the escapes that make a colon literal      |
+| `parser.ts`    | recursive descent, one method per precedence level        |
+| `errors.ts`    | the one error, and the position in the query it points at |
+
+```ts
+const query = parseSearchQuery('email:ada AND role:admin');
+```
+
+**The grammar.**
+
+```text
+or      := and ( OR and )*
+and     := not ( AND? not )*
+not     := NOT not | primary
+primary := '(' or ')' | field-value | term | phrase
+```
+
+`NOT` binds tightest, then `AND`, then `OR`. The operator between two adjacent
+terms is **AND**, where Lucene's classic parser defaults to OR: this is a filter
+over a table somebody is typing into, and a query that widens with every word
+returns the whole table.
+
+**What it understands.** `term`, `field:value`, `"phrase"`, `AND` `OR` `NOT`
+(uppercase only, so `and` can be a term), parentheses, `[a TO b]` inclusive,
+`{a TO b}` exclusive, `>` `<` `>=` `<=`, `wild*`, `f?y`, `term~`, `term~2`,
+`term^3`, `field:*`, and `\:` for a literal colon.
+
+**What it refuses, and why.** Not because the three are hard — because a
+translator that has to produce one of them cannot be proved to produce the thing
+the user asked for, and a search that answers a different question is worse than
+one that says it cannot.
+
+| Refused                   | What it looks like | Why                                                                                           |
+| ------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
+| regular expressions       | `/foo/`            | a regex is a different question from a term, and searching for the text `/foo/` finds nothing |
+| scripts and pseudo-fields | `_script:x`        | a translator cannot produce a computed field                                                  |
+| nested queries            | `title:(a OR b)`   | a group inside a value is a query inside a query                                              |
+
+**The tree knows no entity.** A field is a name and nothing more: which column it
+lands on, whether it may be searched at all and what it weighs are the field
+registry's business, and the registry is Phase 28. That is what makes adding
+search to another entity one field-map file and no new infrastructure.
+
+**Every failure is a `SearchParseError`,** with the position in the query. A
+malformed query is a client mistake, and a client mistake must be a 400 that says
+which part was wrong — not a `TypeError` from inside the parser, which is a 500
+for a request that was merely wrong.
 
 ## Utilities worth knowing
 
