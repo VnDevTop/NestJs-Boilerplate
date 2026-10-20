@@ -121,13 +121,36 @@ that is applied by the service rather than by anything the client sends.
 
 ### Phase 25: Job progress and cancellation
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
-- [ ] Progress recorded per job: processed, total, current item, started, finished
-- [ ] `GET /jobs/:id` and a cancel endpoint
-- [ ] Cancellation honoured at the next chunk boundary, not mid-write
+- [x] Progress recorded per job: processed, total, current item, started, finished
+- [x] `GET /jobs/:id` and a cancel endpoint
+- [x] Cancellation honoured at the next chunk boundary, not mid-write
 
-Done when a five-minute import can be watched and stopped.
+Done when a five-minute import can be watched and stopped. **Met, and asserted as
+a test** rather than argued in a comment: `retention.service.spec.ts` cancels a
+run mid-table and shows that the batch in flight finished and the next one never
+started, and `jobs.controller.spec.ts` shows the three answers the route gives —
+a job, no such job, and a store that cannot be reached.
+
+**A job has an id, and the queue mints it.** `enqueue` returns it, and it is the
+handle for everything else: `GET /jobs/:id` and `POST /jobs/:id/cancel`. The
+queue mints it rather than the caller so a job cannot be queued without one and
+two replicas cannot mint the same one.
+
+**The progress lives in redis, not in a table.** It is live state about work
+that is happening now, it is read by a person watching a run, and it is
+worthless a day later. The TTL is the cleanup, so nothing has to be scheduled to
+delete it.
+
+**A cancellation is a flag, not a kill.** The job asks whether it should stop at
+a boundary it knows is safe, and stops there. The retention run checks between
+batches, and each batch is its own transaction, so stopping there leaves the
+table in a state an interrupted run would also leave.
+
+**A cancelled job is neither a failure nor a success.** It is not retried, not
+dead-lettered, and its deduplication key is released. The job's record says
+`cancelled`, which is a fourth answer that the other three do not cover.
 
 ### Phase 26: An audit read surface
 
@@ -746,7 +769,7 @@ exists means writing the same retry logic twice.
 | Phase 22  | Configurable Email Templates                   | Done    |
 | Phase 23  | Cursor pagination                              | Done    |
 | Phase 24  | A reusable query criteria object               | Done    |
-| Phase 25  | Job progress and cancellation                  | Planned |
+| Phase 25  | Job progress and cancellation                  | Done    |
 | Phase 26  | An audit read surface                          | Planned |
 | Phase 27  | A Lucene query parser                          | Planned |
 | Phase 28  | The field registry and the translators         | Planned |

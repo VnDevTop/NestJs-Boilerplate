@@ -40,6 +40,12 @@ take minutes, which is longer than a request should stay open.
 Both write routes need the `maintenance:run` permission, so a super administrator
 rather than an administrator.
 
+`POST /admin/retention/run` returns the **id of the job it queued**, which is the
+handle the run is watched with: `GET /jobs/:id` says how far it has got and which
+table it is on, and `POST /jobs/:id/cancel` asks it to stop. The history says what
+happened; the job says what is happening now, and a run that takes minutes raises
+that question while it is still going.
+
 The history route returns `meta.nextCursor` and `meta.hasMore`, and **no total**.
 It used to return one, from a `COUNT(*) OVER()` that read every run ever recorded —
 a table nothing prunes — on the screen an operator opens when something has already
@@ -59,6 +65,24 @@ across every table.
 timeout here is nearly always a lost database connection rather than a full disk,
 because rows are removed continuously, and a lost connection makes the remaining
 batches pointless anyway.
+
+## Watching it, and stopping it
+
+A queued run reports what it is doing through the job's context: how many targets
+are done, how many there are, and which one it is on. The count is of **targets**,
+not of rows — the number of rows is not known until they are counted, and counting
+them would mean scanning every table twice, once to count and once to delete.
+
+A cancellation is a flag, and the run checks it **between batches**, never inside
+one. Each batch is its own transaction, so stopping between two of them leaves
+the table in a state an interrupted run would also leave; stopping inside one
+would leave a half-deleted table nobody asked for.
+
+A cancelled run is neither a timeout nor a success. It is recorded with its own
+`cancelled` flag, because it and a timeout leave the same shape behind them —
+some tables cleaned, the rest listed in `pending` — and `pending` alone cannot
+tell them apart. The tables it did not reach are the next run's work, not a
+fault.
 
 ## Rehearsing a first run
 

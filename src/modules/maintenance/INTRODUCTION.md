@@ -56,12 +56,31 @@ the `DELETE` works.
 ## Run history
 
 `maintenance_logs` holds start, finish, duration, `dryRun`, `totalDeleted`,
-`timedOut`, `trigger` (`cron` | `manual` | `admin`), `pending[]`,
+`timedOut`, `cancelled`, `trigger` (`cron` | `manual` | `admin`), `pending[]`,
 `failedTargets[]` and the full per-target result. `record()` **throws** on
 failure — the deliberate exception to this repository's fail-open rule, because a
 retention run nobody knows happened is worse than a failed one.
 
 `RetentionTrigger.Manual` is defined and never written.
+
+## Watching and stopping a run
+
+A queued run is a job with an id. `GET /jobs/:id` reports how many targets are
+done, how many there are and which one is in flight; `POST /jobs/:id/cancel` asks
+the run to stop.
+
+The count is of **targets**, not of rows: the number of rows is not known until
+they are counted, and counting them would mean scanning every table twice.
+
+The cancellation is checked **between batches**, never inside one. Each batch is
+its own transaction, so stopping between two of them leaves the table in a state
+an interrupted run would also leave, and stopping inside one would leave a
+half-deleted table nobody asked for.
+
+A cancelled run is recorded with `cancelled: true` and the targets it did not
+reach in `pending`. It is not a timeout and not a success: the tables it missed
+are the next run's work rather than a fault, and the two are separate columns
+because `pending` alone cannot tell them apart.
 
 ## Controls
 

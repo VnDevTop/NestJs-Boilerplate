@@ -15,6 +15,126 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: job progress and cancellation
+
+`feat(queue): give every job an id and keep its progress` ·
+`feat(queue): let a job report progress and be stopped`
+
+**What changed**
+
+- `src/modules/queue/job-progress.service.ts` — where a job's progress is kept,
+  and where a cancellation is registered
+- `src/modules/queue/job-id.ts` — the id a job is known by
+- `src/modules/queue/jobs.controller.ts` — `GET /jobs/:id` and
+  `POST /jobs/:id/cancel`
+- `src/modules/queue/dto/job-progress.dto.ts` — the two response shapes
+- `JobRequest` and `Job` split in `queue.interface.ts`: the caller submits a
+  request, the queue mints an id and the processor receives a job
+- `JobContext` — what a processor is told: report how far you have got, and find
+  out whether you should stop
+- `JobResult.cancelled` — a fourth outcome, beside success, failure and
+  permanent failure
+- Both dispatchers record the lifecycle: queued, running, completed, failed,
+  cancelled
+- The retention run reports its progress and checks for a cancellation between
+  batches
+- `Permission.JobRead` (administrator and super administrator) and
+  `Permission.JobCancel` (super administrator alone)
+- `QUEUE_PROGRESS_TTL`, default 86 400 000 ms
+- Migration `1792500000000-AddMaintenanceCancelled`: a `cancelled` column on
+  `maintenance_logs`
+- `RedisClientService.inspect` — a read that tells "absent" from "unreachable"
+
+**Why**
+
+A job was unnameable. `enqueue` took a job and returned nothing, so there was
+no handle to ask about a job with and nothing to say to one that was taking too
+long. A five-minute import had to be waited out.
+
+**A job has an id, and the queue mints it.** The queue rather than the caller,
+so a job cannot be queued without one and two replicas cannot mint the same one.
+It is a uuid because the id is in a URL and in a log line, and a counter would
+let one operator read another operator's job by walking the numbers.
+
+**The progress lives in redis, not in a table.** It is live state about work
+that is happening now, it is read by a person watching a run, it is worthless a
+day later, and nothing joins against it. A table would mean a schema, a
+migration, a row per report and a retention rule for a table whose whole content
+is "how far along was that, and it finished two hours ago". Redis is already
+here, its keys are namespaced away from the cache, and the TTL is the cleanup —
+the store deletes the record, so nothing has to be scheduled to.
+
+**The cancel flag is a separate key from the progress.** The two have different
+writers: the flag by the process serving the route, the progress by the worker.
+One key with two writers is a key where one of them eventually overwrites the
+other.
+
+**The route gives three answers, not two.** A missing job is a 404 and an
+unreachable store is a 503. They are different facts, and collapsing them tells
+an operator their job does not exist while it is running. That needed one new
+method on the redis client, because `get` answers `null` for both a miss and an
+outage — and both of those are the right answer for a caller that treats a miss
+and an outage the same way, which the deduplication guard does.
+
+**Nothing in the store is allowed to fail a job.** Every write is best effort and
+the failure is swallowed, because the alternative is a redis outage turning into
+a queue that drops mail.
+
+**A cancellation is a flag, not a kill.** The job asks whether it should stop at
+a boundary it knows is safe, and stops there. The retention run checks between
+batches, and each batch is its own transaction, so stopping there leaves the
+table in a state that an interrupted run would also leave — and stopping inside
+one would leave a half-deleted table that nobody asked for.
+
+**A cancelled job is neither a failure nor a success.** It is not retried, since
+a retry would do the work nobody wanted done. It is not dead-lettered, since a
+dead-letter entry says something is broken and nothing is. Its deduplication key
+is released, since the work was not done and holding the key would skip the next
+attempt.
+
+**The retention log grows a `cancelled` column.** It already had `timedOut`, and
+a cancelled run leaves the same shape behind it: some tables cleaned, some listed
+in `pending`. `pending` alone cannot tell them apart, and a record that cannot
+tell them apart is a record an operator has to guess at. The alternative was
+leaving it out and letting the job's own record carry the reason — and that
+record lives in redis with a TTL, so a question asked a week later about a run
+from last Tuesday would have no answer in it, while the log table keeps a row
+forever.
+
+**What the progress counts.** The run's targets, not its rows. The number of
+rows is not known until the rows are counted, and counting them would mean
+scanning every table twice — once to count and once to delete. The targets are
+known up front, and the target in flight is the part an operator actually
+reads: "it is on notification_logs, the seventh of nine" says more than a
+percentage.
+
+**Who may stop a job.** The super administrator alone, like `MaintenanceRun` and
+`UserDelete`. Stopping a job is irreversible and leaves the work half done, and
+the person who starts a job is not always the person who should be able to stop
+it. Watching stays with the administrator, because watching changes nothing.
+
+**What it gives up**
+
+- The progress is per job, not per queue. There is no "show me everything that
+  is running" list, because a list of jobs is a different question and a
+  different route, and Phase 26 is where the read surfaces are decided.
+- A cancelled job's progress is kept for the same TTL as any other job's. The
+  record of a job somebody stopped is not interesting for longer than the record
+  of a job that finished.
+- The `cancelled` column on `maintenance_logs` is a schema change for a flag
+  that could have been a word in the log line. It is a column because a record
+  an operator cannot interpret without guessing is not a record.
+
+**Carried into Phase 26**
+
+An audit read surface is a filter set over a table, and Phase 24's criteria
+object is what a route's filters are made of. The permission question Phase 25
+had to answer — who may read operational state, and who may change it — is the
+same question Phase 26 asks about audit rows, and the answer there should be
+recorded the same way.
+
+---
+
 ## feat: a reusable query criteria object
 
 `feat(query): a reusable query criteria object`

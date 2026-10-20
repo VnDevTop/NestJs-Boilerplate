@@ -8,7 +8,7 @@ and returns; nothing here runs inside a request.
 
 ```text
 queue
-├── queue.interface.ts          JobQueue, Job, JobResult
+├── queue.interface.ts          JobQueue, JobRequest, Job, JobResult, JobContext
 ├── retry.policy.ts             backoff, retryability, the dedupe window
 ├── redis-client.service.ts     redis for bookkeeping, not for cache
 ├── dedupe-key.ts               builds the key a job is identified by
@@ -18,6 +18,10 @@ queue
 ├── processors/mail.processor.ts    the only implementation of sending mail
 ├── in-process.dispatcher.ts    runs jobs here, under a bounded limiter
 ├── bullmq.dispatcher.ts        enqueues to redis, when bullmq is installed
+├── job-id.ts                   mints the id a job is known by
+├── job-progress.service.ts     where a job's progress is kept
+├── jobs.controller.ts          GET /jobs/:id, POST /jobs/:id/cancel
+├── dto/job-progress.dto.ts     the two response shapes
 └── queue.module.ts             picks one of the two at boot
 ```
 
@@ -92,6 +96,64 @@ dead-letter list then fills with every night.
 When the entries land they will use `@nestjs/schedule` rather than a queue
 backend, so they keep firing when redis is down — which is when the database most
 needs cleaning.
+
+## Watching and stopping a job
+
+Every job has an id, and the id is the handle. `enqueue` mints it and returns
+it; `GET /jobs/:id` answers with what the job is doing; `POST /jobs/:id/cancel`
+asks it to stop.
+
+**The queue mints the id, not the caller.** A caller that had to supply one
+could forget, and a job without one could not be found again. It is a uuid
+because the id is in a URL and in a log line, and a counter would let one
+operator read another operator's job by walking the numbers.
+
+**The progress is kept in redis, through `RedisClientService`.** It is live
+state about work that is happening now, it is read by a person watching a run,
+and it is worthless a day later — so the TTL is the cleanup and nothing has to be
+scheduled to delete it. It is not a table: a table would mean a schema, a
+migration, a row per report and a retention rule for a table whose whole content
+is "how far along was that, and it finished two hours ago".
+
+**The cancel flag is a separate key from the progress.** The two have different
+writers — the flag by the process serving the route, the progress by the worker
+— and one key with two writers is a key where one of them eventually overwrites
+the other.
+
+**A cancellation is a flag, not a kill.** The job asks whether it should stop at
+a boundary it knows is safe, and stops there. The retention run checks between
+batches, and each batch is its own transaction, so stopping there leaves the
+table in a state an interrupted run would also leave. Stopping inside one would
+leave a half-deleted table that nobody asked for.
+
+**A cancelled job is neither a failure nor a success.** It is not retried, not
+dead-lettered, and its deduplication key is released: the work was not done, and
+holding the key would skip the next attempt.
+
+| Outcome           | Retried | Dead-lettered | Key released |
+| ----------------- | ------- | ------------- | ------------ |
+| Success           | no      | no            | no           |
+| Retryable failure | yes     | no            | yes          |
+| Permanent failure | no      | yes           | no           |
+| Cancelled         | no      | no            | yes          |
+
+### The three answers the route gives
+
+| Situation                 | Answer | Why not something else                       |
+| ------------------------- | ------ | -------------------------------------------- |
+| The job exists            | 200    |                                              |
+| No such job               | 404    |                                              |
+| The store is unreachable  | 503    | not a 404: the store being down says nothing |
+|                           |        | about whether the job exists                 |
+| The job has finished      | 409    | not a 404: the job exists, there is nothing  |
+|                           |        | left to stop                                 |
+| The cancellation was made | 202    | accepted, not carried out: the job stops at  |
+|                           |        | the next safe point                          |
+
+Telling "no such job" apart from "the store is down" needed `RedisClientService.inspect`,
+because `get` answers `null` for both — and both of those are the right answer
+for a caller that treats a miss and an outage the same way, which the
+deduplication guard does.
 
 ## The dead-letter list is redis, not a table
 

@@ -1,9 +1,9 @@
 # Queue — Introduction
 
 One `JobQueue` interface over two drivers, plus deduplication, a retry policy,
-dead-lettering and idempotency keys. The consistency rule worth knowing up
-front: **enabling BullMQ does not change the attempt budget**, because both
-drivers read the same configuration.
+dead-lettering, idempotency keys and the progress of a running job. The
+consistency rule worth knowing up front: **enabling BullMQ does not change the
+attempt budget**, because both drivers read the same configuration.
 
 The detailed reference is [README.md](README.md).
 
@@ -22,6 +22,26 @@ chosen and Redis dies afterwards, `enqueue` rejects. `README.md` describes the
 in-process fallback as covering "when redis is unreachable during an incident"
 — that is true of the boot-time condition (package missing, queue disabled) and
 not of a live outage.
+
+## Jobs have an id, and it is the handle
+
+`enqueue` mints a uuid and returns it. `GET /jobs/:id` answers with the job's
+status, how far it has got, the item in flight and when it started and finished.
+`POST /jobs/:id/cancel` asks the job to stop.
+
+| Route                   | Permission                      | Answers            |
+| ----------------------- | ------------------------------- | ------------------ |
+| `GET /jobs/:id`         | `job:read` (admin, super admin) | 200, 404, 503      |
+| `POST /jobs/:id/cancel` | `job:cancel` (super admin only) | 202, 404, 409, 503 |
+
+**A 404 and a 503 are different facts.** A missing job is a 404; a store that
+cannot be reached is a 503. Answering "no such job" during a redis outage tells
+an operator their job does not exist while it is running.
+
+**Stopping is a flag, not a kill.** The job checks at a boundary it knows is
+safe — for the retention run, between batches, each of which is its own
+transaction — and stops there. A cancelled job is not retried, not dead-lettered,
+and its deduplication key is released.
 
 ## Retry policy
 
@@ -126,6 +146,8 @@ Not a compliance claim — see [../auth/INTRODUCTION.md](../auth/INTRODUCTION.md
 | 6   | `depth()` reports `failed: 0` on the in-process driver, so the health check cannot see its failures                                      | `in-process.dispatcher.ts` |
 | 7   | The dead-letter list has no read route and no TTL — only `LTRIM` at 500 bounds it                                                        | `dead-letter.service.ts`   |
 | 8   | `queue/README.md` claims runtime fallback on a Redis outage; selection is boot-time only                                                 | `README.md`                |
+| 9   | There is no list of the jobs that are running — only a job by its id                                                                     | `jobs.controller.ts`       |
+| 10  | A job that never checks for a cancellation runs to completion                                                                            | `queue.interface.ts`       |
 
 ## Where to go next
 
