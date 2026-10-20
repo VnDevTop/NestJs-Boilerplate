@@ -4,6 +4,11 @@ import { QueryDeepPartialEntity, Repository } from 'typeorm';
 
 import { AuditLog, type AuditSnapshot } from './entities/index.js';
 import { redactText, redactValue } from '../../core/redact/index.js';
+import { buildCriteria, readPage } from '../../common/query/index.js';
+import { PaginatedResultDto } from '../../common/pagination/index.js';
+import { AUDIT_QUERY_SPEC } from './audit-query.js';
+import { AuditLogDto } from './dto/audit-log.dto.js';
+import type { AuditQueryDto } from './dto/audit-query.dto.js';
 
 /**
  * Who did it. Snapshotted, not joined — see the entity.
@@ -61,18 +66,27 @@ export function changedFields(
 }
 
 /**
- * Writes one audit row.
+ * Writes and reads the trail.
  *
- * **It never throws.** An audit write that failed the action it was recording would
- * mean an outage in the log turns into an outage in the product, and the log is the
- * thing you least want to be taking the application down. A failure is logged at
- * `error` instead, which is the loudest level short of failing the request.
+ * **The two halves fail in opposite directions, deliberately.**
+ *
+ * The write never throws: an audit write that failed the action it was
+ * recording would mean an outage in the log turns into an outage in the
+ * product, and the log is the thing you least want to be taking the application
+ * down. A failure is logged at `error` instead, which is the loudest level short
+ * of failing the request.
  *
  * That is a real trade and the opposite of the usual advice, so the reasoning is
  * worth stating: the alternative is a deployment where a full audit table or an
- * unreachable database turns every privileged action into a 500. The
- * availability failure is larger, more frequent and more visible than the
- * integrity failure, and an operator reading the gap can see that it happened.
+ * unreachable database turns every privileged action into a 500. The availability
+ * failure is larger, more frequent and more visible than the integrity failure,
+ * and an operator reading the gap can see that it happened.
+ *
+ * The read does the opposite, and it has to. A read that failed and answered
+ * "no rows" would be a lie an investigator would act on: "nobody touched this
+ * account" and "the database was down" are different facts, and the second one
+ * looks exactly like the first until somebody checks the logs. So nothing here
+ * catches — a failed read is a failed request.
  *
  * **Not awaited at the call sites.** A row that takes ten milliseconds to insert is
  * ten milliseconds added to a request that was going to answer anyway.
@@ -137,5 +151,36 @@ export class AuditService {
         }. The action itself was not affected.`,
       );
     }
+  }
+
+  /**
+   * One page of the trail.
+   *
+   * **The one call the route makes.** The spec says which fields may be
+   * filtered and sorted and which column each one means, the DTO says what the
+   * request may contain, and this reads the page. Nothing else in the route
+   * knows how a query is built.
+   *
+   * **Cursor paged, and newest first.** A trail is read backwards from a moment
+   * somebody cares about, and the boundary is `(createdAt, id)` — the id breaks
+   * the tie, because `createdAt` is `now()` and every row written in one
+   * transaction shares it.
+   *
+   * **No total.** `meta.hasMore` is the honest answer and a count over a year
+   * of rows is a second query that goes stale between the two.
+   */
+  async list(query: AuditQueryDto): Promise<PaginatedResultDto<AuditLogDto>> {
+    const criteria = buildCriteria(query, AUDIT_QUERY_SPEC);
+
+    const page = await readPage({
+      query: this.repository.createQueryBuilder('entry'),
+      criteria,
+      alias: 'entry',
+    });
+
+    return PaginatedResultDto.of(
+      page.items.map((entry) => AuditLogDto.fromEntity(entry)),
+      page.meta,
+    );
   }
 }

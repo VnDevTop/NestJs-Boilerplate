@@ -8,6 +8,7 @@ import { MailModule } from '../mail/mail.module.js';
 import { QueueModule } from '../queue/index.js';
 import { AdminController } from './admin.controller.js';
 import { AdminService } from './admin.service.js';
+import { AdminAuditController } from './audit.controller.js';
 import { AdminMailTemplatesController } from './mail-templates.controller.js';
 import { AdminRetentionController } from './retention.controller.js';
 import { AdminRolesController } from './roles.controller.js';
@@ -34,6 +35,10 @@ import { AdminRolesController } from './roles.controller.js';
     AdminRetentionController,
     AdminRolesController,
     AdminMailTemplatesController,
+    // Phase 26. The route that reads the audit trail. It lives here because it
+    // is an `/admin/` route, and the trail itself belongs to `AuditModule` — the
+    // same split the retention routes have.
+    AdminAuditController,
   ],
   providers: [AdminService],
 })

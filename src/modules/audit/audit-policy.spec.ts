@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AdminMailTemplatesController } from '../admin/mail-templates.controller.js';
 import { AdminRolesController } from '../admin/roles.controller.js';
+import { AdminAuditController } from '../admin/audit.controller.js';
 import { UsersController } from '../users/users.controller.js';
 import { AccountLockController } from '../auth/account-lock.controller.js';
 import { AuditInterceptor } from './audit.interceptor.js';
@@ -101,6 +102,13 @@ const accountRoutes = routesOf(
   new AccountLockController({} as never, {} as never),
   'auth/account',
 );
+// Phase 26. The route that reads the trail. It is here rather than only in the
+// admin module's own spec because a read of the trail must not write to it —
+// and the assertion below is the one that says so.
+const auditRoutes = routesOf(
+  new AdminAuditController({} as never),
+  'admin/audit',
+);
 // Listed explicitly rather than discovered from `AppModule`, because this file must
 // run without a database, a redis or a module graph — the same constraint that made
 // `app.module.spec.ts` build the graph with a stubbed data source rather than the
@@ -111,6 +119,7 @@ const routes = [
   ...roleRoutes,
   ...templateRoutes,
   ...accountRoutes,
+  ...auditRoutes,
 ];
 
 /**
@@ -172,6 +181,16 @@ describe('privileged routes', () => {
     expect(
       routes.find((route) => route.path === 'admin/roles/GET :role/permissions')
         ?.action,
+    ).toBeUndefined();
+  });
+
+  it('leaves the route that reads the trail unaudited', () => {
+    // A read of the trail writing to the trail would make the trail grow every
+    // time somebody looked at it, and every investigation would add an entry
+    // about the investigation. The trail records privileged *actions*, and
+    // reading is not one.
+    expect(
+      routes.find((route) => route.path === 'admin/audit/GET')?.action,
     ).toBeUndefined();
   });
 
