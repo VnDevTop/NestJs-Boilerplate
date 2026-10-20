@@ -154,15 +154,52 @@ dead-lettered, and its deduplication key is released. The job's record says
 
 ### Phase 26: An audit read surface
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
-- [ ] `GET /admin/audit` behind `@ManagerOnly()` and a new `audit:read`
-- [ ] Filter by actor, action, target and window, cursor-paged
-- [ ] The answer to "every `users.update` on this account" reachable from the API
-- [ ] A decision recorded about **who** may read it, not left implicit
+- [x] `GET /admin/audit` behind `@ManagerOnly()` and a new `audit:read`
+- [x] Filter by actor, action, target and window, cursor-paged
+- [x] The answer to "every `users.update` on this account" reachable from the API
+- [x] A decision recorded about **who** may read it, not left implicit
 
 Done when an incident can be investigated without leaving the application and
-writing SQL.
+writing SQL. **Met, and asserted as a test** rather than argued in a comment:
+`test/e2e/audit-read.e2e-spec.ts` performs a privileged action over HTTP, reads
+the trail back through the API filtered to that action and target, and shows
+that an ordinary user and a plain administrator are both refused.
+
+**The query surface is one object.** `AUDIT_QUERY_SPEC` says which fields may be
+filtered and which column each one means, `AuditQueryDto` says what the request
+may contain, and the two are checked against each other at compile time in both
+directions — a filter the DTO does not declare could never arrive, and a DTO
+property no filter declares is a parameter the client can send and the route
+ignores.
+
+**Every value is bound.** The action, the target and the window are parameters;
+the column names come from the spec and never from the request.
+
+**The window is two bounds, and the offset is required.** `from` is `>=` and `to`
+is `<=`, and a timestamp without a timezone is refused rather than interpreted:
+it means different instants on two deployments, and both answers are correct.
+
+**The action is matched exactly.** The action names are a closed vocabulary, one
+per privileged route, asserted by `audit-policy.spec.ts`. "Every `users.update`"
+is not "every action containing the text `users.update`".
+
+**Who may read it is decided, and the decision is recorded.**
+`audit:read` is held by the super administrator alone. Not because the trail is
+dangerous to look at — an administrator already holds `UserRead`, so the personal
+data in the snapshots is not new to them — but because of _who_ it describes:
+every privileged actor, with the failures included. The manager gate cannot be
+the thing that decides it either, because `isManager` is a column an
+administrator can set on any account through `PATCH /users/:id`, so a route
+gated on it can be widened by the very people it reports on. The cost is stated
+rather than hidden: an ordinary administrator investigating an incident needs an
+escalation.
+
+**The read fails where the write does not.** `record()` never throws, because an
+outage in the log must not become an outage in the product. A read that failed
+and answered "no rows" would be a lie an investigator would act on, so the read
+propagates the failure.
 
 ### Phase 27: A Lucene query parser
 
@@ -770,7 +807,7 @@ exists means writing the same retry logic twice.
 | Phase 23  | Cursor pagination                              | Done    |
 | Phase 24  | A reusable query criteria object               | Done    |
 | Phase 25  | Job progress and cancellation                  | Done    |
-| Phase 26  | An audit read surface                          | Planned |
+| Phase 26  | An audit read surface                          | Done    |
 | Phase 27  | A Lucene query parser                          | Planned |
 | Phase 28  | The field registry and the translators         | Planned |
 | Phase 29  | The Postgres translator                        | Planned |

@@ -23,6 +23,34 @@ not globally, because most routes are not worth a row.
 | `outcome`, `statusCode`, `error`     | `success`/`failure`, the real status rather than a guessed 500                                                                    |
 | `createdAt`                          | indexed                                                                                                                           |
 
+## Reading it
+
+`GET /admin/audit` — a page of the trail, filtered by actor, action, target,
+outcome and window, cursor paged. The route lives in the admin module; the query
+surface lives here.
+
+| Filter       | Comparison | The question it answers                       |
+| ------------ | ---------- | --------------------------------------------- |
+| `actorId`    | `=`        | what did this person do                       |
+| `actorEmail` | `ilike`    | what did this address do                      |
+| `actorType`  | `=`        | what did the system or an anonymous caller do |
+| `action`     | `=`        | what did they do                              |
+| `targetType` | `=`        | to what kind of thing                         |
+| `targetId`   | `=`        | to this exact thing                           |
+| `outcome`    | `=`        | what failed                                   |
+| `requestId`  | `=`        | what happened in this request                 |
+| `from`/`to`  | `>=`/`<=`  | what happened in this window                  |
+
+`audit:read` is held by the **super administrator alone**. Not because the trail
+is dangerous to look at — an administrator already holds `UserRead` — but
+because of _who_ it describes: every privileged actor, with the failures
+included. The manager gate cannot decide it either, because `isManager` is a
+column an administrator can set on any account.
+
+The read propagates its failures, where the write swallows them. A read that
+answered "no rows" when the database was down would be a lie an investigator
+would act on.
+
 ## What is audited
 
 Six actions, enforced by `audit-policy.spec.ts` against real handler metadata:
@@ -82,14 +110,14 @@ regulator asks for are not met here.
 | HIPAA §164.308(a)(5)(ii)(A) Security awareness — log monitoring | **partial** | no alert fires on the audit stream itself                                                       |
 | ISO 27001 A.8.15 Logging                                        | **partial** |                                                                                                 |
 | ISO 27001 A.8.16 Monitoring activities                          | **partial** |                                                                                                 |
-| SOC 2 CC7.2 — monitoring for anomalies                          | **not met** | no read surface, see below                                                                      |
+| SOC 2 CC7.2 — monitoring for anomalies                          | **partial** | the trail is readable now; no alert fires on it, and nothing summarises it                      |
 
 ### Why "partial" three times
 
 | Missing property             | What it means in practice                                                                                                                                                                         |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **No tamper-evidence**       | Append-only is a _convention_. There is no database trigger, no hash chain, no signature. An operator with SQL can `UPDATE` or `DELETE` rows undetectably. The entity docblock says so explicitly |
-| **No read surface**          | There is no admin route for the trail. Answering "show me every `users.update` on this account" means leaving the application and writing SQL                                                     |
+| **No alerting on the trail** | Nothing watches it. The read surface is a page a human opens; a pattern in the trail that should page somebody is still a person reading rows, and only if they knew to look                      |
 | **Same host, same database** | The trail lives beside the data it describes, so an attacker who reaches the database reaches both, and a restore rewinds both                                                                    |
 
 A regulator asking "prove the log was not altered" gets no answer this code can
@@ -101,15 +129,15 @@ infrastructure rather than application code.
 | #   | Gap                                                                                                                                                                    | Where                              |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | 1   | **No tamper-evidence of any kind** — no trigger, no hash chain                                                                                                         | `1791800000000-AddAuditLogs.ts`    |
-| 2   | **No admin route to read the trail**                                                                                                                                   | `audit/README.md`                  |
+| 2   | ~~No admin route to read the trail~~ — closed by Phase 26: `GET /admin/audit`, behind `audit:read`                                                                     | `admin/audit.controller.ts`        |
 | 3   | `before` is always null, so prior state is unrecoverable from the trail                                                                                                | `audit.interceptor.ts`             |
 | 4   | `POST /admin/retention/run` and `/dry-run` are unaudited — the two routes that can hard-delete every user row record only `trigger='admin'`, which carries no actor id | `admin/retention.controller.ts`    |
 | 5   | Retention execution is not itself audited                                                                                                                              | `maintenance/retention.service.ts` |
+| 6   | Nothing alerts on the trail, and no route summarises it — the read surface is a page a human opens                                                                     | `audit.service.ts`                 |
 
-Gap 1 and gap 2 are what a regulator means by audit controls, and neither is a
-library question. Tamper-evidence wants an append-only store the application
-does not own, and a read surface is a permission decision with a retention
-question behind it. Both are listed here because the absence is the finding.
+Gap 1 is what a regulator means by audit controls, and it is not a library
+question: tamper-evidence wants an append-only store the application does not
+own. It is listed here because the absence is the finding.
 
 ## Where to go next
 

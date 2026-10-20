@@ -38,6 +38,13 @@ held by **SuperAdmin only**. `Admin` gets `role:read`.
 | `POST /admin/mail-templates/preview` | `mail-template:read`                           | no      |
 | `PUT /admin/mail-templates/:name`    | `mail-template:write`, `@Idempotent()`         | **yes** |
 | `DELETE /admin/mail-templates/:name` | `mail-template:write`, `@Idempotent()`         | **yes** |
+| `GET /admin/audit`                   | `@ManagerOnly`, `audit:read`                   | no      |
+
+`audit:read` is held by the **super administrator alone**. The trail is what
+every privileged actor did, and an administrator is one of them; the manager
+check cannot decide it either, because `isManager` is a column an administrator
+can set on any account. See
+[the audit module](../audit/INTRODUCTION.md#reading-it).
 
 Unlocking a user is deliberately **not** here — `PATCH /auth/account/:id/unlock`
 lives in [auth](../auth/README.md), because clearing a lock must also clear the

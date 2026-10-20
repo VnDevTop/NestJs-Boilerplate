@@ -23,16 +23,27 @@ is the point of putting it at that level.
 The check is on `isManager`, and `RolesGuard` runs as well, so a route that needs
 a specific role adds `@Roles(...)` on top.
 
+**`isManager` is a column, and an administrator can set it.** `PATCH /users/:id`
+takes it, so the manager check can be widened by an administrator onto any
+account. A route whose subject is the administrators themselves therefore needs a
+permission as well — which is what `GET /admin/audit` does.
+
 ## Routes
 
 ```text
 GET /admin/health      liveness of the admin module itself
 GET /admin/dashboard   placeholder data
+GET /admin/audit       the audit trail, filtered and cursor paged
 ```
 
 Both are scaffolding at present. `admin.service.ts` is where real counts and
 aggregates belong, and the DTOs are declared so the response shape is set before
 there is anything to return.
+
+`GET /admin/audit` is the exception: it reads the trail the
+[audit module](../audit/README.md) writes. It is behind `audit:read`, which the
+super administrator holds alone, because it describes what every privileged
+actor did — including the administrators.
 
 ## Not a cache of `/health`
 

@@ -15,6 +15,101 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: an audit read surface
+
+`feat(audit): a read surface for the trail`
+
+**What changed**
+
+- `GET /admin/audit` — a page of the trail, filtered by actor, action, target,
+  outcome and window, cursor paged
+- `src/modules/audit/audit-query.ts` — `AUDIT_QUERY_SPEC`, the route's whole
+  query surface in one object
+- `src/modules/audit/dto/audit-query.dto.ts` — `AuditQueryDto`, and the two
+  closed sets (`actorType`, `outcome`)
+- `src/modules/audit/dto/audit-log.dto.ts` — `AuditLogDto`
+- `AuditService.list()` — the one call the route makes
+- `Permission.AuditRead` (`audit:read`), held by the super administrator alone
+- `test/e2e/audit-read.e2e-spec.ts` — the acceptance criterion, over the wire
+
+**Why**
+
+The trail was written for every privileged action and no route returned it.
+Answering "show me every `users.update` on this account" meant leaving the
+application and writing SQL, which is the one thing an incident responder should
+not have to do while the incident is happening.
+
+**The query surface is one object.** `AUDIT_QUERY_SPEC` says which fields may be
+filtered and which column each one means; `AuditQueryDto` says what the request
+may contain; the two are checked against each other at compile time in both
+directions. A filter the DTO does not declare could never arrive — the global
+validation pipe strips a parameter the DTO does not name — and a DTO property no
+filter declares is a parameter the client can send and the route ignores. A
+client that asks for the failures and gets every row has been told a lie.
+
+**Every value is bound.** The action, the target and the window are parameters;
+the column names come from the spec and never from the request.
+
+**The window is two bounds, and the offset is required.** `from` is `>=` and `to`
+is `<=`, and the request says _what_ to filter by and never _how_: a client that
+could pick the operator could pick the one that makes the window mean something
+else. A timestamp without a timezone is refused rather than interpreted, because
+it means different instants on two deployments and both answers are correct.
+
+**The action is matched exactly.** The action names are a closed vocabulary — one
+per privileged route, asserted by `audit-policy.spec.ts` — and "every
+`users.update`" is not "every action containing the text `users.update`".
+
+**The actor's address is matched as a substring**, the same way `GET /users`
+matches its email, so a client can search from the domain side. It is a snapshot,
+so it matches the address the actor had at the time rather than the one they have
+now.
+
+**Who may read it, and why that is a decision rather than a default.**
+`audit:read` is held by the super administrator alone. Not because the trail is
+dangerous to look at — an administrator already holds `UserRead`, so the personal
+data in the snapshots is not new to them — but because of _who_ it describes:
+every privileged actor, with the failures included, because a refused request is
+evidence.
+
+**The manager gate cannot be the thing that decides it.** `isManager` is a
+column an administrator can set on any account through `PATCH /users/:id`, so a
+route gated on it can be widened by the very people it reports on. The cost is
+stated rather than hidden: an ordinary administrator investigating an incident
+needs an escalation.
+
+**The read fails where the write does not.** `record()` never throws, because an
+outage in the log must not become an outage in the product. A read that failed
+and answered "no rows" would be a lie an investigator would act on: "nobody
+touched this account" and "the database was down" look identical until somebody
+checks the logs. So the read propagates the failure.
+
+**Reading the trail does not write to it.** A read that wrote to the trail would
+make it grow every time somebody looked at it, and every investigation would
+add an entry about the investigation. `audit-policy.spec.ts` asserts it.
+
+**What it gives up**
+
+- There is no list of the actions, so a client cannot discover what a filter
+  value should be. The vocabulary is in the audit policy, and the audited routes
+  are six.
+- The trail is read a page at a time and the page is newest-first. An
+  investigation that wants the oldest entry walks to the end of the walk.
+- `before` is still always null on an interceptor entry, so the prior state is
+  still unrecoverable from the trail alone. That is gap 3 in the audit module's
+  own list, and this phase does not close it.
+- The trail has no tamper-evidence. Append-only is a convention, and an operator
+  with SQL can rewrite history undetected. That is Phase 75.
+
+**Carried into Phase 27**
+
+A search over a table with free text is a different problem from a search over a
+fixed vocabulary, and the parser Phase 27 builds is for the first kind. The
+audit trail is the second kind, and it is now served by a declared filter set
+rather than by a query language — which is the right shape for it.
+
+---
+
 ## feat: job progress and cancellation
 
 `feat(queue): give every job an id and keep its progress` ·
