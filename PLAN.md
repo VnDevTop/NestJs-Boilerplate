@@ -203,7 +203,7 @@ propagates the failure.
 
 ### Phase 27: A Lucene query parser
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 Goal: one query language, reusable by every searchable entity.
 
@@ -211,14 +211,58 @@ Goal: one query language, reusable by every searchable entity.
 `customers`, `orders` or `invoices` is one field-map file and no new
 infrastructure.
 
-- [ ] `ast.ts`: `BooleanQuery | FieldQuery | RangeQuery | PhraseQuery |
+- [x] `ast.ts`: `BooleanQuery | FieldQuery | RangeQuery | PhraseQuery |
 WildcardQuery | ExistsQuery | BoostQuery | MatchAllQuery`
-- [ ] Tokenizer and recursive-descent parser
-- [ ] Supported: `term`, `field:value`, `"phrase"`, `AND OR NOT`, parentheses,
+- [x] Tokenizer and recursive-descent parser
+- [x] Supported: `term`, `field:value`, `"phrase"`, `AND OR NOT`, parentheses,
       `[a TO b]` inclusive, `{a TO b}` exclusive, `>`, `<`, `>=`, `<=`, `wild*`,
       `f?y`, `fuzzy~`, `fuzzy~2`, `boost^3`, `field:*`, `\:` escaping
-- [ ] **Refused and documented**: regex, script fields, nested queries. Not because
+- [x] **Refused and documented**: regex, script fields, nested queries. Not because
       they are hard — because they make the translator unprovable
+
+Done when one query language can be written once and read by every searchable
+entity. **Met, and asserted as a test** rather than argued in a comment:
+`parser.spec.ts` walks every supported form to the tree it produces, and
+asserts the property that matters most — that every input produces either a tree
+or a `SearchParseError`, never anything else and never a hang.
+
+**The grammar is one method per precedence level.**
+
+```text
+or      := and ( OR and )*
+and     := not ( AND? not )*
+not     := NOT not | primary
+primary := '(' or ')' | field-value | term | phrase
+```
+
+`NOT` binds tightest, then `AND`, then `OR`. The operator between two adjacent
+terms is **AND**, where Lucene's classic parser defaults to OR — a deliberate
+deviation, because this is a filter over a table somebody is typing into, and a
+query that widens with every word returns the whole table and leaves the filter
+to the operator.
+
+**The tree is a binary tree, not `must`/`should`/`mustNot`.** The flat shape
+carries a rule that is easy to get wrong — a `should` clause is optional only
+when there is no `must` — and a translator that flattens the two answers a
+different question from the one asked. A binary tree makes the grouping explicit
+in the shape itself.
+
+**The tokenizer does not decide what a word means.** `AND`, `email` and `mail*`
+are the same kind of token, and only the parser knows which is which — because
+only the parser knows whether it is reading an operand or a value. A tokenizer
+that decided on its own would have to guess, and the guess would be wrong for
+`field:AND`.
+
+**The three refusals are refusals, not omissions.** A regular expression
+(`/foo/`) is a different question from a term and searching for the text finds
+nothing; a script or pseudo-field (`_script:x`) is a computed field a
+translator cannot produce; a nested query (`title:(a OR b)`) is a query inside a
+query. Each is refused with a message that names what to write instead.
+
+**The parser is total.** Every input produces either a tree or a
+`SearchParseError`, never a `TypeError` and never a hang. A malformed query is a
+client mistake, and a client mistake must be a 400 that says which part was
+wrong and where.
 
 ### Phase 28: The field registry and the translators
 
@@ -808,7 +852,7 @@ exists means writing the same retry logic twice.
 | Phase 24  | A reusable query criteria object               | Done    |
 | Phase 25  | Job progress and cancellation                  | Done    |
 | Phase 26  | An audit read surface                          | Done    |
-| Phase 27  | A Lucene query parser                          | Planned |
+| Phase 27  | A Lucene query parser                          | Done    |
 | Phase 28  | The field registry and the translators         | Planned |
 | Phase 29  | The Postgres translator                        | Planned |
 | Phase 30  | User search                                    | Planned |

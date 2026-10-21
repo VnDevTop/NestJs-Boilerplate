@@ -15,6 +15,119 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: a lucene query parser
+
+`feat(search): a lucene query parser that knows no entity`
+
+**What changed**
+
+- `src/common/search/ast.ts` — the eight shapes a parsed query can take:
+  `MatchAllQuery`, `FieldQuery`, `PhraseQuery`, `WildcardQuery`, `ExistsQuery`,
+  `RangeQuery`, `BoostQuery`, `BooleanQuery`
+- `src/common/search/tokenizer.ts` — the words, the phrases, the ranges, the
+  comparisons, and the escapes
+- `src/common/search/parser.ts` — recursive descent, one method per precedence
+  level
+- `src/common/search/errors.ts` — `SearchParseError`, with the position in the
+  query
+- `src/common/search/parser.spec.ts` and `tokenizer.spec.ts`
+
+**Why**
+
+There was no way to express a search, so every list route had a filter set
+written for it and a search box would have meant one route per question. One
+query language, written once, read by every searchable entity.
+
+**The parser knows no entity.** A field is a name in the tree and nothing more:
+which column it lands on, whether it may be searched at all and what it weighs
+are the field registry's business, and the registry is Phase 28. Nothing in
+`common/search/` mentions a column, a table or a weight — and that is what makes
+adding search to `customers`, `orders` or `invoices` one field-map file and no
+new infrastructure.
+
+**The grammar is one method per precedence level.**
+
+```text
+or      := and ( OR and )*
+and     := not ( AND? not )*
+not     := NOT not | primary
+primary := '(' or ')' | field-value | term | phrase
+```
+
+`NOT` binds tightest, then `AND`, then `OR`.
+
+**The tree is a binary tree, not `must`/`should`/`mustNot`.** The flat shape
+carries a rule that is easy to get wrong — a `should` clause is optional only
+when there is no `must` — and a translator that flattens the two answers a
+different question from the one asked. `a AND (b OR c)` means `a AND (b OR c)`,
+not `a AND b`. A binary tree makes the grouping explicit in the shape itself, and
+every node is a self-contained boolean over two clauses.
+
+**The operator between two adjacent terms is AND, where Lucene's classic parser
+defaults to OR.** A deliberate deviation, and the reason is what this language is
+for: this is a filter over a table somebody is typing into, and a query that
+widens with every word returns the whole table and leaves the filter to the
+operator. `OR` is available explicitly, so nothing is lost.
+
+**The tokenizer does not decide what a word means.** `AND`, `email` and `mail*`
+are the same kind of token; only the parser knows which is which, because only
+the parser knows whether it is reading an operand or a value. A tokenizer that
+decided on its own would have to guess, and the guess would be wrong for
+`field:AND` — a search for the word "and" in a field, which is a term.
+
+**The keywords are uppercase.** `and` is a term; `AND` is an operator. The same
+rule Lucene uses, and the reason the word "and" is searchable at all.
+
+**The three refusals are refusals, not omissions.** Not because the three are
+hard — because a translator that has to produce one of them cannot be proved to
+produce the thing the user asked for, and a search that answers a different
+question is worse than one that says it cannot.
+
+- **Regular expressions** (`/foo/`). A regex is a different question from a
+  term, and treating one as the other searches for the text `/foo/` and finds
+  nothing. Lucene's own rule decides what counts as one — a term that opens and
+  closes with a slash and holds no other slash — so `/api/v1` is still a path.
+- **Scripts and pseudo-fields** (`_script:x`). A translator cannot produce a
+  computed field, and a leading underscore is how Lucene and Elasticsearch name
+  one.
+- **Nested queries** (`title:(a OR b)`). A group inside a value is a query
+  inside a query.
+
+**The parser is total.** Every input produces either a tree or a
+`SearchParseError` — never a `TypeError`, never a hang. A malformed query is a
+client mistake, and a client mistake must be a 400 that says which part was wrong
+and where; a `TypeError` from inside the parser is a 500 for a request that was
+merely wrong, and one that loops is a denial of service.
+
+**The errors carry the position.** "at position 14" is actionable and "invalid
+query" is not.
+
+**What it gives up**
+
+- A star in a term is always a wildcard, escaped or not, because the tokenizer
+  resolves the escapes before the parser sees the text. A phrase is how a
+  literal star is written — everything inside quotes is literal, which is also
+  Lucene's rule.
+- The edit distance is 0 to 2, Lucene's own limit. A distance of three is a
+  match against almost anything, which is a query that returns the table and
+  looks like a filter.
+- A range's bounds are text, not numbers. A range is over a date, a number or a
+  keyword, and which one it is depends on the field — so the parser does not
+  convert, and the translator binds the text as a parameter of the column's own
+  type.
+- There is no way to write a query against a computed value. That is the
+  script refusal, and it is deliberate.
+
+**Carried into Phase 28**
+
+The tree is the contract, and the registry is what makes it translatable: a field
+name becomes a column, a type and a weight, and an undeclared field is an error
+rather than a silent no-match. The parser has already refused the shapes that
+would make a translator unprovable — a regex, a script, a nested query — so the
+translator's job is the mapping and nothing else.
+
+---
+
 ## feat: an audit read surface
 
 `feat(audit): a read surface for the trail`
