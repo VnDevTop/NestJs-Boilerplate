@@ -47,13 +47,53 @@ export interface SearchKitOptions {
  * **Every one of them is a value, not a query.** A value that reached the SQL
  * as text would be a client who can read the database, and a search box is the
  * one place a client types whatever they like.
+ *
+ * **The destroying statements are the ones worth testing.** A payload that
+ * drops a table is short, and it is the shortest thing anybody writes when they
+ * are trying to find out whether a search box can be talked into running SQL —
+ * so the corpus holds the statements that would do the most damage if they
+ * arrived, against the tables this application actually has.
  */
 export const INJECTION_CORPUS: readonly string[] = [
+  // The classic: a quote that ends the literal and a condition that is always
+  // true.
   "' OR 1=1 --",
-  '; DROP TABLE users; --',
   "admin'--",
   "1' OR '1'='1",
   "' UNION SELECT password FROM users --",
+
+  // Dropping a table.
+  'DROP TABLE users;',
+  'DROP TABLE audit_logs;',
+  'DROP TABLE users CASCADE;',
+  'DROP TABLE IF EXISTS users, audit_logs, refresh_tokens CASCADE;',
+  // Quoted and schema-qualified, because that is how a payload that has been
+  // copied out of a console looks.
+  'DROP TABLE "public"."users";',
+  'DROP SCHEMA public CASCADE;',
+  'DROP DATABASE boilerplate;',
+  'ALTER TABLE users DROP COLUMN password;',
+  'ALTER TABLE users RENAME TO users_backup;',
+  'DROP INDEX IDX_users_email;',
+  'DROP TRIGGER users_audit;',
+
+  // Emptying a table.
+  'TRUNCATE TABLE users;',
+  'TRUNCATE TABLE "users" CASCADE;',
+  'TRUNCATE TABLE audit_logs RESTART IDENTITY CASCADE;',
+  'TRUNCATE users, audit_logs, refresh_tokens, user_devices;',
+  'TRUNCATE refresh_tokens CASCADE;',
+  'DELETE FROM users;',
+  'DELETE FROM audit_logs WHERE 1=1;',
+
+  // The same, smuggled past a filter that expects one value.
+  '; DROP TABLE users; --',
+  '; TRUNCATE TABLE users; --',
+  "' OR 1=1; DROP TABLE users; --",
+  "') OR ('1'='1'; TRUNCATE TABLE audit_logs; --",
+
+  // The characters that mean something to a LIKE pattern, which have to be
+  // literal rather than wildcards.
   '100%',
   'a_b',
   'back\\slash',
@@ -235,13 +275,25 @@ export function assertInjectionCorpusNeverReachesTheSql(
     const translated = translate(
       'injection',
       options,
-      `${field}:"${value.replace(/"/g, '')}"`,
+      `${field}:"${asQueryText(value)}"`,
     );
 
     assertNoValueInTheSql(options, translated, value);
     assertOnlyDeclaredColumns(options, translated);
     assertTheValueWasBound(options, translated, value);
   }
+}
+
+/**
+ * A value as it is written in a query.
+ *
+ * **The quotes and the backslashes are escaped**, because they are the two
+ * characters the query language gives a meaning to. Stripping them would test a
+ * value the client never sent, and a test of a value nobody can send proves
+ * nothing.
+ */
+function asQueryText(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 /**

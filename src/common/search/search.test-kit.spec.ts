@@ -190,6 +190,39 @@ describe('the injection corpus', () => {
     expect(INJECTION_CORPUS.length).toBeGreaterThan(3);
     expect(INJECTION_CORPUS.some((value) => value.includes("'"))).toBe(true);
   });
+
+  /**
+   * The corpus is the test of the corpus.
+   *
+   * **A payload that drops a table is short**, and it is the shortest thing
+   * anybody writes when they are trying to find out whether a search box can be
+   * talked into running SQL. So the corpus holds the statements that would do
+   * the most damage — and this test is what stops them being quietly dropped
+   * from it later.
+   */
+  it('holds the statements that would destroy the database', () => {
+    expect(
+      INJECTION_CORPUS.some((value) => /\bdrop\s+table\b/i.test(value)),
+    ).toBe(true);
+    expect(INJECTION_CORPUS.some((value) => /\btruncate\b/i.test(value))).toBe(
+      true,
+    );
+    expect(
+      INJECTION_CORPUS.some((value) => /\bdelete\s+from\b/i.test(value)),
+    ).toBe(true);
+    expect(
+      INJECTION_CORPUS.some((value) => /\balter\s+table\b/i.test(value)),
+    ).toBe(true);
+  });
+
+  it('holds them against the tables this application has', () => {
+    // A payload that names a table that exists is the one somebody would
+    // actually write.
+    expect(INJECTION_CORPUS.some((value) => /users/i.test(value))).toBe(true);
+    expect(INJECTION_CORPUS.some((value) => /audit_logs/i.test(value))).toBe(
+      true,
+    );
+  });
 });
 
 describe('the mock translator', () => {
