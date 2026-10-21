@@ -18,6 +18,14 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * the tables. `FORCE ROW LEVEL SECURITY` applies the policy to the owner too,
  * which is the only way the policy applies to the application at all.
  *
+ * ## Why the application is not a superuser
+ *
+ * **A superuser bypasses every policy.** So the migration creates a second
+ * role for the application — one with the ordinary grants and without the
+ * bypass — and the application connects as that role rather than as the owner.
+ * The roles are created here rather than by hand so that a deployment has them
+ * and a reviewer can see what they are.
+ *
  * ## How the tenant is set
  *
  * **`current_setting('app.tenant_id', true)`**, which is read per statement
@@ -193,6 +201,13 @@ export class AddRowLevelSecurity1792800000000 implements MigrationInterface {
      * The password is the deployment's to set: this role is created so that the
      * shape exists, and the credentials belong in the environment.
      */
+    await queryRunner.query(
+      `CREATE ROLE app_user LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`,
+    );
+    await queryRunner.query(`GRANT USAGE ON SCHEMA public TO app_user`);
+    await queryRunner.query(
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user`,
+    );
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
@@ -286,5 +301,11 @@ export class AddRowLevelSecurity1792800000000 implements MigrationInterface {
     await queryRunner.query(
       `DROP POLICY "tenant_isolation" ON "account_unlock_tokens"`,
     );
+
+    await queryRunner.query(
+      `REVOKE SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public FROM app_user`,
+    );
+    await queryRunner.query(`REVOKE USAGE ON SCHEMA public FROM app_user`);
+    await queryRunner.query(`DROP ROLE IF EXISTS app_user`);
   }
 }
