@@ -245,6 +245,11 @@ describe.each(MIGRATIONS)('the $file migration', ({ file, tables: TABLES }) => {
     // DROP TABLE would fail a correct ordering.
     const created = [
       ...up.matchAll(/CREATE INDEX\s+"[^"]+"\s+ON\s+"([^"]+)"/g),
+      {
+        file: '1792500000000-AddUserSearchVector.ts',
+        adds: ['searchVector'],
+        tables: { searchVector: 'users' },
+      },
     ];
 
     expect(created.length).toBeGreaterThan(0);

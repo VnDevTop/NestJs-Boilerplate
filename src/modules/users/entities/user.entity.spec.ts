@@ -35,6 +35,8 @@ function indexNames(): string[] {
 }
 
 const CURSOR_INDEX = 'IDX_users_createdat_cursor';
+/** The full-text index, whose type is GIN rather than the default b-tree. */
+const SEARCH_INDEX = 'IDX_users_search_vector';
 
 const cursorMigration = readFileSync(
   join(
@@ -115,12 +117,14 @@ describe('indexing for cursor paging', () => {
     expect(createdAt?.options.nullable).not.toBe(true);
   });
 
-  it('names only the cursor index, and leaves the others as they were', () => {
+  it('names only the indexes it means to, and leaves the others as they were', () => {
     // The unique address and the locked-at lookup carry generated names, so the
-    // named list is the cursor index alone. They are separate indexes answering
-    // separate questions, and the cursor index is added beside them rather than
-    // replacing either.
-    expect(indexNames()).toEqual([CURSOR_INDEX]);
+    // named list is the two that were asked for: the cursor index and the
+    // full-text one. They answer separate questions, and each was added beside
+    // the others rather than replacing any.
+    expect([...indexNames()].sort()).toEqual(
+      [CURSOR_INDEX, SEARCH_INDEX].sort(),
+    );
   });
 });
 
