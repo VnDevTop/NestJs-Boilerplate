@@ -15,6 +15,46 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: a role holds different grants in different tenants
+
+`feat(tenancy): a role holds different grants in different tenants` ·
+`feat(tenancy): the catalogue is seeded into every tenant`
+
+**What changed**
+
+- The permission read, the catalogue, the write and the bulk read filter by the
+  tenant
+- The seeder clones the catalogue into every tenant rather than writing one
+  global copy
+- `PUT /admin/roles/:role/permissions` is tenant-scoped, by being the same
+  route
+
+**Why**
+
+The same role name in two tenants is two different sets of grants. Without this,
+a tenant's admin role would answer with the grants of whichever tenant seeded
+last.
+
+**The catalogue is cloned, not shared.** The unique index on
+`(tenantId, name)` is what says a permission name belongs to one tenant, and the
+seed walks the tenant registry for that reason: a permission introduced in code
+reaches every tenant on the next seed.
+
+**The tenants are seeded first.** A catalogue cloned into nothing is a
+deployment whose users hold no permission, and the fixed default tenant is the
+one every row written before the registry existed belongs to.
+
+**The seed evicts the keys the service would have written.** The seed talks to
+the raw store rather than to the cache service, so it has to build the key the
+service builds — tenant in front and all.
+
+**The key is `<tenantId>:role:<role>`, and the plan said `role:<tenantId>:<role>`.**
+The cache service folds the tenant into the key prefix in one place, and the
+role key is built on top of that, so the tenant comes first. The plan's
+spelling is the one a key has when nothing scopes it.
+
+---
+
 ## feat: the tenant is folded into the cache key, in one place
 
 `feat(tenancy): the tenant is folded into the cache key, in one place` ·

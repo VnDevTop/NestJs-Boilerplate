@@ -552,14 +552,14 @@ CHECK` so an insert cannot write into another tenant
 
 ### Phase 38: Per-tenant permissions
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
-- [ ] `permissions` and `role_permissions` gain `tenantId`
-- [ ] `role:<tenantId>:<role>` cache keys
-- [ ] The seeder clones the catalogue into each tenant rather than writing one
+- [x] `permissions` and `role_permissions` gain `tenantId`
+- [x] `role:<tenantId>:<role>` cache keys
+- [x] The seeder clones the catalogue into each tenant rather than writing one
       global copy
-- [ ] `PUT /admin/roles/:role/permissions` tenant-scoped
-- [ ] No `roles` table: `users.role` stays a `varchar`. Converting it is its own
+- [x] `PUT /admin/roles/:role/permissions` tenant-scoped
+- [x] No `roles` table: `users.role` stays a `varchar`. Converting it is its own
       refactor and would change the API surface for no gain here
 
 ### Phase 39: Per-tenant mail templates
@@ -1038,7 +1038,7 @@ exists means writing the same retry logic twice.
 | Phase 35  | Repository scoping                             | Done    |
 | Phase 36  | Row-level security                             | Done    |
 | Phase 37  | Cache namespacing                              | Done    |
-| Phase 38  | Per-tenant permissions                         | Planned |
+| Phase 38  | Per-tenant permissions                         | Done    |
 | Phase 39  | Per-tenant mail templates                      | Planned |
 | Phase 40  | Per-tenant retention                           | Planned |
 | Phase 41  | The isolation proof                            | Planned |
