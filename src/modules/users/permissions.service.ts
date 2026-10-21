@@ -5,6 +5,8 @@ import { In, Repository } from 'typeorm';
 
 import { authRoleKey, CacheService } from '../../core/cache/index.js';
 import { Role } from '../../common/enums/index.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 import type { CacheConfig } from '../../configs/index.js';
 import { Permission, RolePermission } from './entities/index.js';
 
@@ -31,7 +33,20 @@ export class PermissionsService {
     private readonly grants: Repository<RolePermission>,
     private readonly cache: CacheService,
     private readonly configService: ConfigService,
+    private readonly tenantContext: TenantContextService,
   ) {}
+
+  /**
+   * The tenant whose permissions are being resolved.
+   *
+   * **Every grant and every permission belongs to one tenant**, and a role's
+   * grants are per tenant too: the same role name in two tenants is two
+   * different sets of grants, and the cache key carries the tenant so they do
+   * not answer for each other.
+   */
+  private tenantId(): string {
+    return this.tenantContext.current()?.id ?? DEFAULT_TENANT_ID;
+  }
 
   private get roleTtl(): number {
     return this.configService.getOrThrow<CacheConfig>('cache').authRoleTtl;
@@ -65,7 +80,7 @@ export class PermissionsService {
       authRoleKey(role),
       async () => {
         const grants = await this.grants.find({
-          where: { role },
+          where: { role, tenantId: this.tenantId() },
           select: { permission: { name: true } },
           relations: { permission: true },
         });
@@ -107,9 +122,10 @@ export class PermissionsService {
    * but the kind of thing that otherwise gets reported as a bug.
    */
   async catalogue(): Promise<Permission[]> {
-    return this.grants.manager
-      .getRepository(Permission)
-      .find({ order: { name: 'ASC' } });
+    return this.grants.manager.getRepository(Permission).find({
+      where: { tenantId: this.tenantId() },
+      order: { name: 'ASC' },
+    });
   }
 
   /**
@@ -137,12 +153,19 @@ export class PermissionsService {
 
     try {
       await this.grants.manager.transaction(async (manager) => {
-        await manager.delete(RolePermission, { role });
+        await manager.delete(RolePermission, {
+          role,
+          tenantId: this.tenantId(),
+        });
 
         if (permissionIds.length > 0) {
           await manager.insert(
             RolePermission,
-            permissionIds.map((permissionId) => ({ role, permissionId })),
+            permissionIds.map((permissionId) => ({
+              role,
+              permissionId,
+              tenantId: this.tenantId(),
+            })),
           );
         }
       });
@@ -160,7 +183,7 @@ export class PermissionsService {
     }
 
     const grants = await this.grants.find({
-      where: { role: In([...roles]) },
+      where: { role: In([...roles]), tenantId: this.tenantId() },
       select: { role: true, permission: { name: true } },
       relations: { permission: true },
     });
