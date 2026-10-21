@@ -434,19 +434,54 @@ active flag and the creation date are filtered and sorted but never searched.
 
 ### Phase 31: The search documentation
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 The thing that makes this reusable rather than a parser somebody has to reverse
 engineer.
 
-- [ ] `src/common/search/README.md`: the field type table, the three capabilities
+- [x] `src/common/search/README.md`: the field type table, the three capabilities
       spelled out, and how to register a new entity
-- [ ] A worked example on an entity with a **different shape** — an `orders` or
+- [x] A worked example on an entity with a **different shape** — an `orders` or
       `customers` search with uuid, money-as-integer, keyword and date fields
-- [ ] How a derived field works (`fullName` from first and last, no duplicate
+- [x] How a derived field works (`fullName` from first and last, no duplicate
       column), so `name:john` works
-- [ ] The anti-pattern list: queries that must full-scan, wildcard `*`, sorting by
+- [x] The anti-pattern list: queries that must full-scan, wildcard `*`, sorting by
       a non-sortable field
+
+Done when somebody can add search to an entity that does not exist yet without
+reading the implementation. **Met, and asserted as a test** rather than argued in
+a comment: `worked-example.spec.ts` is the README's claims on an entity that does
+not exist — a uuid, money as an integer, a keyword and a date — and every claim
+in the document is a line in that file.
+
+**The document is the phase, and a spec is where its claims are checked.** A
+documentation file nobody runs drifts; a spec cannot. The same reasoning as the
+query layer's `adding-a-route.spec.ts`, which adds a route that does not exist.
+
+**The three capabilities are refusals as much as permissions.** A field that is
+not searchable is refused rather than quietly matching nothing, because "no such
+user" and "you may not search that field" look identical from the outside and
+mean opposite things.
+
+**A derived field is the database's job.** A full name built from a first name
+and a last name is a _generated_ column, so the application keeps no second copy
+of it — and `name:john` works because the derived column is one of the map's
+searchable fields and the document is built from those. The cost is stated: the
+full name is in the document as well as its parts, so a customer called John
+Smith ranks above one called John.
+
+**The anti-patterns say what happens, not only what not to do.** A leading
+wildcard has no index to use, the wildcard `*` matches every row, a facet over
+a text field is a group per row, and a fuzzy term is refused because postgres
+has no edit distance without an extension.
+
+**One thing the documentation had to make true.** The `sortable` flag was
+declared in the field map and read by nothing, which is a plan rather than a
+feature. The search takes a `sort` now, and a field that is not sortable is
+refused rather than sorted by a query nobody designed. The two maps that
+describe one entity — the listing route's query spec and the search's field map
+— are compared by a spec, so a field that is sortable in one and not the other
+cannot drift.
 
 ---
 
@@ -996,7 +1031,7 @@ exists means writing the same retry logic twice.
 | Phase 28  | The field registry and the translators         | Done    |
 | Phase 29  | The Postgres translator                        | Done    |
 | Phase 30  | User search                                    | Done    |
-| Phase 31  | The search documentation                       | Planned |
+| Phase 31  | The search documentation                       | Done    |
 | Phase 32  | The tenant column, present from the start      | Planned |
 | Phase 33  | The tenant registry                            | Planned |
 | Phase 34  | Tenant context                                 | Planned |

@@ -15,6 +15,80 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## docs: the search documentation
+
+`docs(search): the search layer's documentation` ·
+`feat(search): sort the search by the fields that may be sorted`
+
+**What changed**
+
+- `src/common/search/README.md` — the layer's document: the field type table, the
+  three capabilities, the weight, how to register an entity, a worked example,
+  the derived field and the anti-patterns
+- `src/common/search/worked-example.spec.ts` — the README's claims, checked
+- `POST /users/search` takes a `sort` and an `order`, and the registry's
+  `sortable` flag is what says which fields may be sorted by
+
+**Why**
+
+The machinery worked and nobody could use it, because the thing that makes a
+layer reusable is not the code — it is the document that says what the pieces
+mean and what to do when the entity is not a user.
+
+**The document is the phase, and a spec is where its claims are checked.** A
+documentation file nobody runs drifts; a spec cannot. The same reasoning as the
+query layer's `adding-a-route.spec.ts`, which adds a route that does not exist.
+
+**The worked example is an entity of a different shape** — a uuid, money as an
+integer, a keyword and a date — so the machinery is shown on something that is
+not a user. The two decisions in it that are the entity's and not the layer's
+are said out loud: the amounts are in cents so the arithmetic is exact, and a
+customer address is worth more in a search than a status is.
+
+**A derived field is the database's job.** A full name built from a first name
+and a last name is a _generated_ column, so the application keeps no second copy
+of it — and `name:john` works because the derived column is one of the map's
+searchable fields and the document is built from those. The cost is stated: the
+full name is in the document as well as its parts, so a customer called John
+Smith ranks above one called John, which is usually what a search for a name
+means.
+
+**The anti-patterns say what happens, not only what not to do.** A leading
+wildcard has no index to use, the wildcard `*` matches every row, a facet over a
+text field is a group per row, and a fuzzy term is refused because postgres has
+no edit distance without an extension.
+
+**The three capabilities are refusals as much as permissions.** A field that is
+not searchable is refused rather than quietly matching nothing, because "no such
+user" and "you may not search that field" look identical from the outside and
+mean opposite things.
+
+**One thing the documentation had to make true.** The `sortable` flag was
+declared in the field map and read by nothing, which is a plan rather than a
+feature. The search takes a `sort` now, and a field that is not sortable is
+refused rather than sorted by a query nobody designed. The two maps that
+describe one entity — the listing route's query spec and the search's field map
+— are compared by a spec, so a field that is sortable in one and not the other
+cannot drift.
+
+**What it gives up**
+
+- The examples are on a fictional entity, so nothing proves the _users_ search
+  behaves the way the example does. The e2e suite proves the users search, and
+  the example proves the machinery.
+- The anti-patterns are documented rather than refused. A leading wildcard is
+  legal and slow, and a refusal would be a decision about one entity's index
+  rather than about the language.
+
+**Carried into Phase 32**
+
+The tenant column. A search over a table that will hold several tenants' data
+has to be scoped to one, and the scope has to be the repository's rather than
+the query's — a search is a query, and a query that can be pointed at another
+tenant's rows is a question nobody asked for the answer to.
+
+---
+
 ## feat: the user search route
 
 `feat(users): the search route`
