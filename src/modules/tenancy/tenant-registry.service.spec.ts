@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 import { TenantRegistry } from './tenant-registry.service.js';
 import { TenantMiddleware } from './tenant.middleware.js';
 import type { Tenant } from './entities/tenant.entity.js';
@@ -85,6 +86,7 @@ describe('resolving the tenant of a request', () => {
   };
 
   const configService = { getOrThrow: () => config } as never;
+  const context = new TenantContextService();
 
   function request(overrides: Record<string, unknown> = {}) {
     return {
@@ -98,6 +100,7 @@ describe('resolving the tenant of a request', () => {
     const middleware = new TenantMiddleware(
       registryWith([acme]),
       configService,
+      context,
     );
 
     const req = request({ 'x-tenant-id': 'acme' });
@@ -113,6 +116,7 @@ describe('resolving the tenant of a request', () => {
     const middleware = new TenantMiddleware(
       registryWith([acme]),
       configService,
+      context,
     );
 
     const req = request({ hostname: 'acme.acme.test' });
@@ -127,6 +131,7 @@ describe('resolving the tenant of a request', () => {
     const middleware = new TenantMiddleware(
       registryWith([acme]),
       configService,
+      context,
     );
 
     // The deployment's own host names no tenant: `acme.test` is the
@@ -140,6 +145,7 @@ describe('resolving the tenant of a request', () => {
     const middleware = new TenantMiddleware(
       registryWith([acme]),
       configService,
+      context,
     );
 
     await expect(
@@ -155,6 +161,7 @@ describe('resolving the tenant of a request', () => {
     const middleware = new TenantMiddleware(
       registryWith([acme]),
       configService,
+      context,
     );
 
     await expect(
@@ -166,6 +173,7 @@ describe('resolving the tenant of a request', () => {
     const middleware = new TenantMiddleware(
       registryWith([{ ...acme, status: 'disabled' }]),
       configService,
+      context,
     );
 
     await expect(
@@ -174,9 +182,11 @@ describe('resolving the tenant of a request', () => {
   });
 
   it('gives every request the default tenant while the feature is off', async () => {
-    const middleware = new TenantMiddleware(registryWith([]), {
-      getOrThrow: () => ({ ...config, enabled: false }),
-    } as never);
+    const middleware = new TenantMiddleware(
+      registryWith([]),
+      { getOrThrow: () => ({ ...config, enabled: false }) } as never,
+      context,
+    );
 
     const req = request({ 'x-tenant-id': 'acme' });
     const next = vi.fn();

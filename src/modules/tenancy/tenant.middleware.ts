@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
 
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 import type { TenancyConfig } from '../../configs/tenancy.config.js';
 import {
   TenantRegistry,
@@ -37,6 +38,7 @@ export class TenantMiddleware implements NestMiddleware {
   constructor(
     private readonly registry: TenantRegistry,
     private readonly configService: ConfigService,
+    private readonly context: TenantContextService,
   ) {}
 
   async use(
@@ -50,9 +52,14 @@ export class TenantMiddleware implements NestMiddleware {
       // The feature is off, so every request is the default tenant. The column
       // is on every table whatever the feature says, and this is the value it
       // carries.
-      request.tenant = this.registry.defaultTenant();
+      const tenant = this.registry.defaultTenant();
 
-      return next();
+      request.tenant = tenant;
+
+      // The chain runs *inside* the context, so a guard, a service and a
+      // repository all see the same tenant without any of them being handed
+      // one.
+      return this.context.run(tenant, next);
     }
 
     const slug = this.slugFrom(request, config);
@@ -85,7 +92,7 @@ export class TenantMiddleware implements NestMiddleware {
 
     request.tenant = tenant;
 
-    return next();
+    return this.context.run(tenant, next);
   }
 
   /** The tenant a request names, or null. */
