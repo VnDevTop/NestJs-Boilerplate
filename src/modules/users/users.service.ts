@@ -17,6 +17,14 @@ import { ConfigService } from '@nestjs/config';
 
 import { PaginatedResultDto } from '../../common/pagination/index.js';
 import { buildCriteria, readPage } from '../../common/query/index.js';
+import {
+  parseSearchQuery,
+  toRawQuery,
+  translateToFacet,
+  translateToFullText,
+  type SearchQuery,
+} from '../../common/search/index.js';
+import { DEFAULT_LIMIT } from '../../common/constants/index.js';
 
 import { hashPassword } from '../../common/utils/index.js';
 
@@ -27,8 +35,12 @@ import {
   ListUsersQueryDto,
   UpdateUserDto,
   UserResponseDto,
+  UserSearchDto,
+  UserSearchResultDto,
+  type FacetCountDto,
 } from './dto/index.js';
 import { USER_QUERY_SPEC } from './dto/user-query.js';
+import { USER_SEARCH_FIELDS } from './users-search.js';
 import { User } from './entities/index.js';
 
 /**
@@ -193,6 +205,98 @@ export class UsersService {
       UserResponseDto.fromEntities(page.items),
       page.meta,
     );
+  }
+
+  /**
+   * The users that match a search, best first.
+   *
+   * **The query is the search language, and the field map says what it means.**
+   * `USER_SEARCH_FIELDS` says which fields exist, which column each one lands
+   * on and how much it counts for; the translator turns the tree into a filter
+   * and a rank. Nothing here knows what a field is called.
+   *
+   * **The results and the counts come from the same filter.** The facet counts
+   * are the rows the results are drawn from, so the two cannot disagree about
+   * what matched — which is the whole reason the facet translator takes the
+   * same tree.
+   *
+   * **No cursor.** A ranked set is not keyset-paged on a column, because the
+   * rank is not a column: a boundary on a floating-point score is a boundary
+   * that can be equal or not by a rounding error, and a page that repeats a
+   * row or skips one is worse than a search that says "here are the best
+   * twenty". A client that needs a specific set filters instead — the filters
+   * are exact, and `GET /users` pages over a column.
+   */
+  async search(query: UserSearchDto): Promise<UserSearchResultDto> {
+    const tree = parseSearchQuery(query.query);
+    const { filter, rank, parameters } = translateToFullText(
+      tree,
+      USER_SEARCH_FIELDS,
+      {
+        alias: 'user',
+      },
+    );
+
+    const limit = query.limit ?? DEFAULT_LIMIT;
+
+    const { entities, raw } = await this.usersRepository
+      .createQueryBuilder('user')
+      // The rank is selected rather than computed twice, so the score in the
+      // answer and the order of the rows are the same number.
+      .addSelect(rank, 'score')
+      .where(filter)
+      .setParameters(parameters)
+      .orderBy('score', 'DESC')
+      // The id breaks the tie, so two rows with the same score have one order
+      // rather than two.
+      .addOrderBy('user.id', 'DESC')
+      .limit(limit)
+      .getRawAndEntities();
+
+    const items = entities.map((user, index) => ({
+      ...UserResponseDto.fromEntity(user),
+      score: Number(raw[index]?.score ?? 0),
+    }));
+
+    const facets: Record<string, FacetCountDto[]> = {};
+
+    for (const field of query.facets ?? []) {
+      facets[field] = await this.countFacet(tree, field);
+    }
+
+    return { items, facets };
+  }
+
+  /**
+   * The counts of the matching rows, grouped by one field.
+   *
+   * **The same filter as the results**, because a count of a different set of
+   * rows is a number about one thing next to a list about another.
+   */
+  private async countFacet(
+    tree: SearchQuery,
+    field: string,
+  ): Promise<FacetCountDto[]> {
+    const { sql, parameters } = translateToFacet(
+      tree,
+      USER_SEARCH_FIELDS,
+      field,
+      { table: 'users', alias: 'user' },
+    );
+
+    // The raw call takes positional placeholders rather than named ones, so the
+    // fragment is rewritten before it is run. The values stay parameters.
+    const raw = toRawQuery(sql, parameters);
+
+    const rows = (await this.usersRepository.query(
+      raw.sql,
+      raw.values,
+    )) as Array<{ value: string | null; count: number }>;
+
+    return rows.map((row) => ({
+      value: row.value,
+      count: Number(row.count),
+    }));
   }
 
   async findById(id: string): Promise<User | null> {

@@ -1,16 +1,24 @@
+import { BadRequestException } from '@nestjs/common';
+
 /**
- * The one error the search layer throws.
+ * The errors the search layer throws.
  *
- * **Every failure a caller can cause is this error.** A malformed query is a
- * client mistake, and a client mistake must be a 400 with a message that says
- * which part of the query was wrong and where. A `TypeError` from deep inside
- * the parser is a 500 for a request that was merely wrong, and it says nothing
- * about what to fix.
+ * **Every failure a caller can cause is one of these, and every one of them is
+ * a 400.** A malformed query is a client mistake, and a client mistake must be
+ * a 400 with a message that says which part of the query was wrong and where. A
+ * `TypeError` from deep inside the parser is a 500 for a request that was merely
+ * wrong, and it says nothing about what to fix.
+ *
+ * **They are HTTP exceptions rather than plain errors**, because a search
+ * reaches the database through a route and a route is where a client's mistake
+ * becomes a status code. The alternative is a list of error classes at every
+ * route that searches, and a route that forgot the list would answer a 500 for
+ * a typo.
  *
  * The position is the offset into the source, so the message can point at the
  * character that was wrong rather than at the query as a whole.
  */
-export class SearchParseError extends Error {
+export class SearchParseError extends BadRequestException {
   constructor(
     message: string,
     /** The offset into the source where the problem is. */
@@ -36,7 +44,7 @@ export class SearchParseError extends Error {
  * message that sends them to the documentation. The valid names are the whole
  * point of the allow-list, and this is where they are shown.
  */
-export class UnknownFieldError extends Error {
+export class UnknownFieldError extends BadRequestException {
   constructor(
     /** The field that was asked for. */
     readonly field: string,
@@ -60,7 +68,7 @@ export class UnknownFieldError extends Error {
  * entity's author decided not to expose, and the message should say so rather
  * than sending the client looking for a spelling.
  */
-export class UnsupportedFieldError extends Error {
+export class UnsupportedFieldError extends BadRequestException {
   constructor(
     /** The field that was asked for. */
     readonly field: string,
@@ -80,7 +88,7 @@ export class UnsupportedFieldError extends Error {
  * good term; it is the *backend* that cannot answer it, and saying so is
  * better than answering a different question.
  */
-export class UnsupportedOperationError extends Error {
+export class UnsupportedOperationError extends BadRequestException {
   constructor(
     /** What was asked for, in the client's words. */
     readonly operation: string,
@@ -101,7 +109,7 @@ export class UnsupportedOperationError extends Error {
  * coerce, and the client would be told about a type rather than about the
  * value they typed.
  */
-export class InvalidSearchValueError extends Error {
+export class InvalidSearchValueError extends BadRequestException {
   constructor(
     /** The field the value was for. */
     readonly field: string,

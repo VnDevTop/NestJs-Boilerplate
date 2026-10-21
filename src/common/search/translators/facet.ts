@@ -17,6 +17,49 @@ export interface FacetTranslation {
   readonly parameters: Record<string, unknown>;
 }
 
+/**
+ * A named-parameter query as one a raw driver call can run.
+ *
+ * **TypeORM's query builder takes named parameters and its raw `query()` does
+ * not.** The builder binds `:p0`; the raw call goes straight to the driver,
+ * which takes its own positional placeholders — and postgres's are `$1`.
+ *
+ * The search layer's SQL is postgres's anyway: the full-text translator emits
+ * `plainto_tsquery`, `ts_rank` and `::int`, none of which exist in another
+ * database, so a placeholder that is not postgres's would be the least of it.
+ *
+ * **Only the placeholders are touched.** The values stay parameters — the
+ * rewrite changes `:p0` to `$1` and nothing else — and the text it rewrites is
+ * the translator's own, not a client's.
+ */
+export function toRawQuery(
+  sql: string,
+  parameters: Record<string, unknown>,
+): { sql: string; values: unknown[] } {
+  const values: unknown[] = [];
+
+  // The lookbehind is the point of the pattern: postgres writes a cast as `::`
+  // — `count(*)::int` — and the second colon is not a placeholder. A pattern
+  // that did not say so would rewrite the cast into a parameter and the query
+  // would fail with an error about a parameter rather than about the mistake.
+  const rewritten = sql.replace(/(?<!:):(\w+)/g, (match, name: string) => {
+    if (!Object.prototype.hasOwnProperty.call(parameters, name)) {
+      // A placeholder with no value is a bug in the translator, and leaving it
+      // would turn it into a SQL error about a parameter rather than about the
+      // mistake.
+      throw new Error(
+        `The query has a placeholder for "${name}" and no value for it.`,
+      );
+    }
+
+    values.push(parameters[name]);
+
+    return `$${values.length}`;
+  });
+
+  return { sql: rewritten, values };
+}
+
 export interface FacetOptions {
   /** The table the rows come from. */
   readonly table: string;
@@ -32,6 +75,10 @@ export interface FacetOptions {
  * **The filter is the one the results used**, because the facet answers
  * "of the rows you are looking at, how many are in each group" — and that
  * question is only true if the facet counted the same rows.
+ *
+ * **The value is cast to text**, so a client does not have to know whether the
+ * field it asked for is a string, a number or a boolean. The grouping is on the
+ * column rather than on the cast, so the index on it can still be used.
  *
  * **The table name is checked**, because it is interpolated into SQL. The
  * search layer's other tables are the application schema's, and a table name
@@ -84,8 +131,9 @@ export function translateToFacet(
 
   return {
     sql:
-      `SELECT ${column} AS "value", count(*)::int AS "count" ` +
+      `SELECT CAST(${column} AS text) AS "value", count(*)::int AS "count" ` +
       `FROM ${table} WHERE ${filter} ` +
+      // The group is the column, not the cast, so the index on it can be used.
       `GROUP BY ${column} ` +
       `ORDER BY "count" DESC, "value" ASC ` +
       `LIMIT ${limit}`,
