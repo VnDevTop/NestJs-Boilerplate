@@ -175,6 +175,39 @@ describe('MailTemplateStore', () => {
     h = harness();
   });
 
+  /**
+   * The property the phase is about.
+   *
+   * **A template one tenant edited is not the template another tenant sends.**
+   * The row is an override of a shipped file, and an override one tenant's
+   * operator wrote belongs to that tenant: the other one falls back to the
+   * shipped file rather than sending somebody else's wording.
+   */
+  it("keeps one tenant's override away from another tenant", async () => {
+    const acme = '22222222-2222-4222-8222-222222222222';
+
+    h.templates.rows.set(`${acme}:welcome:en`, {
+      name: 'welcome',
+      locale: 'en',
+      subject: 'Acme subject',
+      text: 'Acme text',
+      html: '<p>Acme body</p>',
+      version: 1,
+      updatedBy: null,
+      tenantId: acme,
+    } as EmailTemplate);
+
+    const byAcme = await h.tenantContext.run({ ...tenantScope, id: acme }, () =>
+      h.store.resolve('welcome', 'en'),
+    );
+    const byDefault = await h.store.resolve('welcome', 'en');
+
+    // The other tenant gets the shipped file's source, not the other tenant's
+    // row: `resolve` returns the source, and the shipped source is the fallback.
+    expect(byAcme.subject).toBe('Acme subject');
+    expect(byDefault.subject).toBe('Welcome to {{appName}}');
+  });
+
   it('renders the shipped file when the table is empty', async () => {
     const rendered = await h.store.render('welcome', {
       firstName: 'Ada',
