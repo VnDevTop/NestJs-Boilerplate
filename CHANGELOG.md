@@ -15,6 +15,37 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: the tenant context
+
+`feat(tenancy): the tenant context` ·
+`feat(tenancy): a request runs inside its tenant` ·
+`feat(tenancy): a job carries its tenant`
+
+**What changed**
+
+- `src/common/tenancy/tenant-context.service.ts` — the context on
+  `AsyncLocalStorage`
+- The middleware sets it before the guard runs
+- `Job.tenantId` is required, and both dispatchers stamp it
+
+**Why**
+
+A job with no tenant context is a job that writes in the wrong place, so the
+tenant travels with the job rather than being looked up when it is processed.
+The field is required on the type, so a job that does not carry one does not
+compile.
+
+**The scope ends with the work.** A callback that outlived the request would
+keep the tenant alive, and the work would be done in a context that says
+something that is no longer true.
+
+**A tenant that had to be passed to every service would be passed to every
+service that remembered**, and the one that forgot would read another tenant's
+rows. The context is the only version of this that cannot be forgotten,
+because nothing has to carry it.
+
+---
+
 ## feat: the tenant registry
 
 `feat(tenancy): the tenants table` ·

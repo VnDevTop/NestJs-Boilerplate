@@ -514,10 +514,10 @@ Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 ### Phase 34: Tenant context
 
-- [ ] `TenantContext` on AsyncLocalStorage, set before any guard runs
-- [ ] Propagated into queued jobs, because a job with no tenant context is a job
+- [x] `TenantContext` on AsyncLocalStorage, set before any guard runs
+- [x] Propagated into queued jobs, because a job with no tenant context is a job
       that writes in the wrong place
-- [ ] Propagated into scheduled work
+- [x] Propagated into scheduled work
 
 ### Phase 35: Repository scoping
 
@@ -1034,7 +1034,7 @@ exists means writing the same retry logic twice.
 | Phase 31  | The search documentation                       | Done    |
 | Phase 32  | The tenant column, present from the start      | Done    |
 | Phase 33  | The tenant registry                            | Done    |
-| Phase 34  | Tenant context                                 | Planned |
+| Phase 34  | Tenant context                                 | Done    |
 | Phase 35  | Repository scoping                             | Planned |
 | Phase 36  | Row-level security                             | Planned |
 | Phase 37  | Cache namespacing                              | Planned |
