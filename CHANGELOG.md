@@ -15,6 +15,89 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: the user search route
+
+`feat(users): the search route`
+
+**What changed**
+
+- `POST /users/search` — the best matches for a query, and the counts of the
+  matching rows per facet
+- `src/modules/users/dto/user-search.dto.ts` — `UserSearchDto`, `UserSearchHitDto`,
+  `FacetCountDto` and `UserSearchResultDto`
+- `UsersService.search()` and the facet count
+- The search errors are now HTTP exceptions, so a malformed query is a 400
+- `toRawQuery` in the search layer, for the one query that is run raw
+
+**Why**
+
+There was a query language, a field map and a translator, and nothing that used
+them. So the search was a library rather than a feature.
+
+**A body rather than a query string.** A search is a sentence somebody typed, and
+a sentence has spaces, quotes, brackets and colons in it — all of which have to
+be escaped in a URL and all of which are wrong in one. The body also has room
+for the facets, which do not fit in a path.
+
+**Gated on `user:read`,** the permission to read a user record. The search reads
+user records and finds them by name, and the permission that says a caller may
+read a user record is the one that says they may find one. It is the first
+route that checks it, and the grant was already there.
+
+**Not idempotency-keyed, because it changes nothing.** The guard is for writes —
+a request that creates a second thing — and a read that asked for a key would
+make every search box carry a header it has no reason to send.
+
+**The results and the counts come from the same filter,** so the two cannot
+disagree about what matched.
+
+**No cursor.** A ranked set is not keyset-paged on a column, because the rank is
+not a column: a boundary on a floating-point score is a boundary that can be
+equal or not by a rounding error, and a page that repeats a row or skips one is
+worse than a search that says "here are the best twenty". A client that needs a
+specific set filters instead — the filters are exact, and `GET /users` pages over
+a column.
+
+**The search errors are 400s.** A malformed query is a client mistake, and a
+client mistake must be a 400 that says which part was wrong and where. A
+`TypeError` from inside the parser is a 500 for a request that was merely wrong.
+The alternative was a list of error classes at every route that searches, and a
+route that forgot the list would answer a 500 for a typo.
+
+**The facet's value is cast to text,** so a client does not have to know whether
+the field it asked for is a string, a number or a boolean. The grouping is on
+the column rather than on the cast, so the index on it can still be used.
+
+**The raw facet query needed its placeholders rewritten.** TypeORM's query builder
+binds `:p0` and its raw call goes straight to the driver, which takes postgres's
+`$1`. The rewrite touches only the placeholders — the values stay parameters —
+and it leaves a cast alone, because postgres writes a cast as `::` and the second
+colon is not a placeholder. The e2e suite caught that one: the first version
+rewrote `count(*)::int` into a parameter and the query failed with an error
+about a parameter rather than about the mistake.
+
+**The e2e suite proves it against a real database.** Two users, one of whom
+matches, and the search finds that one and not the other — and refuses an
+unknown field, an unparseable query, an ordinary user and a caller with no
+token at all.
+
+**What it gives up**
+
+- There is no page after the first. A ranked set is not keyset-paged on a
+  column, and a client that needs a specific set filters instead.
+- A facet over a text field is a group per distinct text, which is a group per
+  row. The fields worth faceting are the ones with a small number of values.
+- The search returns the whole row, so it is as much personal data as
+  `GET /users/:id` — which is why it is behind the same permission.
+
+**Carried into Phase 31**
+
+The search works on one entity, and the machinery is meant to work on any. What
+is missing is the document: the field types, the three capabilities, and how to
+register an entity whose shape is different.
+
+---
+
 ## feat: the postgres translator
 
 `feat(search): a tsquery built from the tree` ·

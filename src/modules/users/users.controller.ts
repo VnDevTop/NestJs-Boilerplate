@@ -39,6 +39,8 @@ import {
   ListUsersQueryDto,
   UpdateUserDto,
   UserResponseDto,
+  UserSearchDto,
+  UserSearchResultDto,
 } from './dto/index.js';
 import type { PaginatedResultDto } from '../../common/pagination/index.js';
 import { ExportService, type ExportFormat } from './export/export.service.js';
@@ -81,6 +83,39 @@ export class UsersController {
     const user = await this.usersService.create(createUserDto);
 
     return UserResponseDto.fromEntity(user);
+  }
+
+  /**
+   * The users that match a search, best first.
+   *
+   * **A POST, because a search is a body.** The query is a sentence somebody
+   * typed, and a sentence has spaces, quotes, brackets and colons in it — all
+   * of which have to be escaped in a URL and all of which are wrong in one. The
+   * body also has room for the facets, which do not fit in a path.
+   *
+   * **Not idempotency-keyed, because it changes nothing.** A read that asked for
+   * a key would make every search box carry a header it has no reason to send,
+   * and the guard is for writes — a request that creates a second thing.
+   *
+   * **Gated on `user:read`,** which is the permission to read a user record.
+   * The search reads user records and finds them by name, and the permission
+   * that says a caller may read a user record is the one that says they may
+   * find one.
+   */
+  @Roles(Role.Admin, Role.SuperAdmin)
+  @Permissions(Permission.UserRead)
+  @Post('search')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Search users',
+    description:
+      'The best matches for a query, and the counts of the matching rows per ' +
+      'facet. A bare word searches the address, the names and the role; ' +
+      '`email:ada`, `"ada lovelace"` and `role:admin` narrow it.',
+  })
+  @ApiOkResponse({ type: UserSearchResultDto })
+  search(@Body() body: UserSearchDto): Promise<UserSearchResultDto> {
+    return this.usersService.search(body);
   }
 
   /**

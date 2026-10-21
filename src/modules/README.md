@@ -104,7 +104,14 @@ PATCH  /users/:id
 DELETE /users/:id
 PATCH  /auth/account/:id/unlock
 GET    /jobs/:id
+POST   /users/search
 ```
+
+`POST /users/search` is the search: a body in the search language, answered
+with the best matches and the counts of the matching rows per facet. It is behind
+`user:read` — the permission to read a user record — and it has no second page,
+because a ranked set is not keyset-paged on a column. See
+[src/modules/users/README.md](src/modules/users/README.md).
 
 `GET /jobs/:id` needs `job:read`, which the administrator holds. Watching a job
 changes nothing.

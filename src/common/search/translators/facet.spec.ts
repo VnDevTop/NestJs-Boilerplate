@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { UnknownFieldError, UnsupportedFieldError } from '../errors.js';
 import { SearchFieldRegistry, type SearchField } from '../field-registry.js';
 import { parseSearchQuery } from '../parser.js';
-import { translateToFacet } from './facet.js';
+import { toRawQuery, translateToFacet } from './facet.js';
 
 const fields: Record<string, SearchField> = {
   email: {
@@ -52,11 +52,43 @@ function facet(query: string, field: string, options = {}) {
   });
 }
 
+describe('a raw query', () => {
+  it("rewrites the named placeholders into the driver's own", () => {
+    // The query builder binds `:p0`; the raw call goes straight to the driver,
+    // which takes postgres's `$1`.
+    const { sql, values } = toRawQuery('WHERE a = :p0 AND b = :p1', {
+      p0: 'x',
+      p1: 'y',
+    });
+
+    expect(sql).toBe('WHERE a = $1 AND b = $2');
+    expect(values).toEqual(['x', 'y']);
+  });
+
+  it('leaves a cast alone, because a cast is not a placeholder', () => {
+    // postgres writes a cast as `::`, and the second colon is not a parameter.
+    const { sql, values } = toRawQuery('SELECT count(*)::int WHERE a = :p0', {
+      p0: 'x',
+    });
+
+    expect(sql).toBe('SELECT count(*)::int WHERE a = $1');
+    expect(values).toEqual(['x']);
+  });
+
+  it('refuses a placeholder with no value, rather than dropping it', () => {
+    // A placeholder with no value is a bug in the translator, and leaving it
+    // would turn it into a SQL error about a parameter.
+    expect(() => toRawQuery('WHERE a = :p0', {})).toThrow(/no value for it/);
+  });
+});
+
 describe('a facet', () => {
   it('counts the matching rows, grouped by the field', () => {
     const { sql } = facet('email:ada', 'role');
 
-    expect(sql).toContain('SELECT "role" AS "value"');
+    // The value is cast to text, so a client does not have to know whether the
+    // field it asked for is a string, a number or a boolean.
+    expect(sql).toContain('SELECT CAST("role" AS text) AS "value"');
     expect(sql).toContain('count(*)::int');
     expect(sql).toContain('GROUP BY "role"');
   });
