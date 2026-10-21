@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocumentExpression } from '../../common/search/index.js';
 import { User } from './entities/user.entity.js';
+import { USER_QUERY_SPEC } from './dto/user-query.js';
 import { USER_SEARCH_FIELDS } from './users-search.js';
 
 /**
@@ -53,6 +54,28 @@ function entityExpression(): string {
 
   return expression;
 }
+
+describe('the sortable fields', () => {
+  it('are the same ones the listing route sorts by', () => {
+    // Two maps describe one entity — the listing route's query spec and the
+    // search's field map — and a field that is sortable in one and not the other
+    // is a drift nobody would notice until a client tried it.
+    const sortable = USER_SEARCH_FIELDS.entries()
+      .filter(([, field]) => field.sortable)
+      .map(([name]) => name)
+      .sort();
+
+    expect(sortable).toEqual(Object.keys(USER_QUERY_SPEC.sort).sort());
+  });
+
+  it('leave out the names, because sorting by a name answers the wrong question', () => {
+    // The same reason the listing route does not sort by a name: it is legal
+    // SQL and useless in practice.
+    expect(
+      USER_SEARCH_FIELDS.entries().filter(([, field]) => field.sortable),
+    ).not.toContainEqual(['firstName', expect.anything()]);
+  });
+});
 
 describe('the document', () => {
   it('is the same expression in the field map and the entity', () => {

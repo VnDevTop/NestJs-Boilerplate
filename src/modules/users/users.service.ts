@@ -22,6 +22,7 @@ import {
   toRawQuery,
   translateToFacet,
   translateToFullText,
+  UnsupportedFieldError,
   type SearchQuery,
 } from '../../common/search/index.js';
 import { DEFAULT_LIMIT } from '../../common/constants/index.js';
@@ -238,20 +239,36 @@ export class UsersService {
     );
 
     const limit = query.limit ?? DEFAULT_LIMIT;
+    const direction = query.order === 'asc' ? 'ASC' : 'DESC';
 
-    const { entities, raw } = await this.usersRepository
+    const builder = this.usersRepository
       .createQueryBuilder('user')
       // The rank is selected rather than computed twice, so the score in the
       // answer and the order of the rows are the same number.
       .addSelect(rank, 'score')
       .where(filter)
-      .setParameters(parameters)
-      .orderBy('score', 'DESC')
-      // The id breaks the tie, so two rows with the same score have one order
-      // rather than two.
-      .addOrderBy('user.id', 'DESC')
-      .limit(limit)
-      .getRawAndEntities();
+      .setParameters(parameters);
+
+    if (query.sort === undefined) {
+      // The best matches first, and the id breaks the tie so two rows with the
+      // same score have one order rather than two.
+      builder.orderBy('score', 'DESC').addOrderBy('user.id', 'DESC');
+    } else {
+      // A field the client named. The registry says whether it may be sorted
+      // by, and a field that may not is refused rather than sorted by a query
+      // nobody designed.
+      const field = USER_SEARCH_FIELDS.field(query.sort);
+
+      if (!field.sortable) {
+        throw new UnsupportedFieldError(query.sort, 'is not sortable');
+      }
+
+      builder
+        .orderBy(`user.${field.column}`, direction)
+        .addOrderBy('user.id', direction);
+    }
+
+    const { entities, raw } = await builder.limit(limit).getRawAndEntities();
 
     const items = entities.map((user, index) => ({
       ...UserResponseDto.fromEntity(user),

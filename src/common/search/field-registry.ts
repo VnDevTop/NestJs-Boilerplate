@@ -32,9 +32,9 @@ export type SearchFieldType =
  *   and whether a number should be matchable at all is the field map's decision.
  * - `filterable` — whether the field can be compared with a range or tested for
  *   existence. A blob of JSON is not filterable.
- * - `sortable` — whether the field can be sorted by. Declared here so the
- *   documentation can say what a field supports, and read by the query layer
- *   when it builds a sort.
+ * - `sortable` — whether the field can be sorted by. A field that is not
+ *   sortable is refused by the route that would sort by it, rather than being
+ *   sorted by a query nobody designed.
  * - `weight` — how much the field counts for, between 0 and 1. **A ranking
  *   concern**: a boost and a weight change the order of the results, not which
  *   rows match.

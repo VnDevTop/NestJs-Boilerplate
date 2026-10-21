@@ -6,6 +6,7 @@ import {
 import {
   ArrayMaxSize,
   IsArray,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -62,6 +63,28 @@ export class UserSearchDto {
   @IsString({ each: true })
   @ArrayMaxSize(5)
   facets?: string[];
+
+  @ApiPropertyOptional({
+    example: 'createdAt',
+    description:
+      'The field to sort by, instead of the rank. Only a field the entity ' +
+      'marks sortable can be named; anything else is refused.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  sort?: string;
+
+  @ApiPropertyOptional({
+    enum: ['asc', 'desc'],
+    default: 'desc',
+    description:
+      'The direction of the sort. It says nothing about the rank — the score ' +
+      'is in every result either way.',
+  })
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  order?: 'asc' | 'desc';
 }
 
 /**

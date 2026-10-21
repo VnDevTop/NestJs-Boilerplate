@@ -146,6 +146,38 @@ describe.skipIf(!e2eEnabled())('user search (e2e)', () => {
     expect(facets['role']).toEqual([{ value: 'user', count: 1 }]);
   });
 
+  it('sorts by a field the entity marks sortable', async () => {
+    const response = await http(app)
+      .post(`${API_ROOT}/users/search`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ query: 'user', sort: 'email', order: 'asc' })
+      .expect(200);
+
+    const items = response.body.data.items as Array<{
+      email: string;
+      score: number;
+    }>;
+    const emails = items.map((item) => item.email);
+
+    // Sorted by the address rather than by the rank, and the score is still in
+    // every result — the sort says nothing about the score.
+    expect(emails).toEqual([...emails].sort());
+    expect(emails.length).toBeGreaterThan(1);
+    expect(items.every((item) => item.score > 0)).toBe(true);
+  });
+
+  it('refuses to sort by a field it does not', async () => {
+    // A name is not sortable: it is legal SQL and useless in practice, and
+    // the question it answers is "do you mean the full name?".
+    const response = await http(app)
+      .post(`${API_ROOT}/users/search`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ query: 'ada', sort: 'firstName' })
+      .expect(400);
+
+    expect(JSON.stringify(response.body)).toContain('sortable');
+  });
+
   it('refuses an unknown field, and says which fields exist', async () => {
     const response = await http(app)
       .post(`${API_ROOT}/users/search`)

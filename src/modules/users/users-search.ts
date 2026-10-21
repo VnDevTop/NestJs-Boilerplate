@@ -38,7 +38,10 @@ export const USER_SEARCH_FIELDS = new SearchFieldRegistry(
       type: 'text',
       searchable: true,
       filterable: true,
-      sortable: true,
+      // Not sortable, and for the same reason the listing route does not sort
+      // by a name either: it is legal SQL and useless in practice — the
+      // question it answers is "do you mean the full name?".
+      sortable: false,
       // Nearly as identifying as the address, and lighter than it.
       weight: 0.6,
       column: 'firstName',
@@ -48,7 +51,8 @@ export const USER_SEARCH_FIELDS = new SearchFieldRegistry(
       type: 'text',
       searchable: true,
       filterable: true,
-      sortable: true,
+      // Not sortable, for the same reason as the first name.
+      sortable: false,
       // The same as the first name, because a name is a name.
       weight: 0.6,
       column: 'lastName',
