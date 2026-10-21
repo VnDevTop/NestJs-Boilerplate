@@ -8,6 +8,8 @@ import {
   cacheKey,
 } from '../../core/cache/index.js';
 import { EmailTemplate } from './entities/email-template.entity.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 import { MailTemplateVersion } from './entities/mail-template-version.entity.js';
 import {
   assertKnownHelpers,
@@ -186,7 +188,31 @@ export class MailTemplateStore {
     @InjectRepository(MailTemplateVersion)
     private readonly versions: Repository<MailTemplateVersion>,
     private readonly cache: CacheService,
+    private readonly tenantContext: TenantContextService,
   ) {}
+
+  /**
+   * The tenant whose templates are being read and written.
+   *
+   * **A template belongs to a tenant.** The row is an override of a shipped file,
+   * and an override one tenant's operator wrote is not another tenant's to send —
+   * a password reset email with the wrong tenant's wording, or worse, the wrong
+   * support address, is a leak of one customer's words to another's user.
+   */
+  private tenantId(): string {
+    return this.tenantContext.current()?.id ?? DEFAULT_TENANT_ID;
+  }
+
+  /**
+   * The key the process-local compiled template is filed under.
+   *
+   * The distributed cache needs no such key: `CacheService` folds the tenant
+   * into every key it is given. This one is a plain map in this process, so the
+   * tenant has to be put in by hand.
+   */
+  private compiledKey(name: TemplateName, locale: string): string {
+    return `${this.tenantId()}:${mailTemplateKey(name, locale)}`;
+  }
 
   /**
    * The source a send would use, compiled and ready.
@@ -224,7 +250,11 @@ export class MailTemplateStore {
     name: TemplateName,
     locale: string,
   ): Promise<ResolvedTemplate> {
-    const row = await this.templates.findOneBy({ name, locale });
+    const row = await this.templates.findOneBy({
+      name,
+      locale,
+      tenantId: this.tenantId(),
+    });
 
     if (row) {
       return {
@@ -260,7 +290,10 @@ export class MailTemplateStore {
     name: TemplateName,
     locale: string,
   ): Promise<CompiledTemplate> {
-    const cacheKeyValue = mailTemplateKey(name, locale);
+    // The compiled form is a function of the source, and the source is a
+    // tenant's own, so the key carries the tenant. Without it, one tenant's
+    // compiled template would be rendered for another.
+    const cacheKeyValue = this.compiledKey(name, locale);
     const existing = this.compiled.get(cacheKeyValue);
 
     if (existing) {
@@ -329,7 +362,7 @@ export class MailTemplateStore {
    * source that is now stale.
    */
   async invalidate(name: TemplateName, locale = DEFAULT_LOCALE): Promise<void> {
-    this.compiled.delete(mailTemplateKey(name, locale));
+    this.compiled.delete(this.compiledKey(name, locale));
 
     await this.cache.delete(mailTemplateKey(name, locale));
   }
@@ -360,7 +393,11 @@ export class MailTemplateStore {
     name: TemplateName,
     locale = DEFAULT_LOCALE,
   ): Promise<EmailTemplate | null> {
-    return this.templates.findOneBy({ name, locale });
+    return this.templates.findOneBy({
+      name,
+      locale,
+      tenantId: this.tenantId(),
+    });
   }
 
   /**
@@ -402,6 +439,7 @@ export class MailTemplateStore {
       const existing = await repository.findOneBy({
         name: input.name,
         locale,
+        tenantId: this.tenantId(),
       });
 
       if (existing) {
@@ -413,6 +451,7 @@ export class MailTemplateStore {
           text: existing.text,
           html: existing.html,
           updatedBy: existing.updatedBy,
+          tenantId: this.tenantId(),
         });
 
         existing.subject = input.subject;
@@ -433,6 +472,7 @@ export class MailTemplateStore {
           html: input.html,
           updatedBy: input.updatedBy,
           version: 1,
+          tenantId: this.tenantId(),
         }),
       );
     });
@@ -456,7 +496,7 @@ export class MailTemplateStore {
     limit = 20,
   ): Promise<MailTemplateVersion[]> {
     return this.versions.find({
-      where: { name, locale },
+      where: { name, locale, tenantId: this.tenantId() },
       order: { version: 'DESC' },
       take: limit,
     });
@@ -470,7 +510,11 @@ export class MailTemplateStore {
    * is the whole reason the file is the fallback rather than the seed alone.
    */
   async reset(name: TemplateName, locale = DEFAULT_LOCALE): Promise<void> {
-    await this.templates.delete({ name, locale });
+    await this.templates.delete({
+      name,
+      locale,
+      tenantId: this.tenantId(),
+    });
 
     await this.invalidate(name, locale);
 
