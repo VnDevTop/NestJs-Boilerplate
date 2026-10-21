@@ -17,6 +17,10 @@ import { Role } from '../../../common/enums/index.js';
 // a filter over every row sharing a timestamp. Ascending only, because postgres
 // scans an index backwards for `?order=asc`.
 @Index('IDX_users_createdat_cursor', ['createdAt', 'id'])
+// The GIN index behind the full-text search. A `tsvector` is not a b-tree
+// candidate — it holds a document, and the question is which documents contain
+// a lexeme — so the index type is the only way to answer it.
+@Index('IDX_users_search_vector', ['searchVector'], { type: 'gin' })
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -110,6 +114,40 @@ export class User {
 
   @Column({ type: 'timestamptz', nullable: true })
   lastLoginAt!: Date | null;
+
+  /**
+   * The searchable text of this account, as one weighted document.
+   *
+   * **Generated, so it cannot drift.** A column filled by a trigger is a column
+   * that can be wrong — the trigger misses, the write is rolled back, the
+   * trigger is disabled for a moment — and a search index that is wrong is
+   * worse than no index, because it answers "no such user" for a user that
+   * exists. A generated column is computed by postgres on every write, so it is
+   * the row's own text by construction.
+   *
+   * **The weights are in the document.** `setweight` marks each field's lexemes
+   * with a band, and `ts_rank` reads the bands, so a match on the address
+   * outranks a match on the name. The bands come from the field map in
+   * `users-search.ts`, and a spec compares the expression here with the one in
+   * the migration — a weight that changed in one place and not the other would
+   * make the ranking quietly wrong.
+   *
+   * **Not selected.** The column is large and nothing reads it except the
+   * search, which names it in a `WHERE` clause rather than in the select list.
+   */
+  @Column({
+    type: 'tsvector',
+    asExpression:
+      `setweight(to_tsvector('simple', coalesce("email", '')), 'A') || ` +
+      `setweight(to_tsvector('simple', coalesce("firstName", '')), 'B') || ` +
+      `setweight(to_tsvector('simple', coalesce("lastName", '')), 'B') || ` +
+      `setweight(to_tsvector('simple', coalesce("role", '')), 'C')`,
+    generatedType: 'STORED',
+    insert: false,
+    update: false,
+    select: false,
+  })
+  searchVector!: string;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

@@ -15,6 +15,105 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: the postgres translator
+
+`feat(search): a tsquery built from the tree` ·
+`feat(search): the document column, the gin index and the migration` ·
+`feat(search): facet counts over the same tree`
+
+**What changed**
+
+- `src/common/search/translators/full-text.ts` — `translateToFullText`, which
+  turns a tree into a filter and a rank, and `buildDocumentExpression`, which
+  turns a field map into the expression that fills the document
+- `src/common/search/translators/facet.ts` — `translateToFacet`, the counts of
+  the matching rows grouped by one field
+- `src/modules/users/users-search.ts` — `USER_SEARCH_FIELDS`, the six fields a
+  user can be searched by and the weight each one carries
+- `src/modules/users/entities/user.entity.ts` — the `searchVector` column and
+  the GIN index over it
+- Migration `1792500000000-AddUserSearchVector`
+- `SearchFieldRegistry` gained the document column
+
+**Why**
+
+The tsquery was the one piece of the language that had nowhere to go: a parser
+that produced a tree, and a translator that turned the tree into column
+comparisons. A word search — the thing a search box is for — was not
+expressible.
+
+**The terms are parameters and the operators are ours.** A term goes in as
+`plainto_tsquery('simple', :p0)` and a phrase as
+`phraseto_tsquery('simple', :p0)`, and the `&&`, `||` and `!!` between them are
+written by the translator. Those two functions are the ones that do **not** read
+their argument as an expression, so a term containing `&` or `|` or `!` is text
+and never becomes an operator. `to_tsquery` would have been the obvious choice
+and it is the wrong one: it parses its argument, so a term could add a clause to
+the query.
+
+**The filter and the rank are separate.** The filter says which rows match; the
+rank says which of them came first. The rank is `ts_rank(document, tsquery)`,
+with the boost multiplying it, because postgres ranks a whole match rather than a
+clause.
+
+**The filter is one walk, not two.** The text clauses and the other clauses
+cannot be split into two parallel trees and combined afterwards, because `NOT`
+does not distribute: `NOT (a AND b)` is not `NOT a AND NOT b`.
+
+**The document is generated, so it cannot drift.** A column filled by a trigger
+is a column that can be wrong — the trigger misses, the write is rolled back,
+the trigger is disabled for a moment — and a search index that is wrong is worse
+than no index, because it answers "no such user" for a user that exists. A
+generated column is computed by postgres on every write, so it is the row's own
+text by construction.
+
+**The expression is written in three places and the three are compared.** The
+field map, the entity and the migration each say what the document holds, and a
+spec compares the expression the map builds with the other two. A weight that
+changed in one of them and not the others would make the ranking quietly wrong —
+a match on the address ranking below a match on the name — and nothing would say
+so, because the search would still work and still return the right rows.
+
+**The weights are chosen, not defaulted.** The address is what a person
+identifies an account by, so it is A. The two names are B. The role is C,
+because it is a word about the account rather than a name for it. The active flag
+and the creation date are filtered and sorted but never searched.
+
+**Only the searchable fields are in the document.** A password hash in the
+document would be searchable, and a document is exactly what a search box reads.
+The spec caught that one.
+
+**The facets count the rows the results show.** The facet carries the very same
+filter, so the counts and the list cannot disagree about what matched.
+
+**The configuration is `simple` and not `english`,** because the english one
+stems and drops stop words: a search for "users" would not find "user". It is a
+literal, because a generated column's expression has to be immutable and
+`to_tsvector(regconfig, text)` is only immutable for a literal configuration.
+
+**What it gives up**
+
+- **One document per entity means a field-scoped term matches the document.**
+  `email:ada` also matches a row whose _name_ contains "ada", because the
+  weights decide the order of the results, not which rows match. A search that
+  needs a field's own text needs its own column, and that is one column and one
+  index per field.
+- A wildcard has no tsquery, so it is a pattern match on the column and it is
+  unindexed.
+- A fuzzy term is refused, as it is in the filter translator: postgres has no
+  edit distance without an extension, and a trigram similarity is a different
+  function.
+- A boost multiplies the score of the whole match, because postgres ranks a
+  match rather than a clause.
+
+**Carried into Phase 30**
+
+There is a searchable `users` table and a translator that can ask it a question.
+What is missing is the route: the permission, the body, and the shape of the
+answer.
+
+---
+
 ## feat: the field registry and the translators
 
 `feat(search): the field registry, which is the allow-list` ·

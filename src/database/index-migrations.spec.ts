@@ -61,13 +61,18 @@ function entityIndexes(): EntityIndex[] {
 /**
  * Every `CREATE INDEX` in the migration folder.
  *
- * Read from the source rather than from a database, because a test that needs a
+ * Read out of the source rather than against a database, because a test that needs a
  * live Postgres is a test that does not run in CI.
  *
  * The table is optional in the pattern because the migrations are inconsistent
  * about it: the initial schema qualifies it (`"public"."users"`) and the later
  * ones do not (`"users"`). Both are the same table, and the comparison below
  * should not care which spelling a migration used.
+ *
+ * **The index type is optional too**, and it has to be: a GIN index is written
+ * `ON "users" USING GIN ("searchVector")`, so a pattern that expected the
+ * columns straight after the table would not match it — and an index the
+ * comparison cannot see is an index nothing checks.
  */
 function migrationIndexes(): MigrationIndex[] {
   const directory = join(process.cwd(), 'src', 'database', 'migrations');
@@ -78,7 +83,7 @@ function migrationIndexes(): MigrationIndex[] {
     const source = readFileSync(join(directory, file), 'utf8');
 
     for (const match of source.matchAll(
-      /CREATE (UNIQUE )?INDEX "([^"]+)" ON (?:"public"\.)?"([^"]+)"\s*\(([^)]*)\)/g,
+      /CREATE (UNIQUE )?INDEX "([^"]+)" ON (?:"public"\.)?"([^"]+)"(?:\s+USING\s+\w+)?\s*\(([^)]*)\)/g,
     )) {
       found.push({
         file,

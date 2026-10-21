@@ -334,10 +334,57 @@ case about that entity rather than about the search.
 
 ### Phase 29: The Postgres translator
 
-- [ ] `tsquery` from the AST, not from a string the user typed
-- [ ] `setweight()` per field for `ts_rank`
-- [ ] `tsvector` column, GIN index, and a migration to populate it
-- [ ] Facet counts over the same AST
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
+
+- [x] `tsquery` from the AST, not from a string the user typed
+- [x] `setweight()` per field for `ts_rank`
+- [x] `tsvector` column, GIN index, and a migration to populate it
+- [x] Facet counts over the same AST
+
+Done when a word search is possible, and the words it matches cannot be
+injected. **Met, and asserted as a test** rather than argued in a comment:
+`full-text.spec.ts` shows that the tsquery is built from the tree with the terms
+as parameters, `users-search.spec.ts` shows that the document expression is the
+same in the field map, the entity and the migration, and the e2e suite ran the
+migration against a real Postgres, so the generated expression is one Postgres
+accepts as immutable.
+
+**The terms are parameters and the operators are ours.** A term goes in as
+`plainto_tsquery('simple', :p0)` and a phrase as `phraseto_tsquery('simple',
+:p0)`, and the `&&`, `||` and `!!` between them are written by the translator.
+Those two functions are the ones that do **not** read their argument as an
+expression, so a term containing `&` or `|` or `!` is text and never becomes an
+operator. `to_tsquery` would have been the obvious choice and it is the wrong
+one: it parses its argument, so a term could add a clause to the query.
+
+**The document is generated, so it cannot drift.** The `users` table gains a
+`searchVector` column and a GIN index over it. A column filled by a trigger is
+a column that can be wrong, and a search index that is wrong is worse than no
+index — it answers "no such user" for a user that exists.
+
+**The expression is written in three places and the three are compared.** The
+field map, the entity and the migration each say what the document holds, and a
+spec compares the expression the map builds with the other two. A weight that
+changed in one of them and not the others would make the ranking quietly wrong,
+and nothing would say so, because the search would still work and still return
+the right rows.
+
+**Only the searchable fields are in the document.** A password hash in the
+document would be searchable, and a document is exactly what a search box reads.
+The spec caught that one.
+
+**The filter is one walk, not two.** The text clauses and the other clauses
+cannot be split into two parallel trees and combined afterwards, because `NOT`
+does not distribute: `NOT (a AND b)` is not `NOT a AND NOT b`.
+
+**The facets count the rows the results show.** The facet carries the very same
+filter, so the counts and the list cannot disagree about what matched.
+
+**What it costs, stated.** One document per entity means a field-scoped term
+matches the document — `email:ada` also matches a row whose _name_ contains
+"ada" — because the weights decide the order of the results, not which rows
+match. A search that needs a field's own text needs its own column, and that is
+one column and one index per field.
 
 ### Phase 30: User search
 
@@ -908,7 +955,7 @@ exists means writing the same retry logic twice.
 | Phase 26  | An audit read surface                          | Done    |
 | Phase 27  | A Lucene query parser                          | Done    |
 | Phase 28  | The field registry and the translators         | Done    |
-| Phase 29  | The Postgres translator                        | Planned |
+| Phase 29  | The Postgres translator                        | Done    |
 | Phase 30  | User search                                    | Planned |
 | Phase 31  | The search documentation                       | Planned |
 | Phase 32  | The tenant column, present from the start      | Planned |
