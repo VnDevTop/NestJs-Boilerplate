@@ -88,8 +88,27 @@ a term and a range on every field the field map declares.
 
 **The kit asserts rather than registers.** It throws on a failure and a spec
 calls it from an `it`, so the file ships in the build carrying no dependency on
-a test framework. Its own spec breaks each of the four properties on purpose to
-show that the kit notices — a kit that cannot fail is a kit that proves nothing.
+a test framework. Its own spec breaks each of the properties on purpose to show
+that the kit notices — a kit that cannot fail is a kit that proves nothing.
+
+**The injection corpus holds every command that changes data.** Not the two that
+are famous: a filter that blocks `DROP TABLE` and lets `UPDATE users SET role =
+'super_admin'` through has not blocked anything, and the payload that changes a
+row is just as short as the one that drops a table. So the corpus carries
+insert, update, delete, merge, upsert, copy, create, alter, drop, truncate,
+grant, revoke, execute, call, do, set, vacuum, reindex, cluster, refresh,
+reassign, comment, security, lock, checkpoint, discard, the transaction
+statements, prepare and deallocate, listen and notify, analyze, import and
+load — plus the read-only ones, because a statement that reads somebody else's
+password is nearly as bad as one that changes a row.
+
+**And the fragment is a predicate, never a statement.** The corpus proves the
+payloads somebody thought of; this holds for the ones nobody did. A translated
+fragment may contain a column name, a parameter, a comparison and a boolean
+operator, and nothing else — a word outside that vocabulary is a statement, and
+a semicolon is how a second statement begins. The translator emits a boolean
+expression over columns and parameters, so there is no shape an input could take
+that would make it a statement.
 
 **What it gives up**
 

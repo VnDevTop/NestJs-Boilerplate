@@ -279,9 +279,9 @@ Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 Done when one field map and one test kit serve every entity's search. **Met, and
 asserted as a test** rather than argued in a comment: `search.test-kit.spec.ts`
-runs the kit against a fictional entity, and then breaks each of its four
-properties on purpose to show that the kit notices — a kit that cannot fail is a
-kit that proves nothing.
+runs the kit against a fictional entity, and then breaks each of its properties
+on purpose to show that the kit notices — a kit that cannot fail is a kit that
+proves nothing.
 
 **The allow-list is the injection boundary.** A field name is the client's input,
 and the only way it can reach SQL is by being looked up in the registry first. An
@@ -302,6 +302,19 @@ range over numbers compares numbers and a value that is not a number is refused
 here rather than by postgres — which would answer with an error about a type it
 cannot coerce, and the client would be told about a type rather than about the
 value they typed.
+
+**Every command that changes data is blocked, and the fragment is a predicate
+rather than a statement.** The injection corpus holds the whole family — insert,
+update, delete, merge, upsert, copy, create, alter, drop, truncate, grant,
+revoke, execute, call, set, vacuum, reindex, lock, the transaction statements
+and the rest — because a filter that blocks `DROP TABLE` and lets `UPDATE users
+SET role = 'super_admin'` through has not blocked anything. But a corpus only
+proves the payloads somebody thought of, so the claim is structural as well: a
+translated fragment may contain a column name, a parameter, a comparison and a
+boolean operator, and nothing else. A word outside that vocabulary is a
+statement, and a semicolon is how a second statement begins. The translator
+emits a boolean expression over columns and parameters, so there is no shape an
+input could take that would make it a statement.
 
 **The type decides whether a term is a match or a comparison.** A text field is
 matched as a substring and has to be searchable; every other type is compared for

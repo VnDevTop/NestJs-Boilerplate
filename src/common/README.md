@@ -329,6 +329,23 @@ because a value that reached the SQL as text would be a client who can read the
 database. **The fuzz corpus is seeded**, so a failure is reproducible, and every
 failure has to be one of the errors the application knows how to answer.
 
+**The corpus holds every command that changes data.** Not the two that are
+famous — the whole family, because a filter that blocks `DROP TABLE` and lets
+`UPDATE users SET role = 'super_admin'` through has not blocked anything. The
+payload that changes a row is just as short as the one that drops a table, so
+the corpus carries insert, update, delete, merge, upsert, copy, create, alter,
+drop, truncate, grant, revoke, execute, call, set, vacuum, reindex, lock,
+transaction control and the rest — plus the read-only ones, because a statement
+that reads somebody else's password is nearly as bad as one that changes a row.
+
+**And the fragment is a predicate, never a statement.** The corpus proves the
+payloads somebody thought of; this holds for the ones nobody did. A translated
+fragment may contain a column name, a parameter, a comparison and a boolean
+operator, and nothing else — a word outside that vocabulary is a statement, and
+a semicolon is how a second statement begins. The translator emits a boolean
+expression over columns and parameters, so there is no shape an input could
+take that would make it a statement.
+
 ## Utilities worth knowing
 
 | Utility                       | Note                                                                          |
