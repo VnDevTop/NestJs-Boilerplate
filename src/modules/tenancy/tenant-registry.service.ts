@@ -81,6 +81,31 @@ export class TenantRegistry {
   }
 
   /**
+   * Every tenant, oldest first.
+   *
+   * For the work that has to visit each tenant in turn — the retention run, for
+   * instance. It is a list rather than a fallback: a caller that cannot find a
+   * tenant must not get the default one in its place.
+   */
+  async list(): Promise<TenantContextValue[]> {
+    const tenants = await this.repository.find({ order: { createdAt: 'ASC' } });
+
+    return tenants.map((tenant) => TenantRegistry.toContext(tenant));
+  }
+
+  /**
+   * The tenants being served.
+   *
+   * **A disabled tenant is not visited.** Housekeeping that reached a disabled
+   * tenant would touch data an operator has asked to leave alone.
+   */
+  async active(): Promise<TenantContextValue[]> {
+    const tenants = await this.list();
+
+    return tenants.filter((tenant) => this.isServing(tenant));
+  }
+
+  /**
    * Whether a tenant is being served.
    *
    * **A disabled tenant is refused, not served slowly.** The point of disabling
