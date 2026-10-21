@@ -15,6 +15,48 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: the tenant column on every table
+
+`feat(tenancy): the default tenant and the tenancy config` ·
+`feat(tenancy): the tenant column on every table` ·
+`feat(tenancy): a natural key is unique inside its tenant` ·
+`feat(tenancy): an index leads with the tenant` ·
+`test(tenancy): the tenant column, checked on every table`
+
+**What changed**
+
+- `src/common/tenancy/tenant.constants.ts` — `DEFAULT_TENANT_ID` and the header
+  name
+- `src/configs/tenancy.config.ts` — the `tenancy` namespace: `enabled`, `header`
+  and `defaultTenantId`
+- `tenantId` on all seventeen tables, `NOT NULL` with the fixed default
+- The natural keys are composite — `(tenantId, email)`, `(tenantId, name)`,
+  `(tenantId, role, permissionId)` — and every b-tree index leads with the
+  tenant
+- `src/database/migrations/1792600000000-AddTenantColumn.ts`, and a spec that
+  checks every entity, the composite uniques and the index order
+
+**Why**
+
+The column is present from the start rather than added when the feature is
+switched on, because a tenant column added afterwards means touching every
+query, every index and every unique constraint again — and the ones nobody
+remembers are the ones that let two tenants share a row.
+
+**A fixed default, so the feature is switchable without a backfill.** The
+default is a constant rather than a lookup, so a database that has not been
+seeded still answers, and `MULTI_TENANT=false` behaves exactly as it did.
+
+**An address is only unique within a tenant.** A unique key on the address
+alone would stop the second tenant from having an account with an address the
+first one already has, which is the whole point of having more than one tenant.
+
+**Every index leads with the tenant.** A lookup that filters by tenant and then
+by something else needs the index to be in that order, and an index that does not
+lead with the tenant is one that serves one tenant's query at another's cost.
+
+---
+
 ## docs: the search documentation
 
 `docs(search): the search layer's documentation` ·

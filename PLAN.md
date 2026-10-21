@@ -492,16 +492,16 @@ touching every query, index and unique constraint again.
 
 ### Phase 32: The tenant column, present from the start
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
-- [ ] `tenant_id` on all seventeen tables, **always**, including while
+- [x] `tenant_id` on all seventeen tables, **always**, including while
       `MULTI_TENANT=false`
-- [ ] Composite uniques: `(tenantId, email)`, and the same for every other natural
+- [x] Composite uniques: `(tenantId, email)`, and the same for every other natural
       key
-- [ ] Migration with a fixed default tenant seeded, so the feature can be enabled
+- [x] Migration with a fixed default tenant seeded, so the feature can be enabled
       without a backfill
-- [ ] Indexes lead with `tenantId`
-- [ ] `MULTI_TENANT=false` produces byte-identical behaviour to today
+- [x] Indexes lead with `tenantId`
+- [x] `MULTI_TENANT=false` produces byte-identical behaviour to today
 
 ### Phase 33: The tenant registry
 
@@ -1032,7 +1032,7 @@ exists means writing the same retry logic twice.
 | Phase 29  | The Postgres translator                        | Done    |
 | Phase 30  | User search                                    | Done    |
 | Phase 31  | The search documentation                       | Done    |
-| Phase 32  | The tenant column, present from the start      | Planned |
+| Phase 32  | The tenant column, present from the start      | Done    |
 | Phase 33  | The tenant registry                            | Planned |
 | Phase 34  | Tenant context                                 | Planned |
 | Phase 35  | Repository scoping                             | Planned |
