@@ -27,7 +27,9 @@ The detailed reference is [README.md](README.md).
 
 Nothing here is a route. The module is infrastructure: a middleware, a
 registry, and the context it fills in. The rest of the application reads the
-tenant from `TenantContextService`.
+tenant from `TenantContextService` — see
+[the tenancy layer](../../common/tenancy/README.md) for what that means and
+where the scope is applied.
 
 ## What it does not do
 

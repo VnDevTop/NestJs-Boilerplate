@@ -10,6 +10,10 @@ modules/tenancy
 └── tenancy.module.ts           global, so anything may ask for the tenant
 ```
 
+The layer underneath is [the tenancy layer](../../common/tenancy/README.md):
+the context on `AsyncLocalStorage`, the scoped repository, and the
+`app.tenant_id` setting the row-level security policies read.
+
 ## The table
 
 | Column       | Meaning                                                              |

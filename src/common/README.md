@@ -15,6 +15,7 @@ common
 ├── pagination    the cursor and the two shapes a paged response has
 ├── query         the query layer: a spec, a criteria, and the SQL they produce
 ├── search        the search language: a tokenizer, a parser and a tree
+├── tenancy       the tenant context, the scoped repository and the database scope
 ├── pipes         global validation pipe
 └── utils         password, encryption, recovery codes, user agent, request id
 ```
@@ -378,6 +379,20 @@ operator, and nothing else — a word outside that vocabulary is a statement, an
 a semicolon is how a second statement begins. The translator emits a boolean
 expression over columns and parameters, so there is no shape an input could
 take that would make it a statement.
+
+## Tenancy
+
+The layer that answers which tenant this is. `src/common/tenancy/README.md` is
+the document: the context on `AsyncLocalStorage`, the repository that only ever
+sees one tenant's rows, and the `app.tenant_id` setting the row-level security
+policies read.
+
+The rules that matter:
+
+- An unknown or disabled tenant is a 401, never a fallback to the default one.
+- The scope is applied at the repository, never per query.
+- The context answers `null` outside a request, because "no tenant" and "the
+  default tenant" are different facts.
 
 ## Utilities worth knowing
 

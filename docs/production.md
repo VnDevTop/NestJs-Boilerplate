@@ -144,6 +144,62 @@ Human readable elsewhere. A message containing newlines is collapsed to a single
 line so a stack trace cannot be misread as several entries, and an `Error` is
 serialised with its name, message and stack rather than as `{}`.
 
+## Multi-tenancy
+
+Off by default, and off means every request belongs to the fixed default
+tenant. The `tenantId` column is on every table either way, so turning the
+feature on is a configuration change and not a migration.
+
+```dotenv
+MULTI_TENANT=false
+TENANT_HEADER=x-tenant-id
+# TENANT_BASE_DOMAIN=example.com
+```
+
+**The header carries a slug, not an id.** The slug is what an operator reads
+out of a support ticket, and the id is what the database stores.
+
+**The host is only read when `TENANT_BASE_DOMAIN` is set.** Inferring a tenant
+from a host is only safe where the deployment has said what its hosts look
+like; everywhere else it would let a stray `Host` header choose the customer.
+
+**An unknown or disabled tenant is a 401.** Not a fallback to the default
+tenant: a fallback would answer a request for another customer's data with
+this deployment's rows.
+
+**Three layers enforce the isolation, and none of them replaces another:**
+
+| Layer                         | What it does                                             |
+| ----------------------------- | -------------------------------------------------------- |
+| The tenant context            | decides which tenant this request is                     |
+| The scoped repository         | says which rows the query is asking for                  |
+| The row-level security policy | says which rows the database will let the connection see |
+
+**The application role must not be a superuser.** A superuser bypasses every
+policy, which would make the whole layer a comment. The migration creates an
+`app_user` role for it — but the request path does not set the scope yet (see
+below), so pointing `DATABASE_URL` at that role today would make every table
+read as empty. The role is there for the deployment that wires the scope up.
+
+**The policies need the tenant in the session.** They read
+`current_setting('app.tenant_id', true)`, and the application sets it with
+`set_config(…, true)` — transaction-local, so it ends with the transaction. A
+connection that never set it matches no rows, which is the safe direction but
+looks like an empty table.
+
+**Right now the setting is set by the retention run, and by nothing else.** The
+retention run is a raw query runner, so it sets the scope inside the
+transaction it runs in. The request path does not: it goes through TypeORM,
+which does not open a transaction per request, and a session-level setting
+would outlive the tenant it was set for on a pooled connection.
+
+So the policies bind only for a deployment that has been wired up to set the
+scope, and the application connects as the database owner — whose rows the
+policies do not restrict, because a superuser bypasses every policy. The
+repository scope is what is actually holding the line today; the row-level
+security is the layer underneath it, ready for the connection to be moved to
+the `app_user` role.
+
 ## Cache and what it holds
 
 Authentication is served from Redis, so an authenticated request costs cache reads
@@ -162,6 +218,10 @@ when it should be, so this section is mostly about what has to be dropped.
 CACHE_AUTH_USER_TTL=60       # claims, and the device versions beside them
 CACHE_AUTH_ROLE_TTL=600      # one entry per role, not per user
 ```
+
+**Every key carries the tenant.** A key without one is a key two tenants can
+reach, and the second one to ask is served the first one's answer. The cache
+service folds the tenant in, in one place, so a call site cannot forget it.
 
 **Fail open.** A dead Redis means a miss, so the request falls back to the database
 and is slower rather than refused. `/health/ready` reports `degraded` and still

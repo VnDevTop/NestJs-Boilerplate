@@ -15,6 +15,42 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: row-level security, as the layer underneath
+
+`feat(tenancy): row-level security, enabled and forced` ·
+`feat(tenancy): the policy, on every table` ·
+`feat(tenancy): the application role is not a superuser` ·
+`feat(tenancy): the tenant scope on the connection` ·
+`test(tenancy): the policy binds`
+
+**What changed**
+
+- `src/database/migrations/1792800000000-AddRowLevelSecurity.ts` — the policies
+  on all seventeen tables, and the `app_user` role
+- `src/common/tenancy/tenant-scope.ts` — `setTenantScope()`
+
+**Why**
+
+RLS is not a replacement for the repository scope; it is the layer underneath.
+An application bug that forgets the filter gets an empty result rather than
+another customer's data.
+
+**`FORCE ROW LEVEL SECURITY` is on every table.** Without it the table owner
+bypasses the policy, and TypeORM connects as the owner.
+
+**`WITH CHECK` on every policy, so an insert cannot write into another
+tenant.** A policy that only reads is a policy that guards the wrong direction.
+
+**The application role is not a superuser**, because a superuser bypasses every
+policy — which would make the whole layer a comment.
+
+**The setting is transaction-local, and only the retention run sets it.** The
+request path does not, so the policies bind for the paths that set the scope
+and the repository scope is what holds the line on the others — which the
+production notes say out loud rather than leaving to be discovered.
+
+---
+
 ## feat: a repository that only ever sees one tenant's rows
 
 `feat(tenancy): a repository that only ever sees one tenant's rows` ·

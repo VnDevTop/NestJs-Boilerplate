@@ -528,21 +528,21 @@ Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 ### Phase 36: Row-level security
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 Every table. RLS is not a replacement for the repository scope, it is the layer
 underneath: an application bug that forgets the filter gets an empty result rather
 than another customer's data.
 
-- [ ] `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY` on every table —
+- [x] `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY` on every table —
       without `FORCE`, the table owner bypasses it and TypeORM connects as the
       owner
-- [ ] `USING ("tenantId" = current_setting('app.tenant_id', true))`, with `WITH
+- [x] `USING ("tenantId" = current_setting('app.tenant_id', true))`, with `WITH
 CHECK` so an insert cannot write into another tenant
-- [ ] The application role documented as **not** a superuser, because a superuser
+- [x] The application role documented as **not** a superuser, because a superuser
       bypasses every policy
-- [ ] A second, non-superuser role for the app, created by the migration
-- [ ] A test that proves the policy binds: a query with no tenant filter returns
+- [x] A second, non-superuser role for the app, created by the migration
+- [x] A test that proves the policy binds: a query with no tenant filter returns
       nothing rather than everything
 
 ### Phase 37: Cache namespacing
@@ -1036,7 +1036,7 @@ exists means writing the same retry logic twice.
 | Phase 33  | The tenant registry                            | Done    |
 | Phase 34  | Tenant context                                 | Done    |
 | Phase 35  | Repository scoping                             | Done    |
-| Phase 36  | Row-level security                             | Planned |
+| Phase 36  | Row-level security                             | Done    |
 | Phase 37  | Cache namespacing                              | Planned |
 | Phase 38  | Per-tenant permissions                         | Planned |
 | Phase 39  | Per-tenant mail templates                      | Planned |
