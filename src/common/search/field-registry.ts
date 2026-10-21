@@ -60,6 +60,19 @@ export interface SearchFieldRegistryOptions {
    * a query that silently means nothing.
    */
   readonly defaultField: string;
+
+  /**
+   * The column holding the weighted `tsvector` — the document.
+   *
+   * **Optional, because only the full-text search needs one.** A filter over a
+   * table that is never searched for words does not need a document column, and
+   * a column that is never used is a column that is maintained on every write
+   * for nothing.
+   *
+   * The document holds the searchable text of every field, with each field's
+   * weight baked in, so one index answers a word search over the whole entity.
+   */
+  readonly documentColumn?: string;
 }
 
 /**
@@ -104,12 +117,16 @@ export class SearchFieldRegistry {
   /** The field a query that names no field is about. */
   readonly defaultField: string;
 
+  /** The column holding the weighted tsvector, when the entity has one. */
+  readonly documentColumn: string | undefined;
+
   constructor(
     fields: Readonly<Record<string, SearchField>>,
     options: SearchFieldRegistryOptions,
   ) {
     this.fields = Object.freeze({ ...fields });
     this.defaultField = options.defaultField;
+    this.documentColumn = options.documentColumn;
 
     this.validate();
   }
@@ -150,6 +167,24 @@ export class SearchFieldRegistry {
   /** The columns this registry may put into SQL. */
   columns(): string[] {
     return Object.values(this.fields).map((field) => field.column);
+  }
+
+  /**
+   * The document column, or an error saying there is not one.
+   *
+   * **The error is about the entity, not the query.** A full-text search
+   * against a table with no document column is a mistake in the field map, and
+   * saying "no such column" would send somebody looking at the query.
+   */
+  document(): string {
+    if (this.documentColumn === undefined) {
+      throw new Error(
+        'This registry has no document column, so a full-text search cannot ' +
+          'be answered. Declare one in the registry options.',
+      );
+    }
+
+    return this.documentColumn;
   }
 
   /**
@@ -240,6 +275,17 @@ export class SearchFieldRegistry {
       throw new Error(
         `The default field "${this.defaultField}" is not one of the declared ` +
           `fields: ${this.names().join(', ')}.`,
+      );
+    }
+
+    if (
+      this.documentColumn !== undefined &&
+      !COLUMN_NAME.test(this.documentColumn)
+    ) {
+      // The document column is interpolated into SQL like any other column.
+      throw new Error(
+        `"${this.documentColumn}" is not a column name. A column is ` +
+          'interpolated into SQL, so it has to be an identifier.',
       );
     }
   }

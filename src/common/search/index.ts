@@ -17,6 +17,7 @@ export * from './field-registry.js';
 export * from './parser.js';
 export * from './tokenizer.js';
 export * from './search.test-kit.js';
+export * from './translators/full-text.js';
 export * from './translators/in-memory.js';
 export * from './translators/mock.js';
 export * from './translators/postgres.js';
