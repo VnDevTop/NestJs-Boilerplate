@@ -206,12 +206,15 @@ new pagination code.
 `search/` is where a search box's text becomes a tree. It holds the tokenizer, the
 parser and the tree, and **nothing else** — no entity, no column, no database.
 
-| File           | Decision                                                  |
-| -------------- | --------------------------------------------------------- |
-| `ast.ts`       | the eight shapes a parsed query can take                  |
-| `tokenizer.ts` | the words, and the escapes that make a colon literal      |
-| `parser.ts`    | recursive descent, one method per precedence level        |
-| `errors.ts`    | the one error, and the position in the query it points at |
+| File                 | Decision                                                    |
+| -------------------- | ----------------------------------------------------------- |
+| `ast.ts`             | the eight shapes a parsed query can take                    |
+| `tokenizer.ts`       | the words, and the escapes that make a colon literal        |
+| `parser.ts`          | recursive descent, one method per precedence level          |
+| `errors.ts`          | the errors, and the position in the query they point at     |
+| `field-registry.ts`  | the fields an entity may be searched by, and the allow-list |
+| `translators/`       | postgres, in-memory and a mock                              |
+| `search.test-kit.ts` | the assertions every entity's search has to pass            |
 
 ```ts
 const query = parseSearchQuery('email:ada AND role:admin');
@@ -256,6 +259,75 @@ search to another entity one field-map file and no new infrastructure.
 malformed query is a client mistake, and a client mistake must be a 400 that says
 which part was wrong — not a `TypeError` from inside the parser, which is a 500
 for a request that was merely wrong.
+
+### The field registry
+
+`SearchFieldRegistry` maps a field name to the six facts a translator needs:
+
+```ts
+const USER_SEARCH_FIELDS = new SearchFieldRegistry(
+  {
+    email: {
+      type: 'text',
+      searchable: true,
+      filterable: true,
+      sortable: true,
+      weight: 1,
+      column: 'email',
+    },
+  },
+  { defaultField: 'email' },
+);
+```
+
+**The allow-list is the injection boundary.** A field name is the client's input,
+and the only way it can reach SQL is by being looked up here first. An undeclared
+name is an `UnknownFieldError` that lists the names that do exist — never a field
+silently dropped, because a dropped field is a filter the client believes is
+applied and is not.
+
+**The column is the one piece of a search that becomes SQL text.** Everything else
+is a parameter, and a parameter cannot change the meaning of a statement. An
+identifier cannot be bound, so the column is interpolated — and so the registry
+refuses a column that is not a plain identifier. A field map that accepted
+`"email" ; DROP TABLE users` would be a field map that had handed a client the
+database.
+
+**The type decides whether a term is a match or a comparison.** A text field is
+matched as a substring and has to be searchable; every other type is compared for
+equality and has to be filterable.
+
+### The translators
+
+| Translator             | Answers                                             |
+| ---------------------- | --------------------------------------------------- |
+| `translateToSql`       | the SQL and the values to bind with it              |
+| `translateToPredicate` | whether a row matches — the reference semantics     |
+| `MockSearchTranslator` | whatever it was told to, and it records the queries |
+
+**Every value is a parameter.** The SQL text carries column names and operators
+and nothing else.
+
+**The in-memory translator is the reference.** It answers with nothing but
+JavaScript, so the answer can be checked by hand, and a Postgres translator that
+disagrees with it is answering a different question.
+
+### The test kit
+
+`search.test-kit.ts` holds the assertions every entity's search has to pass, so
+an entity's spec is one call:
+
+```ts
+it('holds the search properties', () => {
+  runSearchTestKit({ registry: USER_SEARCH_FIELDS });
+});
+```
+
+**The golden cases are derived from the registry**, so they are about the search
+rather than about the entity. **The injection corpus is a corpus of values**,
+because a value that reached the SQL as text would be a client who can read the
+database. **The fuzz corpus is seeded**, so a failure is reproducible, and every
+failure has to be one of the errors the application knows how to answer.
 
 ## Utilities worth knowing
 
