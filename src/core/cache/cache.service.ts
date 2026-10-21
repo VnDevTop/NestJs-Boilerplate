@@ -2,6 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CACHE_MANAGER, type Cache } from '@nestjs/cache-manager';
 
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 import type { CacheConfig } from '../../configs/index.js';
 
 export interface CacheOptions {
@@ -61,7 +63,25 @@ export class CacheService {
   constructor(
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
     private readonly configService: ConfigService,
+    private readonly tenantContext: TenantContextService,
   ) {}
+
+  /**
+   * The key, with the tenant in front of it.
+   *
+   * **The tenant is folded in here, in one place, so no call site can forget
+   * it.** A key without a tenant is a key two tenants can reach, and the
+   * second one to ask is served the first one's answer.
+   *
+   * **The default tenant when there is no context.** Work that is not inside a
+   * request — a seed, a scheduled job, a migration — still has to be able to
+   * cache, and it belongs to the default tenant.
+   */
+  private scopedKey(key: string): string {
+    const tenantId = this.tenantContext.current()?.id ?? DEFAULT_TENANT_ID;
+
+    return `${tenantId}:${key}`;
+  }
 
   private get options(): CacheConfig {
     return this.configService.getOrThrow<CacheConfig>('cache');
@@ -76,7 +96,7 @@ export class CacheService {
   }
 
   async get<T>(key: string): Promise<T | undefined> {
-    return this.cache.get<T>(key);
+    return this.cache.get<T>(this.scopedKey(key));
   }
 
   /** Resolves to the entry lifetime in milliseconds, for tests and assertions. */
@@ -87,13 +107,13 @@ export class CacheService {
   ): Promise<number> {
     const ttl = this.resolveTtl(options.ttl, options.exactTtl);
 
-    await this.cache.set(key, value, ttl);
+    await this.cache.set(this.scopedKey(key), value, ttl);
 
     return ttl;
   }
 
   async delete(key: string): Promise<void> {
-    await this.cache.del(key);
+    await this.cache.del(this.scopedKey(key));
   }
 
   /** Drops several keys at once, for a mutation that touched known entities. */
@@ -102,7 +122,7 @@ export class CacheService {
       return;
     }
 
-    await this.cache.mdel(keys);
+    await this.cache.mdel(keys.map((key) => this.scopedKey(key)));
   }
 
   /**
@@ -130,7 +150,7 @@ export class CacheService {
     loader: () => Promise<T>,
     options: CacheOptions = {},
   ): Promise<T> {
-    return this.cache.wrap<T>(key, () => this.load(loader), {
+    return this.cache.wrap<T>(this.scopedKey(key), () => this.load(loader), {
       ttl: (value: T) =>
         value === undefined || value === null
           ? this.resolveTtl(options.emptyTtl)

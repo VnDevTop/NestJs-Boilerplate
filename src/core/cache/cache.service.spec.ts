@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cacheKey, CACHE_NAMESPACE, CacheService } from './index.js';
 import type { CacheConfig } from '../../configs/index.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 
 const config: CacheConfig = {
   backend: 'memory',
@@ -28,10 +29,19 @@ const configService = {
   },
 } as unknown as ConfigService;
 
+/**
+ * The context the service and the test share.
+ *
+ * **One instance, or the test is testing nothing.** A service with a
+ * different context from the one the test runs its work in would never see
+ * the tenant, and every entry would land in the default tenant's keyspace.
+ */
+const tenantContext = new TenantContextService();
+
 async function memoryService(): Promise<CacheService> {
   const cache = await createCache({ stores: [new Keyv()], ttl: 60_000 });
 
-  return new CacheService(cache, configService);
+  return new CacheService(cache, configService, tenantContext);
 }
 
 describe('CacheService', () => {
@@ -243,6 +253,7 @@ describe('CacheService.wrap', () => {
     const degraded = new CacheService(
       broken as unknown as Cache,
       configService,
+      new TenantContextService(),
     );
     const database = vi
       .fn()
@@ -287,6 +298,7 @@ describe('CacheService.wrap', () => {
     const degraded = new CacheService(
       broken as unknown as Cache,
       configService,
+      new TenantContextService(),
     );
 
     await expect(degraded.get('k')).resolves.toBeUndefined();

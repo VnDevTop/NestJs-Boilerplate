@@ -21,6 +21,7 @@ import type {
   MailTransport,
   SendResult,
 } from './transports/transport.interface.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 
 const mailConfig: MailConfig = {
   transport: 'memory',
@@ -115,6 +116,7 @@ function build(
           wrap: async (_k: string, l: () => Promise<unknown>) => l(),
         } as never,
         {} as never,
+        new TenantContextService(),
       ),
     ),
   );
