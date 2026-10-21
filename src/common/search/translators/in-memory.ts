@@ -89,7 +89,7 @@ function termPredicate(
   fuzzy: number | undefined,
   registry: SearchFieldRegistry,
 ): SearchPredicate {
-  const field = registry.searchableField(name);
+  const field = fieldForTerm(name, registry);
 
   if (fuzzy !== undefined) {
     if (field.type !== 'text' && field.type !== 'keyword') {
@@ -131,20 +131,38 @@ function termPredicate(
 /**
  * A phrase: the words, in order, next to each other.
  *
- * **Only a text field.** A keyword is one value, so "the words of a keyword" is
- * not a question, and a number has no words at all.
+ * **On a field that is not text, a phrase of one word is that word.** A
+ * keyword is one value, a date is one value, and a quoted value is how a value
+ * with a colon or a space in it is written — so a single-word phrase is an
+ * equality there, exactly as a term is. More than one word is refused: "the
+ * words of a number" is not a question.
  */
 function phrasePredicate(
   name: string | null,
   terms: readonly string[],
   registry: SearchFieldRegistry,
 ): SearchPredicate {
-  const field = registry.searchableField(name);
+  const field = registry.resolve(name);
 
   if (field.type !== 'text') {
+    if (terms.length > 1) {
+      throw new UnsupportedFieldError(
+        name ?? registry.defaultField,
+        'a phrase is words in a row, and this field is not text',
+      );
+    }
+
+    const single = terms[0];
+
+    return single === undefined
+      ? () => true
+      : termPredicate(name, single, undefined, registry);
+  }
+
+  if (!field.searchable) {
     throw new UnsupportedFieldError(
       name ?? registry.defaultField,
-      'a phrase is words in a row, and this field is not text',
+      'is not searchable',
     );
   }
 
@@ -296,6 +314,26 @@ function rangePredicate(
         'a boolean has no range',
       );
   }
+}
+
+/**
+ * The field a term is compared against.
+ *
+ * **The type decides whether a term is a match or a comparison.** A text field
+ * is matched as a substring, so it has to be searchable; every other type is
+ * compared for equality, so it has to be filterable. One rule, and the flag
+ * that matters follows from the type rather than being a second thing to get
+ * right.
+ */
+function fieldForTerm(
+  name: string | null,
+  registry: SearchFieldRegistry,
+): SearchField {
+  const field = registry.resolve(name);
+
+  return field.type === 'text'
+    ? registry.searchableField(name)
+    : registry.filterableField(name);
 }
 
 /** The value of a text-ish field, as a string. */

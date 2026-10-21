@@ -72,3 +72,48 @@ export class UnsupportedFieldError extends Error {
     this.name = 'UnsupportedFieldError';
   }
 }
+
+/**
+ * A query the backend cannot express.
+ *
+ * **Not the same as a field that cannot do it.** A fuzzy term is a perfectly
+ * good term; it is the *backend* that cannot answer it, and saying so is
+ * better than answering a different question.
+ */
+export class UnsupportedOperationError extends Error {
+  constructor(
+    /** What was asked for, in the client's words. */
+    readonly operation: string,
+    /** Why it cannot be done here. */
+    readonly reason: string,
+  ) {
+    super(`The search operation "${operation}" is not supported: ${reason}.`);
+
+    this.name = 'UnsupportedOperationError';
+  }
+}
+
+/**
+ * A value that is not a value of the field's type.
+ *
+ * **Refused here rather than left to the database.** Postgres would answer a
+ * comparison between a number and a word with an error about a type it cannot
+ * coerce, and the client would be told about a type rather than about the
+ * value they typed.
+ */
+export class InvalidSearchValueError extends Error {
+  constructor(
+    /** The field the value was for. */
+    readonly field: string,
+    /** The value that was typed. */
+    readonly value: string,
+    /** What the field's type expects. */
+    readonly expected: string,
+  ) {
+    super(
+      `"${value}" is not a valid ${expected} for the search field "${field}".`,
+    );
+
+    this.name = 'InvalidSearchValueError';
+  }
+}
