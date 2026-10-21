@@ -27,7 +27,8 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 @Index('UQ_account_unlock_tokens_token', ['tenantId', 'tokenHash'], {
   unique: true,
 })
-@Index('IDX_account_unlock_tokens_user', ['userId'])
+@Index('IDX_account_unlock_tokens_expires_at', ['tenantId', 'expiresAt'])
+@Index('IDX_account_unlock_tokens_user', ['tenantId', 'userId'])
 export class AccountUnlockToken {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -56,7 +57,6 @@ export class AccountUnlockToken {
    * this column nightly, and an unindexed range scan over a growing table is a cost
    * nobody notices until it is expensive.
    */
-  @Index()
   @Column({ type: 'timestamptz' })
   expiresAt!: Date;
 

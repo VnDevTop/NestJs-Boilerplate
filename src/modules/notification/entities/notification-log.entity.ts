@@ -34,8 +34,9 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
  * else it cleans.
  */
 @Entity({ name: 'notification_logs' })
-@Index('IDX_notification_logs_created_at', ['createdAt'])
-@Index('IDX_notification_logs_event', ['event'])
+@Index('IDX_notification_logs_request_id', ['tenantId', 'requestId'])
+@Index('IDX_notification_logs_created_at', ['tenantId', 'createdAt'])
+@Index('IDX_notification_logs_event', ['tenantId', 'event'])
 export class NotificationLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -90,7 +91,6 @@ export class NotificationLog {
    * and a guessed time window. Nullable because a system action — the retention
    * anomaly, a scheduled digest — has no request.
    */
-  @Index()
   @Column({ type: 'varchar', length: 64, nullable: true })
   requestId!: string | null;
 

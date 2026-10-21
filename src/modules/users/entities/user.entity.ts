@@ -14,11 +14,14 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 @Entity({ name: 'users' })
 @Index('UQ_users_email', ['tenantId', 'email'], { unique: true })
+@Index('IDX_users_locked_at', ['tenantId', 'lockedAt'], {
+  where: '"lockedAt" IS NOT NULL',
+})
 // The keyset index behind `GET /users`. Leads with the sort column and carries the
 // id as the tie-break, which is what makes a page an index range scan rather than
 // a filter over every row sharing a timestamp. Ascending only, because postgres
 // scans an index backwards for `?order=asc`.
-@Index('IDX_users_createdat_cursor', ['createdAt', 'id'])
+@Index('IDX_users_createdat_cursor', ['tenantId', 'createdAt', 'id'])
 // The GIN index behind the full-text search. A `tsvector` is not a b-tree
 // candidate — it holds a document, and the question is which documents contain
 // a lexeme — so the index type is the only way to answer it.
@@ -105,7 +108,6 @@ export class User {
    * Indexed because the question an operator asks most often is "who is locked",
    * and it is asked by filtering this column rather than by reading the table.
    */
-  @Index()
   @Column({ type: 'timestamptz', nullable: true })
   lockedAt!: Date | null;
 

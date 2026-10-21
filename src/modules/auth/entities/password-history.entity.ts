@@ -33,7 +33,7 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
  * passwords an attacker already knows; a mute is neither.
  */
 @Entity({ name: 'password_history' })
-@Index('IDX_password_history_user_created', ['userId', 'createdAt'])
+@Index('IDX_password_history_user_created', ['tenantId', 'userId', 'createdAt'])
 export class PasswordHistoryEntry {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

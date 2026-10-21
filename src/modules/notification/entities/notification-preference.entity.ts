@@ -38,7 +38,7 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
   'event',
   'channel',
 ])
-@Index('IDX_notification_preferences_user', ['userId'])
+@Index('IDX_notification_preferences_user', ['tenantId', 'userId'])
 export class NotificationPreference {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

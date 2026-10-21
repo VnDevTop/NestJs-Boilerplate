@@ -44,9 +44,10 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
  * delivery at the moment an operator erased the account it was delivered to.
  */
 @Entity({ name: 'mail_logs' })
-@Index('IDX_mail_logs_created_at', ['createdAt'])
-@Index('IDX_mail_logs_request_id', ['requestId'])
-@Index('IDX_mail_logs_recipient', ['to'])
+@Index('IDX_mail_logs_mail_id', ['tenantId', 'mailId'])
+@Index('IDX_mail_logs_created_at', ['tenantId', 'createdAt'])
+@Index('IDX_mail_logs_request_id', ['tenantId', 'requestId'])
+@Index('IDX_mail_logs_recipient', ['tenantId', 'to'])
 export class MailLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -63,7 +64,6 @@ export class MailLog {
    * Not unique: a retry is a second attempt at the same message, and the attempts
    * are the part worth keeping apart.
    */
-  @Index()
   @Column({ type: 'varchar', length: 64 })
   mailId!: string;
 

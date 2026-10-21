@@ -34,7 +34,7 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 @Index('UQ_email_templates_name_locale', ['tenantId', 'name', 'locale'], {
   unique: true,
 })
-@Index('IDX_email_templates_name', ['name'])
+@Index('IDX_email_templates_name', ['tenantId', 'name'])
 export class EmailTemplate {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

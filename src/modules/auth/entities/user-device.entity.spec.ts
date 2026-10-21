@@ -77,6 +77,7 @@ describe('the user_devices table', () => {
 describe('indexing for cursor paging', () => {
   it('carries the keyset index the device list pages on', () => {
     expect(indexColumns(CURSOR_INDEX)).toEqual([
+      'tenantId',
       'userId',
       'isActive',
       'createdAt',
@@ -90,7 +91,8 @@ describe('indexing for cursor paging', () => {
     // be worse than the plain two-column index it sits beside.
     const columnsOf = indexColumns(CURSOR_INDEX);
 
-    expect(columnsOf?.slice(0, 2)).toEqual(['userId', 'isActive']);
+    expect(columnsOf?.[0]).toBe('tenantId');
+    expect(columnsOf?.slice(1, 3)).toEqual(['userId', 'isActive']);
     expect(columnsOf?.slice(-2)).toEqual(['createdAt', 'id']);
   });
 
@@ -98,7 +100,11 @@ describe('indexing for cursor paging', () => {
     // `IDX_user_devices_user_active` still serves the write that deactivates
     // every device of a user. Replacing it with the keyset one would make that
     // write a range scan for nothing.
-    expect(indexColumns(OWNER_INDEX)).toEqual(['userId', 'isActive']);
+    expect(indexColumns(OWNER_INDEX)).toEqual([
+      'tenantId',
+      'userId',
+      'isActive',
+    ]);
   });
 
   it('is not unique, because it is a range scan and not a lookup', () => {

@@ -131,7 +131,7 @@ describe('indexing', () => {
     );
 
     expect(indices.map((index) => index.columns)).toEqual([
-      ['createdAt', 'id'],
+      ['tenantId', 'createdAt', 'id'],
     ]);
   });
 

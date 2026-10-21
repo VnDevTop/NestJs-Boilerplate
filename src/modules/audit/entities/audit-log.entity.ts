@@ -51,10 +51,10 @@ export interface AuditSnapshot {
  * before — a create, a sign-in, a denied request.
  */
 @Entity({ name: 'audit_logs' })
-@Index('IDX_audit_logs_created_at', ['createdAt'])
-@Index('IDX_audit_logs_actor', ['actorId'])
-@Index('IDX_audit_logs_action', ['action'])
-@Index('IDX_audit_logs_target', ['targetType', 'targetId'])
+@Index('IDX_audit_logs_created_at', ['tenantId', 'createdAt'])
+@Index('IDX_audit_logs_actor', ['tenantId', 'actorId'])
+@Index('IDX_audit_logs_action', ['tenantId', 'action'])
+@Index('IDX_audit_logs_target', ['tenantId', 'targetType', 'targetId'])
 export class AuditLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

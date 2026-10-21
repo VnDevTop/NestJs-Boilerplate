@@ -26,7 +26,8 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 @Index('UQ_password_reset_tokens_token', ['tenantId', 'tokenHash'], {
   unique: true,
 })
-@Index('IDX_password_reset_tokens_user', ['userId'])
+@Index('IDX_password_reset_tokens_expires_at', ['tenantId', 'expiresAt'])
+@Index('IDX_password_reset_tokens_user', ['tenantId', 'userId'])
 export class PasswordResetToken {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -52,7 +53,6 @@ export class PasswordResetToken {
    * When the token stops being accepted. Indexed, because Phase 16 deletes on
    * this column.
    */
-  @Index()
   @Column({ type: 'timestamptz' })
   expiresAt!: Date;
 

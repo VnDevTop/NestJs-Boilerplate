@@ -38,7 +38,7 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 // Phase 23 added this, against the note below that used to say the table carries
 // no index. It does now: the history route is cursor paged, and the table grows
 // for the life of the deployment because nothing prunes it.
-@Index('IDX_maintenance_logs_created_cursor', ['createdAt', 'id'])
+@Index('IDX_maintenance_logs_created_cursor', ['tenantId', 'createdAt', 'id'])
 export class MaintenanceLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

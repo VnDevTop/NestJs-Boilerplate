@@ -24,7 +24,8 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 @Index('UQ_email_verification_tokens_token', ['tenantId', 'tokenHash'], {
   unique: true,
 })
-@Index('IDX_email_verification_tokens_user', ['userId'])
+@Index('IDX_email_verification_tokens_expires_at', ['tenantId', 'expiresAt'])
+@Index('IDX_email_verification_tokens_user', ['tenantId', 'userId'])
 export class EmailVerificationToken {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -62,7 +63,6 @@ export class EmailVerificationToken {
    * this column and an unindexed range scan over a growing table is a nightly
    * cost nobody notices until it is expensive.
    */
-  @Index()
   @Column({ type: 'timestamptz' })
   expiresAt!: Date;
 

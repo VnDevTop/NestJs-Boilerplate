@@ -27,8 +27,13 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 @Entity({ name: 'mail_template_versions' })
 // The read is "the versions of this template, newest first", which is the composite
 // key: template identity plus a monotonic ordering within it.
-@Index('IDX_mail_template_versions_template', ['name', 'locale', 'version'])
-@Index('IDX_mail_template_versions_created_at', ['createdAt'])
+@Index('IDX_mail_template_versions_template', [
+  'tenantId',
+  'name',
+  'locale',
+  'version',
+])
+@Index('IDX_mail_template_versions_created_at', ['tenantId', 'createdAt'])
 export class MailTemplateVersion {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
