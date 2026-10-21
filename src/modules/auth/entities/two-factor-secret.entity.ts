@@ -13,6 +13,7 @@ import { User } from '../../users/entities/index.js';
 import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 @Entity({ name: 'two_factor_secrets' })
+@Index('UQ_two_factor_secrets_user', ['tenantId', 'userId'], { unique: true })
 export class TwoFactorSecret {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -23,7 +24,6 @@ export class TwoFactorSecret {
   @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
   tenantId!: string;
 
-  @Index({ unique: true })
   @Column({ type: 'uuid' })
   userId!: string;
 

@@ -21,6 +21,9 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
  * rather than a scan over variable-length text.
  */
 @Entity({ name: 'email_verification_tokens' })
+@Index('UQ_email_verification_tokens_token', ['tenantId', 'tokenHash'], {
+  unique: true,
+})
 @Index('IDX_email_verification_tokens_user', ['userId'])
 export class EmailVerificationToken {
   @PrimaryGeneratedColumn('uuid')
@@ -40,7 +43,6 @@ export class EmailVerificationToken {
   user!: User;
 
   /** Hex sha256 of the token, 64 characters. */
-  @Index({ unique: true })
   @Column({ type: 'varchar', length: 64 })
   tokenHash!: string;
 

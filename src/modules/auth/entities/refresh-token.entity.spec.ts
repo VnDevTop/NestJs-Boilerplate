@@ -60,7 +60,7 @@ describe('the refresh_tokens table', () => {
     // a column lands in the indices list with a flattened `unique` field.
     const unique = indices().filter((index) => index.unique);
 
-    expect(unique.map((index) => index.columns)).toEqual([['jti']]);
+    expect(unique.map((index) => index.columns)).toEqual([['tenantId', 'jti']]);
   });
 
   it('records the session start separately from the token creation', () => {

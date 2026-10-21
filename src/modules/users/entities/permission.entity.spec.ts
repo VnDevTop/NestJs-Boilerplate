@@ -57,7 +57,7 @@ describe('the permissions table', () => {
     // A duplicate name would give a guard two rows to reason about and an
     // operator two identical entries in a role editor.
     expect(uniqueIndexes(Permission).map((index) => index.columns)).toEqual([
-      ['name'],
+      ['tenantId', 'name'],
     ]);
   });
 
@@ -79,7 +79,7 @@ describe('the role_permissions table', () => {
 
   it('refuses the same grant twice', () => {
     expect(uniqueIndexes(RolePermission).map((index) => index.columns)).toEqual(
-      [['role', 'permissionId']],
+      [['tenantId', 'role', 'permissionId']],
     );
   });
 

@@ -13,6 +13,7 @@ import { Role } from '../../../common/enums/index.js';
 import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 @Entity({ name: 'users' })
+@Index('UQ_users_email', ['tenantId', 'email'], { unique: true })
 // The keyset index behind `GET /users`. Leads with the sort column and carries the
 // id as the tie-break, which is what makes a page an index range scan rather than
 // a filter over every row sharing a timestamp. Ascending only, because postgres
@@ -32,7 +33,6 @@ export class User {
   @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
   tenantId!: string;
 
-  @Index({ unique: true })
   @Column({ type: 'varchar', length: 255 })
   email!: string;
 

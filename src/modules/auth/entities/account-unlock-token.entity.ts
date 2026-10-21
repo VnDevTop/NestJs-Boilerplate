@@ -24,6 +24,9 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
  * keeps them apart would be a string comparison at runtime.
  */
 @Entity({ name: 'account_unlock_tokens' })
+@Index('UQ_account_unlock_tokens_token', ['tenantId', 'tokenHash'], {
+  unique: true,
+})
 @Index('IDX_account_unlock_tokens_user', ['userId'])
 export class AccountUnlockToken {
   @PrimaryGeneratedColumn('uuid')
@@ -43,7 +46,6 @@ export class AccountUnlockToken {
   user!: User;
 
   /** Hex sha256 of the token, 64 characters. */
-  @Index({ unique: true })
   @Column({ type: 'varchar', length: 64 })
   tokenHash!: string;
 

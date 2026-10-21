@@ -31,7 +31,9 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 // One row per template per locale, which is also what makes `findOneBy` correct:
 // without the unique index two operators saving the same template concurrently would
 // produce two rows and the read path would pick one of them arbitrarily.
-@Index('UQ_email_templates_name_locale', ['name', 'locale'], { unique: true })
+@Index('UQ_email_templates_name_locale', ['tenantId', 'name', 'locale'], {
+  unique: true,
+})
 @Index('IDX_email_templates_name', ['name'])
 export class EmailTemplate {
   @PrimaryGeneratedColumn('uuid')

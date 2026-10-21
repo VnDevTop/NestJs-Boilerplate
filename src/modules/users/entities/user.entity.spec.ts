@@ -56,7 +56,11 @@ describe('the users table', () => {
     // reading the wrong one makes the assertion vacuous.
     const unique = indices().filter((index) => index.unique);
 
-    expect(unique.map((index) => index.columns)).toEqual([['email']]);
+    // The tenant leads, because an address is only unique *within* a tenant:
+    // the second tenant must be able to have the address the first one has.
+    expect(unique.map((index) => index.columns)).toEqual([
+      ['tenantId', 'email'],
+    ]);
   });
 
   it('indexes lockedAt, because "who is locked" is asked of the column', () => {
@@ -118,12 +122,12 @@ describe('indexing for cursor paging', () => {
   });
 
   it('names only the indexes it means to, and leaves the others as they were', () => {
-    // The unique address and the locked-at lookup carry generated names, so the
-    // named list is the two that were asked for: the cursor index and the
-    // full-text one. They answer separate questions, and each was added beside
-    // the others rather than replacing any.
+    // The locked-at lookup still carries a generated name, so the named list is
+    // the three that were asked for: the cursor index, the full-text one, and
+    // the unique address — which is named now, because a name that says what
+    // it is is worth more than a generated one.
     expect([...indexNames()].sort()).toEqual(
-      [CURSOR_INDEX, SEARCH_INDEX].sort(),
+      [CURSOR_INDEX, SEARCH_INDEX, 'UQ_users_email'].sort(),
     );
   });
 });

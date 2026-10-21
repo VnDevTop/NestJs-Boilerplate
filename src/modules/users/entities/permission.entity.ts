@@ -21,6 +21,7 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
  * a decorator is a compile error rather than a route nobody can reach.
  */
 @Entity({ name: 'permissions' })
+@Index('UQ_permissions_name', ['tenantId', 'name'], { unique: true })
 export class Permission {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -31,7 +32,6 @@ export class Permission {
   @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
   tenantId!: string;
 
-  @Index({ unique: true })
   @Column({ type: 'varchar', length: 100 })
   name!: string;
 

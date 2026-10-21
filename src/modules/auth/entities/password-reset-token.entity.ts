@@ -23,6 +23,9 @@ import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
  * live token next to a changed password.
  */
 @Entity({ name: 'password_reset_tokens' })
+@Index('UQ_password_reset_tokens_token', ['tenantId', 'tokenHash'], {
+  unique: true,
+})
 @Index('IDX_password_reset_tokens_user', ['userId'])
 export class PasswordResetToken {
   @PrimaryGeneratedColumn('uuid')
@@ -42,7 +45,6 @@ export class PasswordResetToken {
   user!: User;
 
   /** Hex sha256 of the token, 64 characters. */
-  @Index({ unique: true })
   @Column({ type: 'varchar', length: 64 })
   tokenHash!: string;
 

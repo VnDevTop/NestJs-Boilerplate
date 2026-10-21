@@ -14,6 +14,7 @@ import { RefreshTokenRevokedReason } from '../enums/index.js';
 import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 @Entity({ name: 'refresh_tokens' })
+@Index('UQ_refresh_tokens_jti', ['tenantId', 'jti'], { unique: true })
 @Index('IDX_refresh_tokens_user_revoked', ['userId', 'revokedAt'])
 // Cursor paging for `GET /auth/sessions`. Replaces nothing — the `(userId,
 // revokedAt)` index above still serves the "revoke every session" write path,
@@ -50,7 +51,6 @@ export class RefreshToken {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Index({ unique: true })
   @Column({ type: 'uuid' })
   jti!: string;
 
