@@ -2,6 +2,7 @@ import type { DataSource, Repository } from 'typeorm';
 
 import { MetricsService } from '../../core/metrics/index.js';
 import { MaintenanceLog } from './entities/maintenance-log.entity.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 import { RetentionTrigger } from './entities/retention-trigger.enum.js';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -175,6 +176,7 @@ function entry(): MaintenanceLog {
     totalDeleted: 0,
     timedOut: false,
     cancelled: false,
+    tenantId: DEFAULT_TENANT_ID,
     trigger: RetentionTrigger.Cron,
     pending: [],
     failedTargets: [],

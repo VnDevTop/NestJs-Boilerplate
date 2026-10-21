@@ -6,6 +6,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * A named thing an authorised actor is allowed to do.
@@ -23,6 +24,12 @@ import {
 export class Permission {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   @Index({ unique: true })
   @Column({ type: 'varchar', length: 100 })

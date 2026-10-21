@@ -8,6 +8,7 @@ import {
 
 import { RetentionTrigger } from './retention-trigger.enum.js';
 import type { RetentionTargetResult } from '../retention.service.js';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * One retention run, recorded permanently.
@@ -41,6 +42,12 @@ import type { RetentionTargetResult } from '../retention.service.js';
 export class MaintenanceLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   @Column({ type: 'timestamptz' })
   startedAt!: Date;

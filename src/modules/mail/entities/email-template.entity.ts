@@ -6,6 +6,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * An editable override for one of the shipped mail templates.
@@ -35,6 +36,12 @@ import {
 export class EmailTemplate {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   /**
    * The template this overrides, matching `TemplateName`.

@@ -5,6 +5,7 @@ import {
   Index,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * One attempt to send one mail.
@@ -49,6 +50,12 @@ import {
 export class MailLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   /**
    * The correlation id carried on the log line, the provider call and this row.

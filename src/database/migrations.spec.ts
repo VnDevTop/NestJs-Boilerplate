@@ -83,6 +83,13 @@ const ALTER_MIGRATIONS: {
     tables: { cancelled: 'maintenance_logs' },
     notNull: ['cancelled'],
   },
+  {
+    file: '1792600000000-AddTenantColumn.ts',
+    adds: ['tenantId'],
+    // No per-table entry, so the fold applies the column to every table the
+    // migration adds it to — which is every table there is.
+    notNull: ['tenantId'],
+  },
 ];
 
 function read(file: string): { up: string; down: string } {
