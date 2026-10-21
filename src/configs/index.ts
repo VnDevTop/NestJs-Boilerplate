@@ -9,4 +9,5 @@ export * from './redis.config.js';
 export * from './security.config.js';
 export * from './throttler.config.js';
 export * from './swagger.config.js';
+export * from './tenancy.config.js';
 export * from './two-factor.config.js';
