@@ -505,12 +505,12 @@ Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 ### Phase 33: The tenant registry
 
-- [ ] A `tenants` table: slug, name, status, plan, and where its data lives
-- [ ] Resolution from host, subdomain or header — the one untrusted input that
+- [x] A `tenants` table: slug, name, status, plan, and where its data lives
+- [x] Resolution from host, subdomain or header — the one untrusted input that
       decides what you can read
-- [ ] An unknown or disabled tenant answers 401 rather than falling back to a
+- [x] An unknown or disabled tenant answers 401 rather than falling back to a
       default
-- [ ] One fixed tenant row seeded for single-tenant deployments
+- [x] One fixed tenant row seeded for single-tenant deployments
 
 ### Phase 34: Tenant context
 
@@ -1033,7 +1033,7 @@ exists means writing the same retry logic twice.
 | Phase 30  | User search                                    | Done    |
 | Phase 31  | The search documentation                       | Done    |
 | Phase 32  | The tenant column, present from the start      | Done    |
-| Phase 33  | The tenant registry                            | Planned |
+| Phase 33  | The tenant registry                            | Done    |
 | Phase 34  | Tenant context                                 | Planned |
 | Phase 35  | Repository scoping                             | Planned |
 | Phase 36  | Row-level security                             | Planned |

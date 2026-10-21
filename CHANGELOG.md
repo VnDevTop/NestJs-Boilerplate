@@ -15,6 +15,46 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: the tenant registry
+
+`feat(tenancy): the tenants table` ·
+`feat(tenancy): the tenant registry` ·
+`feat(tenancy): a request is resolved to a tenant` ·
+`feat(tenancy): the fixed tenant row is seeded`
+
+**What changed**
+
+- `src/modules/tenancy/entities/tenant.entity.ts` — the `tenants` table: slug,
+  name, status, plan and `schemaName`
+- `src/modules/tenancy/tenant-registry.service.ts` — the lookup: by slug, by
+  id, and the default tenant
+- `src/modules/tenancy/tenant.middleware.ts` — the resolution, and the 401s it
+  answers with
+- `src/database/migrations/1792700000000-AddTenantsTable.ts` and a seeder that
+  writes the fixed default row
+
+**Why**
+
+A tenant is a row rather than a setting, because the day a deployment serves
+more than one, an operator has to be able to see them, disable one and give one
+a plan — and none of that is possible with a constant.
+
+**Resolution is header first, host only when a base domain is configured.** The
+header is explicit; the host is inferred, so it is only used where the
+deployment has said what its hosts look like.
+
+**An unknown or disabled tenant is a 401, never a fallback.** Falling back to
+the default tenant would answer a request for another customer's data with
+this deployment's rows.
+
+**The default tenant is a constant and is not looked up.** The feature being
+off must not depend on a row existing: a database that has not been seeded
+still has to answer a request. The seeder writes the row so that an operator
+can see it, and it carries the same id the column's default does — which is
+what makes the feature switchable without a backfill.
+
+---
+
 ## feat: the tenant column on every table
 
 `feat(tenancy): the default tenant and the tenancy config` ·
