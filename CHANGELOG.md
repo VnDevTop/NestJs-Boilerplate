@@ -15,6 +15,42 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: retention cleans one tenant at a time
+
+`feat(tenancy): a retention run cleans one tenant` ·
+`feat(tenancy): the retention job visits every tenant`
+
+**What changed**
+
+- The retention job visits every tenant, and each run is scoped to its own
+  tenant
+- The run's predicate filters by the tenant, and the run sets
+  `app.tenant_id` inside the transaction
+- `maintenance_logs` history and the latest run are tenant-scoped
+
+**Why**
+
+Retention removes rows by age, and a row that is expired for one tenant is
+another tenant's live one. A single run over every table would clean them
+together.
+
+**Both halves of the scope are set, because they are not the same half.** The
+`WHERE` clause is what the run intends; `set_config('app.tenant_id', ...)` is
+what the database will let it see. A run that never set the scope would match no
+rows at all, and would report a clean table it had not touched.
+
+**The scope is set inside a transaction, because it is transaction-local.**
+`set_config(..., true)` is undone by the commit, and a session-level setting
+would outlive the tenant it was set for.
+
+**The history is one tenant's.** The numbers in it are the ones that decide
+whether the data is being cleaned.
+
+**A disabled tenant is not visited.** Housekeeping that reached a disabled
+tenant would touch data an operator has asked to leave alone.
+
+---
+
 ## feat: a mail template belongs to the tenant that wrote it
 
 `feat(tenancy): a mail template belongs to the tenant that wrote it` ·

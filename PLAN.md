@@ -570,9 +570,9 @@ Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 ### Phase 40: Per-tenant retention
 
-- [ ] The retention run iterates tenants
-- [ ] `maintenance_logs` gains `tenantId`; the history API is tenant-scoped
-- [ ] **Open decision, revisit past five tenants**: one job per tenant means N
+- [x] The retention run iterates tenants
+- [x] `maintenance_logs` gains `tenantId`; the history API is tenant-scoped
+- [x] **Open decision, revisit past five tenants**: one job per tenant means N
       batch-delete passes a night. A single job scanning every tenant is
       compatible with the data but changes the API shape
 
@@ -1040,7 +1040,7 @@ exists means writing the same retry logic twice.
 | Phase 37  | Cache namespacing                              | Done    |
 | Phase 38  | Per-tenant permissions                         | Done    |
 | Phase 39  | Per-tenant mail templates                      | Done    |
-| Phase 40  | Per-tenant retention                           | Planned |
+| Phase 40  | Per-tenant retention                           | Done    |
 | Phase 41  | The isolation proof                            | Planned |
 | Phase 42  | A shared HTTP client                           | Planned |
 | Phase 43  | Circuit breaker and retry budget               | Planned |
