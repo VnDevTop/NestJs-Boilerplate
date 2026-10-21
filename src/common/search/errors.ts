@@ -27,3 +27,48 @@ export class SearchParseError extends Error {
     this.name = 'SearchParseError';
   }
 }
+
+/**
+ * A field the search does not have.
+ *
+ * **The message lists the valid names.** A client that typed `emial:ada` needs
+ * to know that `email` is the name, and a message saying "unknown field" is a
+ * message that sends them to the documentation. The valid names are the whole
+ * point of the allow-list, and this is where they are shown.
+ */
+export class UnknownFieldError extends Error {
+  constructor(
+    /** The field that was asked for. */
+    readonly field: string,
+    /** The fields that do exist. */
+    readonly valid: readonly string[],
+  ) {
+    super(
+      `Unknown search field "${field}". ` +
+        `Searchable fields: ${valid.length === 0 ? '(none)' : valid.join(', ')}.`,
+    );
+
+    this.name = 'UnknownFieldError';
+  }
+}
+
+/**
+ * A field that exists but does not support what was asked of it.
+ *
+ * **Separate from `UnknownFieldError` because the answer is different.** An
+ * unknown field is a typo; a field that is not searchable is a field the
+ * entity's author decided not to expose, and the message should say so rather
+ * than sending the client looking for a spelling.
+ */
+export class UnsupportedFieldError extends Error {
+  constructor(
+    /** The field that was asked for. */
+    readonly field: string,
+    /** What was asked of it, in the client's words. */
+    readonly operation: string,
+  ) {
+    super(`The search field "${field}" is not ${operation}.`);
+
+    this.name = 'UnsupportedFieldError';
+  }
+}

@@ -13,5 +13,6 @@
  */
 export * from './ast.js';
 export * from './errors.js';
+export * from './field-registry.js';
 export * from './parser.js';
 export * from './tokenizer.js';
