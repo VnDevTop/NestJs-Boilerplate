@@ -10,6 +10,7 @@ import {
 import type { JobProgressService } from './job-progress.service.js';
 import { MAIL_JOB, type MailJobPayload } from './processors/mail.processor.js';
 import type { Job, JobRequest, JobResult } from './queue.interface.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 
 const config: QueueConfig = {
   enabled: true,
@@ -187,6 +188,7 @@ function build(
     configService(),
     { process },
     store.service,
+    new TenantContextService(),
     bullmq === undefined ? (fake.module as never) : bullmq,
   );
 
@@ -247,6 +249,7 @@ describe('BullMqDispatcher.enqueue', () => {
       configService(),
       { process: vi.fn() },
       progress().service,
+      new TenantContextService(),
       module as never,
     );
 
@@ -281,6 +284,7 @@ describe('BullMqDispatcher.enqueue', () => {
       configService(),
       { process: vi.fn() },
       progress().service,
+      new TenantContextService(),
       module as never,
     );
 
@@ -386,7 +390,7 @@ describe('BullMqDispatcher worker routing', () => {
     // The id is the one the enqueue handed back, so the caller can watch the
     // exact run the processor is doing.
     expect(fake.process).toHaveBeenCalledWith(
-      { id, name: MAIL_JOB, payload },
+      { id, tenantId: expect.any(String), name: MAIL_JOB, payload },
       expect.objectContaining({ id }),
     );
   });
@@ -420,6 +424,7 @@ describe('BullMqDispatcher worker routing', () => {
     expect(fake.process).toHaveBeenCalledWith(
       {
         id,
+        tenantId: expect.any(String),
         name: MAIL_JOB,
         payload,
         dedupeKey: 'dedupe:abc',
@@ -554,6 +559,7 @@ describe('BullMqDispatcher progress', () => {
       configService(),
       { process: vi.fn() },
       fake.progress.service,
+      new TenantContextService(),
       broken as never,
     );
 
@@ -684,6 +690,7 @@ describe('BullMqDispatcher shutdown', () => {
       configService(),
       { process: vi.fn() },
       progress().service,
+      new TenantContextService(),
       module as never,
     );
 

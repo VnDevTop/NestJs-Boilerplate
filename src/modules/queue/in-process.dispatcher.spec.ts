@@ -10,6 +10,7 @@ import {
 import type { JobProgressService } from './job-progress.service.js';
 import { MAIL_JOB, type MailJobPayload } from './processors/mail.processor.js';
 import type { Job, JobRequest, JobResult } from './queue.interface.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 
 const config: QueueConfig = {
   enabled: false,
@@ -104,6 +105,7 @@ function build(
       configService,
       processors,
       store.service,
+      new TenantContextService(),
       deadLetter as never,
     ),
     counters,

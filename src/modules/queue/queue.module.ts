@@ -1,6 +1,7 @@
 import { Logger, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 import { queueConfig, type QueueConfig } from '../../configs/queue.config.js';
 import { TracingModule } from '../../core/tracing/index.js';
 import { MailModule } from '../mail/mail.module.js';
@@ -156,15 +157,22 @@ const configOf = (configService: ConfigService): QueueConfig =>
         PROCESSOR_REGISTRY,
         DeadLetterService,
         JobProgressService,
+        TenantContextService,
       ],
       useFactory: (
         configService: ConfigService,
         registry: ProcessorRegistry,
         deadLetter: DeadLetterService,
         progress: JobProgressService,
+        context: TenantContextService,
       ): JobQueue => {
         const config = configOf(configService);
-        const bullmq = new BullMqDispatcher(configService, registry, progress);
+        const bullmq = new BullMqDispatcher(
+          configService,
+          registry,
+          progress,
+          context,
+        );
 
         if (config.enabled && bullmq.isAvailable()) {
           return bullmq;
@@ -181,6 +189,7 @@ const configOf = (configService: ConfigService): QueueConfig =>
           configService,
           registry,
           progress,
+          context,
           config.inProcessFallback ? deadLetter : undefined,
         );
       },

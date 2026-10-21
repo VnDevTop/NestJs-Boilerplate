@@ -13,6 +13,8 @@ import type {
   QueueName,
 } from './queue.interface.js';
 import { statusOf } from './queue.interface.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 import type { DeadLetterService } from './dead-letter.service.js';
 import type { JobProgressService } from './job-progress.service.js';
 import { newJobId } from './job-id.js';
@@ -63,6 +65,7 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
     private readonly configService: ConfigService,
     private readonly processors: ProcessorRegistry,
     private readonly progress: JobProgressService,
+    private readonly context: TenantContextService,
     private readonly deadLetter?: DeadLetterService,
     private readonly metrics: MetricsService = new MetricsService(),
   ) {}
@@ -83,7 +86,11 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
    * the worker's write is the later one.
    */
   async enqueue(queue: QueueName, request: JobRequest): Promise<string> {
-    const job: Job = { ...request, id: newJobId() };
+    const job: Job = {
+      ...request,
+      id: newJobId(),
+      tenantId: this.context.current()?.id ?? DEFAULT_TENANT_ID,
+    };
 
     await this.progress.record(job, queue);
 

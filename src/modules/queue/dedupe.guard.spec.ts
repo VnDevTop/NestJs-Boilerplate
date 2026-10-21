@@ -6,12 +6,14 @@ import type { ProcessorRegistry } from './in-process.dispatcher.js';
 import type { Job, JobResult } from './queue.interface.js';
 import type { RedisClientService } from './redis-client.service.js';
 import { retryWindowMs } from './retry.policy.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 
 const subject = { template: 'welcome', to: 'a@x.com', subjectId: 'u1' };
 
 function job(overrides: Partial<Job> = {}): Job {
   return {
     id: '11111111-1111-4111-8111-111111111111',
+    tenantId: DEFAULT_TENANT_ID,
     name: 'mail.send',
     payload: {},
     dedupeKey: dedupeKey(subject),

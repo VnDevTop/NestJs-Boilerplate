@@ -72,6 +72,18 @@ export interface JobRequest<TPayload = unknown> {
 export interface Job<TPayload = unknown> extends JobRequest<TPayload> {
   /** Identifies this run of this job. Minted by the queue. */
   id: string;
+
+  /**
+   * The tenant the job is for.
+   *
+   * **Stamped by the queue, never by the caller.** A job that runs in another
+   * process — a worker, a retry an hour later — has no request to read the
+   * tenant from, so the tenant travels with the job. And it is stamped rather
+   * than passed in because a caller that had to remember it would be the one
+   * that forgot it, and a job that writes into the wrong tenant's rows is
+   * worse than a job that does not run.
+   */
+  tenantId: string;
 }
 
 /**
