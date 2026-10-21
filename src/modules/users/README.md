@@ -17,7 +17,7 @@ users
 
 ```text
 id email password firstName lastName role isActive isManager
-lastLoginAt createdAt updatedAt deletedAt
+lastLoginAt createdAt updatedAt deletedAt searchVector
 ```
 
 - `id` is a uuid from the database, not generated in the application.
@@ -28,6 +28,11 @@ lastLoginAt createdAt updatedAt deletedAt
 - `isActive` and `isManager` are separate on purpose. `isActive` is
   authentication, `isManager` is scope, and conflating them makes revoking access
   and granting admin scope the same operation.
+- `searchVector` is a **generated** column: the searchable text of the row, with
+  each field's weight baked in, computed by postgres on every write. It is
+  generated rather than filled by a trigger because a trigger is a thing that can
+  miss a write, and a search index that is wrong answers "no such user" for a
+  user that exists. See [the search layer](../../common/README.md#the-search-language).
 
 ## Passwords
 

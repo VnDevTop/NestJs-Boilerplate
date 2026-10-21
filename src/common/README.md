@@ -213,7 +213,7 @@ parser and the tree, and **nothing else** — no entity, no column, no database.
 | `parser.ts`          | recursive descent, one method per precedence level          |
 | `errors.ts`          | the errors, and the position in the query they point at     |
 | `field-registry.ts`  | the fields an entity may be searched by, and the allow-list |
-| `translators/`       | postgres, in-memory and a mock                              |
+| `translators/`       | the filter, the full text, the facets, and a mock           |
 | `search.test-kit.ts` | the assertions every entity's search has to pass            |
 
 ```ts
@@ -311,6 +311,32 @@ and nothing else.
 **The in-memory translator is the reference.** It answers with nothing but
 JavaScript, so the answer can be checked by hand, and a Postgres translator that
 disagrees with it is answering a different question.
+
+### The full-text translator
+
+`translateToFullText` turns a tree into a **filter** and a **rank**: the filter
+says which rows match, and the rank says which of them came first.
+
+**The terms are parameters and the operators are ours.** A term goes in as
+`plainto_tsquery('simple', :p0)` and a phrase as
+`phraseto_tsquery('simple', :p0)`, and the `&&`, `||` and `!!` between them are
+written by the translator. Those two functions are the ones that do **not** read
+their argument as an expression, so a term containing `&` or `|` or `!` is text
+and never becomes an operator. `to_tsquery` parses its argument, so a term could
+add a clause to the query.
+
+**The document is one column per entity.** The `users` table has a `searchVector`
+column and a GIN index over it: the searchable text of the row, with each field's
+weight baked in. It is a _generated_ column, so it is computed by postgres on
+every write and cannot drift from the row.
+
+**The field scoping is the document's.** One document per entity means
+`email:ada` also matches a row whose _name_ contains "ada" — the weights decide
+the order of the results, not which rows match. A search that needs a field's own
+text needs its own column, and that is one column and one index per field.
+
+**The facets count the rows the results show.** A facet carries the very same
+filter, so the counts and the list cannot disagree about what matched.
 
 ### The test kit
 
