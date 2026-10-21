@@ -521,10 +521,10 @@ Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 ### Phase 35: Repository scoping
 
-- [ ] A tenant-aware repository base class
-- [ ] Scope applied at the repository, **never** per query — a query that has to
+- [x] A tenant-aware repository base class
+- [x] Scope applied at the repository, **never** per query — a query that has to
       remember is a query that will forget
-- [ ] A test that fails when a repository method is added without a scope
+- [x] A test that fails when a repository method is added without a scope
 
 ### Phase 36: Row-level security
 
@@ -1035,7 +1035,7 @@ exists means writing the same retry logic twice.
 | Phase 32  | The tenant column, present from the start      | Done    |
 | Phase 33  | The tenant registry                            | Done    |
 | Phase 34  | Tenant context                                 | Done    |
-| Phase 35  | Repository scoping                             | Planned |
+| Phase 35  | Repository scoping                             | Done    |
 | Phase 36  | Row-level security                             | Planned |
 | Phase 37  | Cache namespacing                              | Planned |
 | Phase 38  | Per-tenant permissions                         | Planned |

@@ -15,6 +15,25 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: a repository that only ever sees one tenant's rows
+
+`feat(tenancy): a repository that only ever sees one tenant's rows` ·
+`test(tenancy): a repository method without a scope fails the suite`
+
+**What changed**
+
+- `src/common/tenancy/tenant-scoped.repository.ts` — the base class that applies
+  the scope on every read and write
+- A spec that lists the public methods, so a method added without a scope fails
+
+**Why**
+
+A query that has to remember the tenant is a query that will forget it. The
+scope lives in one place, and the spec fails when a new public method appears
+without one, which is the only way the guarantee survives the next person.
+
+---
+
 ## feat: the tenant context
 
 `feat(tenancy): the tenant context` ·
