@@ -15,6 +15,33 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: a mail template belongs to the tenant that wrote it
+
+`feat(tenancy): a mail template belongs to the tenant that wrote it` ·
+`test(tenancy): one tenant's template is not another's`
+
+**What changed**
+
+- The template read, the write, the history and the reset filter by the tenant
+- The process-local compiled template cache is keyed by the tenant as well
+
+**Why**
+
+An override of a shipped template is one tenant's wording, and it is not another
+tenant's to send: a password reset with the wrong tenant's support address is
+one customer's words landing in another customer's inbox.
+
+**The shipped file stays the fallback.** A tenant with no override of its own
+renders exactly what it rendered before, which is what keeps the phase
+additive.
+
+**The compiled cache is scoped by hand.** The distributed cache needs nothing —
+`CacheService` folds the tenant into every key it is given — but the compiled
+templates are a plain map in this process, and the compiled form is a function
+of the source, which is the tenant's own.
+
+---
+
 ## feat: a role holds different grants in different tenants
 
 `feat(tenancy): a role holds different grants in different tenants` ·

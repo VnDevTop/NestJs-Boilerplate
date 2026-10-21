@@ -564,9 +564,9 @@ Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 ### Phase 39: Per-tenant mail templates
 
-- [ ] `email_templates` and `email_template_versions` gain `tenantId`
-- [ ] An operator edits their tenant's wording and nobody else's
-- [ ] The shipped `.hbs` files remain the fallback for every tenant
+- [x] `email_templates` and `email_template_versions` gain `tenantId`
+- [x] An operator edits their tenant's wording and nobody else's
+- [x] The shipped `.hbs` files remain the fallback for every tenant
 
 ### Phase 40: Per-tenant retention
 
@@ -1039,7 +1039,7 @@ exists means writing the same retry logic twice.
 | Phase 36  | Row-level security                             | Done    |
 | Phase 37  | Cache namespacing                              | Done    |
 | Phase 38  | Per-tenant permissions                         | Done    |
-| Phase 39  | Per-tenant mail templates                      | Planned |
+| Phase 39  | Per-tenant mail templates                      | Done    |
 | Phase 40  | Per-tenant retention                           | Planned |
 | Phase 41  | The isolation proof                            | Planned |
 | Phase 42  | A shared HTTP client                           | Planned |
