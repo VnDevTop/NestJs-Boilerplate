@@ -29,6 +29,17 @@ export interface TenancyConfig {
   header: string;
 
   /**
+   * The domain the deployment serves itself on.
+   *
+   * **Needed to read a tenant out of a host, and unset means the host is not
+   * a source.** `acme.example.com` is the tenant `acme` and `example.com` is
+   * the deployment — and nothing in the two tells them apart except knowing
+   * what the deployment's own domain is. A deployment that does not say is a
+   * deployment whose host names nothing, so a request has to use the header.
+   */
+  baseDomain?: string;
+
+  /**
    * The tenant every row belongs to while the feature is off.
    *
    * Overridable, so a deployment can point its rows at a tenant that already
@@ -40,5 +51,6 @@ export interface TenancyConfig {
 export const tenancyConfig = registerAs('tenancy', (): TenancyConfig => ({
   enabled: process.env.MULTI_TENANT === 'true',
   header: process.env.TENANT_HEADER ?? DEFAULT_TENANT_HEADER,
+  baseDomain: process.env.TENANT_BASE_DOMAIN,
   defaultTenantId: process.env.DEFAULT_TENANT_ID ?? DEFAULT_TENANT_ID,
 }));
