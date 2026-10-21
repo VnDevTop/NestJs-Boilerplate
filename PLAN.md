@@ -547,8 +547,8 @@ CHECK` so an insert cannot write into another tenant
 
 ### Phase 37: Cache namespacing
 
-- [ ] `tenantId` folded into the key prefix in **one** place
-- [ ] A test asserting no two tenants' entries can collide
+- [x] `tenantId` folded into the key prefix in **one** place
+- [x] A test asserting no two tenants' entries can collide
 
 ### Phase 38: Per-tenant permissions
 
@@ -1037,7 +1037,7 @@ exists means writing the same retry logic twice.
 | Phase 34  | Tenant context                                 | Done    |
 | Phase 35  | Repository scoping                             | Done    |
 | Phase 36  | Row-level security                             | Done    |
-| Phase 37  | Cache namespacing                              | Planned |
+| Phase 37  | Cache namespacing                              | Done    |
 | Phase 38  | Per-tenant permissions                         | Planned |
 | Phase 39  | Per-tenant mail templates                      | Planned |
 | Phase 40  | Per-tenant retention                           | Planned |

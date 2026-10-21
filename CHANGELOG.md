@@ -15,6 +15,33 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: the tenant is folded into the cache key, in one place
+
+`feat(tenancy): the tenant is folded into the cache key, in one place` ·
+`test(tenancy): two tenants cannot reach the same entry`
+
+**What changed**
+
+- `src/core/cache/cache.service.ts` — every key carries the tenant, including
+  the read-through wrapper
+- A spec asserting that two tenants' entries cannot collide
+
+**Why**
+
+A key without a tenant is a key two tenants can reach, and the second one to ask
+is served the first one's answer. The tenant is folded in by the cache service
+rather than by the call sites, because a call site that had to remember it would
+be the one that forgot it.
+
+**The wrapper is scoped too.** It coalesces concurrent misses against a key of
+its own, so leaving it alone would have meant a delete that did not delete.
+
+**Work outside a request still caches, under the default tenant.** A seed, a
+scheduled job and a migration are not inside a tenant's context, and refusing
+to cache them would be a strange thing for a cache to do.
+
+---
+
 ## feat: row-level security, as the layer underneath
 
 `feat(tenancy): row-level security, enabled and forced` ·
