@@ -15,6 +15,125 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: the field registry and the translators
+
+`feat(search): the field registry, which is the allow-list` ·
+`feat(search): the in-memory translator, which is the reference` ·
+`feat(search): the postgres translator` ·
+`feat(search): a mock translator and the test kit every search uses`
+
+**What changed**
+
+- `src/common/search/field-registry.ts` — `SearchFieldRegistry`, and the six
+  facts a field has: its type, whether it can be searched, filtered or sorted,
+  its weight, and the column it lives in
+- `src/common/search/translators/postgres.ts` — `translateToSql`, which turns a
+  tree into SQL and the values to bind with it
+- `src/common/search/translators/in-memory.ts` — `translateToPredicate`, which
+  turns a tree into a question about one row
+- `src/common/search/translators/mock.ts` — `MockSearchTranslator`, for testing
+  the caller rather than the translation
+- `src/common/search/search.test-kit.ts` — the golden cases, the fuzz corpus, the
+  injection corpus, and the assertions over them
+- `UnknownFieldError`, `UnsupportedFieldError`, `UnsupportedOperationError` and
+  `InvalidSearchValueError`
+
+**Why**
+
+The parser knew a field was a name; nothing knew what the names meant, so a
+query could name anything and there was nowhere to say which fields exist.
+
+**The allow-list is the injection boundary.** A field name is the client's
+input, and the only way it can reach SQL is by being looked up in the registry
+first. An undeclared name is an `UnknownFieldError` that lists the names that do
+exist — never a field silently dropped, because a dropped field is a filter the
+client believes is applied and is not.
+
+**The column is the one piece of a search that becomes SQL text.** Everything
+else is a parameter, and a parameter cannot change the meaning of a statement.
+An identifier cannot be bound, so the column is interpolated — and so the
+registry refuses a column that is not a plain identifier. A field map that
+accepted `"email" ; DROP TABLE users` would be a field map that had handed a
+client the database, and the check is what makes that impossible rather than
+unlikely. The alias is checked the same way, because it is interpolated too.
+
+**Every value is a parameter, and it is converted to the field's type first.** A
+range over numbers compares numbers and a range over dates compares timestamps.
+A value that is not a number is refused here rather than by postgres — which
+would answer with an error about a type it cannot coerce, and the client would
+be told about a type rather than about the value they typed.
+
+**The type decides whether a term is a match or a comparison.** A text field is
+matched as a substring and has to be searchable; every other type is compared
+for equality and has to be filterable. One rule, and the flag that matters
+follows from the type rather than being a second thing to get right.
+
+**A one-word phrase on a field that is not text is that word.** A keyword is
+one value and a date is one value, and a quoted value is how a value with a
+colon or a space in it is written — so `createdAt:"2026-01-01T00:00:00Z"` is an
+equality. More than one word is refused: "the words of a number" is not a
+question.
+
+**The in-memory translator is the reference.** It answers "which rows match"
+with nothing but JavaScript, so the answer can be checked by hand, and a
+Postgres translator that disagrees with it is answering a different question.
+It also implements the fuzzy term exactly, which the SQL path refuses: postgres
+has no edit distance without an extension, and a trigram similarity is a
+different function.
+
+**The kit's golden cases are derived from the registry, not written down.** The
+fields differ between entities, and a case that named one of them would be a
+case about that entity rather than about the search. The cases that come out are
+a term and a range on every field the field map declares.
+
+**The kit asserts rather than registers.** It throws on a failure and a spec
+calls it from an `it`, so the file ships in the build carrying no dependency on
+a test framework. Its own spec breaks each of the properties on purpose to show
+that the kit notices — a kit that cannot fail is a kit that proves nothing.
+
+**The injection corpus holds every command that changes data.** Not the two that
+are famous: a filter that blocks `DROP TABLE` and lets `UPDATE users SET role =
+'super_admin'` through has not blocked anything, and the payload that changes a
+row is just as short as the one that drops a table. So the corpus carries
+insert, update, delete, merge, upsert, copy, create, alter, drop, truncate,
+grant, revoke, execute, call, do, set, vacuum, reindex, cluster, refresh,
+reassign, comment, security, lock, checkpoint, discard, the transaction
+statements, prepare and deallocate, listen and notify, analyze, import and
+load — plus the read-only ones, because a statement that reads somebody else's
+password is nearly as bad as one that changes a row.
+
+**And the fragment is a predicate, never a statement.** The corpus proves the
+payloads somebody thought of; this holds for the ones nobody did. A translated
+fragment may contain a column name, a parameter, a comparison and a boolean
+operator, and nothing else — a word outside that vocabulary is a statement, and
+a semicolon is how a second statement begins. The translator emits a boolean
+expression over columns and parameters, so there is no shape an input could take
+that would make it a statement.
+
+**What it gives up**
+
+- The weight and the boost are declared and carried but not applied by either
+  filter translator. A boost and a weight change the order of the results, not
+  which rows match, and the ranking is Phase 29's.
+- The SQL path refuses a fuzzy term and the in-memory path implements it. The
+  two differ in that one respect, on purpose, and the difference is documented
+  in both files.
+- There is no derived field yet — one that is not a column, like a full name
+  built from a first and a last. It needs a way to read the value that is not
+  there, and that is Phase 31's addition to the descriptor.
+- A value with a colon in it has to be quoted or escaped: `createdAt:2026-01-01T00:00:00Z`
+  is a field followed by a term and a colon, because a colon separates a field
+  name from a value.
+
+**Carried into Phase 29**
+
+The translator now knows how to say "these rows match" and never says it with
+anything but a parameter. What is missing is the other half: the ranking, the
+`tsvector` column, the facet counts — and the weight and the boost, which are
+declared and waiting for it.
+
+---
+
 ## feat: a lucene query parser
 
 `feat(search): a lucene query parser that knows no entity`

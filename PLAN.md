@@ -266,17 +266,71 @@ wrong and where.
 
 ### Phase 28: The field registry and the translators
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
-- [ ] `SearchFieldRegistry`: field → `{ type, searchable, filterable, sortable,
-weight, column }`
-- [ ] The **allow-list** is the injection boundary. An undeclared field is
+- [x] `SearchFieldRegistry`: field → `{ type, searchable, filterable, sortable, weight, column }`
+- [x] The **allow-list** is the injection boundary. An undeclared field is
       `UnknownFieldError` listing the valid names, never silently dropped
-- [ ] The translator emits **parameterized values only**, and never interpolates
+- [x] The translator emits **parameterized values only**, and never interpolates
       query text into SQL
-- [ ] Three translators: Postgres, in-memory predicate (unit tests), and a mock
-- [ ] `search.test-kit.ts`: golden cases, fuzz, and a SQL-injection corpus —
+- [x] Three translators: Postgres, in-memory predicate (unit tests), and a mock
+- [x] `search.test-kit.ts`: golden cases, fuzz, and a SQL-injection corpus —
       reusable by every entity's search
+
+Done when one field map and one test kit serve every entity's search. **Met, and
+asserted as a test** rather than argued in a comment: `search.test-kit.spec.ts`
+runs the kit against a fictional entity, and then breaks each of its properties
+on purpose to show that the kit notices — a kit that cannot fail is a kit that
+proves nothing.
+
+**The allow-list is the injection boundary.** A field name is the client's input,
+and the only way it can reach SQL is by being looked up in the registry first. An
+undeclared name is an `UnknownFieldError` that lists the names that do exist —
+never a field silently dropped, because a dropped field is a filter the client
+believes is applied and is not.
+
+**The column is the one piece of a search that becomes SQL text.** Everything
+else is a parameter, and a parameter cannot change the meaning of a statement. An
+identifier cannot be bound, so the column is interpolated — and so the registry
+refuses a column that is not a plain identifier. A field map that accepted
+`"email" ; DROP TABLE users` would be a field map that had handed a client the
+database.
+
+**Every value is a parameter.** The SQL text carries column names and operators
+and nothing else. The values are converted to the field's type first, so a
+range over numbers compares numbers and a value that is not a number is refused
+here rather than by postgres — which would answer with an error about a type it
+cannot coerce, and the client would be told about a type rather than about the
+value they typed.
+
+**Every command that changes data is blocked, and the fragment is a predicate
+rather than a statement.** The injection corpus holds the whole family — insert,
+update, delete, merge, upsert, copy, create, alter, drop, truncate, grant,
+revoke, execute, call, set, vacuum, reindex, lock, the transaction statements
+and the rest — because a filter that blocks `DROP TABLE` and lets `UPDATE users
+SET role = 'super_admin'` through has not blocked anything. But a corpus only
+proves the payloads somebody thought of, so the claim is structural as well: a
+translated fragment may contain a column name, a parameter, a comparison and a
+boolean operator, and nothing else. A word outside that vocabulary is a
+statement, and a semicolon is how a second statement begins. The translator
+emits a boolean expression over columns and parameters, so there is no shape an
+input could take that would make it a statement.
+
+**The type decides whether a term is a match or a comparison.** A text field is
+matched as a substring and has to be searchable; every other type is compared for
+equality and has to be filterable. One rule, and the flag that matters follows
+from the type rather than being a second thing to get right.
+
+**The in-memory translator is the reference.** It answers "which rows match"
+with nothing but JavaScript, so the answer can be checked by hand, and a
+Postgres translator that disagrees with it is answering a different question. It
+also implements the fuzzy term exactly, which the SQL path refuses: postgres has
+no edit distance without an extension, and a trigram similarity is a different
+function.
+
+**The kit's golden cases are derived from the registry, not written down.** The
+fields differ between entities, and a case that named one of them would be a
+case about that entity rather than about the search.
 
 ### Phase 29: The Postgres translator
 
@@ -853,7 +907,7 @@ exists means writing the same retry logic twice.
 | Phase 25  | Job progress and cancellation                  | Done    |
 | Phase 26  | An audit read surface                          | Done    |
 | Phase 27  | A Lucene query parser                          | Done    |
-| Phase 28  | The field registry and the translators         | Planned |
+| Phase 28  | The field registry and the translators         | Done    |
 | Phase 29  | The Postgres translator                        | Planned |
 | Phase 30  | User search                                    | Planned |
 | Phase 31  | The search documentation                       | Planned |
