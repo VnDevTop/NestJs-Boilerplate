@@ -27,7 +27,9 @@ export type SearchFieldType =
  *
  * - `type` — how the values are compared.
  * - `searchable` — whether the field can be matched with a term, a phrase or a
- *   wildcard. A password hash is not searchable.
+ *   wildcard. A password hash is not searchable. For a text field a term is a
+ *   substring; for a keyword, a number, a date or a boolean it is an equality,
+ *   and whether a number should be matchable at all is the field map's decision.
  * - `filterable` — whether the field can be compared with a range or tested for
  *   existence. A blob of JSON is not filterable.
  * - `sortable` — whether the field can be sorted by. Declared here so the
@@ -172,7 +174,10 @@ export class SearchFieldRegistry {
     const field = this.resolve(name);
 
     if (!field.searchable) {
-      throw new UnsupportedFieldError(name ?? this.defaultField, 'searchable');
+      throw new UnsupportedFieldError(
+        name ?? this.defaultField,
+        'is not searchable',
+      );
     }
 
     return field;
@@ -183,7 +188,10 @@ export class SearchFieldRegistry {
     const field = this.resolve(name);
 
     if (!field.filterable) {
-      throw new UnsupportedFieldError(name ?? this.defaultField, 'filterable');
+      throw new UnsupportedFieldError(
+        name ?? this.defaultField,
+        'is not filterable',
+      );
     }
 
     return field;

@@ -64,10 +64,10 @@ export class UnsupportedFieldError extends Error {
   constructor(
     /** The field that was asked for. */
     readonly field: string,
-    /** What was asked of it, in the client's words. */
-    readonly operation: string,
+    /** Why it cannot do what was asked, in words. */
+    readonly reason: string,
   ) {
-    super(`The search field "${field}" is not ${operation}.`);
+    super(`The search field "${field}" ${reason}.`);
 
     this.name = 'UnsupportedFieldError';
   }
