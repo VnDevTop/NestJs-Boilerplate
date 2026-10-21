@@ -206,15 +206,22 @@ new pagination code.
 `search/` is where a search box's text becomes a tree. It holds the tokenizer, the
 parser and the tree, and **nothing else** — no entity, no column, no database.
 
-| File                 | Decision                                                    |
-| -------------------- | ----------------------------------------------------------- |
-| `ast.ts`             | the eight shapes a parsed query can take                    |
-| `tokenizer.ts`       | the words, and the escapes that make a colon literal        |
-| `parser.ts`          | recursive descent, one method per precedence level          |
-| `errors.ts`          | the errors, and the position in the query they point at     |
-| `field-registry.ts`  | the fields an entity may be searched by, and the allow-list |
-| `translators/`       | the filter, the full text, the facets, and a mock           |
-| `search.test-kit.ts` | the assertions every entity's search has to pass            |
+| File                     | Decision                                                    |
+| ------------------------ | ----------------------------------------------------------- |
+| `ast.ts`                 | the eight shapes a parsed query can take                    |
+| `tokenizer.ts`           | the words, and the escapes that make a colon literal        |
+| `parser.ts`              | recursive descent, one method per precedence level          |
+| `errors.ts`              | the errors, and the position in the query they point at     |
+| `field-registry.ts`      | the fields an entity may be searched by, and the allow-list |
+| `translators/`           | the filter, the full text, the facets, and a mock           |
+| `search.test-kit.ts`     | the assertions every entity's search has to pass            |
+| `worked-example.spec.ts` | the README's claims, checked on a fictional entity          |
+
+**The layer's own document is [search/README.md](search/README.md)** — the field
+types, the three capabilities, how to register an entity, a worked example on an
+entity of a different shape, and the anti-patterns. The spec beside it is where
+the document's claims are checked, because a documentation file nobody runs
+drifts.
 
 ```ts
 const query = parseSearchQuery('email:ada AND role:admin');
