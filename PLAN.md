@@ -983,8 +983,10 @@ Before starting a phase:
 2. Confirm the target phase.
 3. Implement only the required files.
 4. Run `npm run check`.
-5. Commit the phase separately, and add its entry to
-   [CHANGELOG.md](CHANGELOG.md).
+5. Commit each task on its own — a phase is several tasks, and the ones that
+   are easiest to get wrong are the ones worth being able to read on their own.
+6. End the phase with a documentation commit that ticks the phase here and
+   adds its entry to [CHANGELOG.md](CHANGELOG.md).
 
 The order is not arbitrary. Groups 4 to 8 all store data, and they all need a
 paging list route and a tenant column that already exists — retrofitting a tenant
