@@ -142,6 +142,11 @@ export class SearchFieldRegistry {
     return Object.keys(this.fields);
   }
 
+  /** The fields, by name. A copy, so a caller cannot change the registry. */
+  entries(): Array<[string, SearchField]> {
+    return Object.entries(this.fields);
+  }
+
   /** The columns this registry may put into SQL. */
   columns(): string[] {
     return Object.values(this.fields).map((field) => field.column);
