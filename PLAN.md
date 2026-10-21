@@ -388,10 +388,49 @@ one column and one index per field.
 
 ### Phase 30: User search
 
-- [ ] `POST /users/search`, permission-gated
-- [ ] Six fields: `email`, `firstName`, `lastName`, `role`, `isActive`,
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
+
+- [x] `POST /users/search`, permission-gated
+- [x] Six fields: `email`, `firstName`, `lastName`, `role`, `isActive`,
       `createdAt`
-- [ ] Every field carries a weight, chosen rather than defaulted
+- [x] Every field carries a weight, chosen rather than defaulted
+
+Done when a search is a request rather than a feature somebody has to build.
+**Met, and asserted as a test** rather than argued in a comment:
+`test/e2e/user-search.e2e-spec.ts` plants two users, one of whom matches, and
+shows that the search finds that one and not the other — against a real
+Postgres, because a `tsvector` is computed by postgres from the row's own text
+and a mock has none of that.
+
+**A body rather than a query string.** A search is a sentence somebody typed,
+and a sentence has spaces, quotes, brackets and colons in it — all of which have
+to be escaped in a URL and all of which are wrong in one.
+
+**Gated on `user:read`,** the permission to read a user record. The search reads
+user records and finds them by name, and the permission that says a caller may
+read a user record is the one that says they may find one. It is the first route
+that checks it.
+
+**Not idempotency-keyed, because it changes nothing.** The guard is for writes —
+a request that creates a second thing — and a read that asked for a key would
+make every search box carry a header it has no reason to send.
+
+**The results and the counts come from the same filter,** so the two cannot
+disagree about what matched.
+
+**No cursor.** A ranked set is not keyset-paged on a column, because the rank is
+not a column: a boundary on a floating-point score is a boundary that can be
+equal or not by a rounding error, and a page that repeats a row or skips one is
+worse than a search that says "here are the best twenty". A client that needs a
+specific set filters instead — the filters are exact, and `GET /users` pages over
+a column.
+
+**The six fields and their weights came with the document**, in Phase 29, because
+the migration's `setweight` letters are the weights and a weight that changed in
+one place and not the other would make the ranking quietly wrong. The address is
+A — it is what a person identifies an account by. The two names are B. The role
+is C, because it is a word about the account rather than a name for it. The
+active flag and the creation date are filtered and sorted but never searched.
 
 ### Phase 31: The search documentation
 
@@ -956,7 +995,7 @@ exists means writing the same retry logic twice.
 | Phase 27  | A Lucene query parser                          | Done    |
 | Phase 28  | The field registry and the translators         | Done    |
 | Phase 29  | The Postgres translator                        | Done    |
-| Phase 30  | User search                                    | Planned |
+| Phase 30  | User search                                    | Done    |
 | Phase 31  | The search documentation                       | Planned |
 | Phase 32  | The tenant column, present from the start      | Planned |
 | Phase 33  | The tenant registry                            | Planned |

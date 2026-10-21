@@ -51,6 +51,32 @@ it even by accident.
 | `DELETE /users/:id` | `@Roles(Admin, SuperAdmin)` |
 | `GET /users/:id`    | authenticated only          |
 
+## Searching users
+
+`POST /users/search` takes a body — a search is a sentence somebody typed, and a
+sentence has spaces, quotes, brackets and colons in it, all of which have to be
+escaped in a URL and all of which are wrong in one.
+
+```json
+{ "query": "ada", "limit": 20, "facets": ["role"] }
+```
+
+The query is in the search language, and the field map in
+[users-search.ts](./users-search.ts) says what the fields mean. A bare word
+searches the address, the names and the role; `email:ada`, `"ada lovelace"` and
+`role:admin` narrow it. The answer is the best matches, each with the rank that
+put it where it is, and the counts of the matching rows per facet.
+
+**It is behind `user:read`** — the permission to read a user record. The search
+reads user records and finds them by name, so the permission that says a caller
+may read a user record is the one that says they may find one.
+
+**There is no second page.** A ranked set is not keyset-paged on a column,
+because the rank is not a column, and a boundary on a floating-point score is a
+boundary that can be equal or not by a rounding error. A client that needs a
+specific set filters instead — the filters are exact, and `GET /users` pages over
+a column.
+
 ## Listing users
 
 `GET /users` is cursor paged on `(createdAt, id)`. See
