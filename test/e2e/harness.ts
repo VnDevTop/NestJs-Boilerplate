@@ -250,11 +250,17 @@ export async function cleanState({ dataSource }: BootedApp): Promise<void> {
 export async function seedAdmin(
   dataSource: BootedApp['dataSource'],
 ): Promise<void> {
+  const { TenantSeeder } =
+    await import('../../src/database/seeds/tenant.seeder.js');
   const { PermissionSeeder } =
     await import('../../src/database/seeds/permission.seeder.js');
   const { AdminSeeder } =
     await import('../../src/database/seeds/admin.seeder.js');
 
+  // The tenants first: the permission catalogue is cloned into each of them,
+  // and a catalogue cloned into nothing leaves every user without a
+  // permission.
+  await new TenantSeeder().run(dataSource);
   await new PermissionSeeder().run(dataSource);
   await new AdminSeeder().run(dataSource);
 }

@@ -20,8 +20,12 @@ import { TenantSeeder } from './tenant.seeder.js';
  * usable administrator rather than with nothing.
  */
 export const SEEDERS: Seeder[] = [
-  new PermissionSeeder(),
+  // The tenants first, because the permission catalogue is cloned into each of
+  // them: a catalogue seeded before the registry exists would be cloned into
+  // nothing, and a deployment would come up with a user who holds no
+  // permission at all.
   new TenantSeeder(),
+  new PermissionSeeder(),
   new AdminSeeder(),
   new MailTemplateSeeder(),
 ];
