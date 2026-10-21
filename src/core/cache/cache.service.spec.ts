@@ -44,6 +44,15 @@ async function memoryService(): Promise<CacheService> {
   return new CacheService(cache, configService, tenantContext);
 }
 
+const tenantScope = {
+  id: '22222222-2222-4222-8222-222222222222',
+  slug: 'acme',
+  name: 'Acme',
+  status: 'active',
+  plan: 'free',
+  schemaName: null,
+};
+
 describe('CacheService', () => {
   let service: CacheService;
 
@@ -146,6 +155,34 @@ describe('CacheService.wrap', () => {
     await service.wrap('k', loader);
 
     expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * The property the phase is about.
+   *
+   * **Two tenants cannot reach the same entry.** A key without a tenant is a
+   * key both of them can reach, and the second one to ask is served the first
+   * one's answer.
+   */
+  it("keeps two tenants out of each other's entries", async () => {
+    const acme = '22222222-2222-4222-8222-222222222222';
+    const other = '33333333-3333-4333-8333-333333333333';
+    const context = tenantContext;
+
+    await context.run({ ...tenantScope, id: acme }, () =>
+      service.set('user:1', { id: 'acme' }),
+    );
+    await context.run({ ...tenantScope, id: other }, () =>
+      service.set('user:1', { id: 'other' }),
+    );
+
+    await expect(
+      context.run({ ...tenantScope, id: acme }, () => service.get('user:1')),
+    ).resolves.toEqual({ id: 'acme' });
+
+    await expect(
+      context.run({ ...tenantScope, id: other }, () => service.get('user:1')),
+    ).resolves.toEqual({ id: 'other' });
   });
 
   it('counts loader runs', async () => {
