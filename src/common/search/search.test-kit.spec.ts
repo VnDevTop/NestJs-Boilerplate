@@ -6,10 +6,13 @@ import {
   assertFuzzCorpusStaysInsideTheAllowList,
   assertGoldenCases,
   assertInjectionCorpusNeverReachesTheSql,
+  assertNoStatementCanReachTheSql,
+  assertTheSqlIsAPredicate,
   assertUnknownFieldsAreRefused,
   fuzzCorpus,
   INJECTION_CORPUS,
   runSearchTestKit,
+  STATEMENT_COMMANDS,
 } from './search.test-kit.js';
 import { MockSearchTranslator } from './translators/mock.js';
 import { translateToSql } from './translators/postgres.js';
@@ -104,6 +107,14 @@ describe('the search test kit', () => {
     ).not.toThrow();
   });
 
+  it('keeps every statement out of the SQL', () => {
+    expect(() => assertNoStatementCanReachTheSql({ registry })).not.toThrow();
+  });
+
+  it('keeps the SQL a predicate rather than a statement', () => {
+    expect(() => assertTheSqlIsAPredicate({ registry })).not.toThrow();
+  });
+
   it('keeps the fuzz corpus inside the allow-list', () => {
     expect(() =>
       assertFuzzCorpusStaysInsideTheAllowList({ registry }),
@@ -166,6 +177,45 @@ describe('the kit notices', () => {
       }),
     ).toThrow(/unexpected error/);
   });
+
+  /**
+   * The two that matter most, because they are the ones a payload would aim
+   * at.
+   */
+  it('a translator that emits a statement', () => {
+    const statement = () => ({
+      sql: 'DROP TABLE users',
+      parameters: {},
+    });
+
+    expect(() =>
+      assertNoStatementCanReachTheSql({ registry, translate: statement }),
+    ).toThrow(/reached the SQL/);
+  });
+
+  it('a translator that emits a second statement after a semicolon', () => {
+    const statement = () => ({
+      sql: '"email" = :p0; DROP TABLE users',
+      parameters: { p0: 'x' },
+    });
+
+    // The semicolon is how a second statement begins, and a fragment that ends
+    // with one is not a fragment.
+    expect(() =>
+      assertTheSqlIsAPredicate({ registry, translate: statement }),
+    ).toThrow(/semicolon/);
+  });
+
+  it('a translator that emits a word a filter may not use', () => {
+    const statement = () => ({
+      sql: 'UPDATE users SET role = :p0',
+      parameters: { p0: 'super_admin' },
+    });
+
+    expect(() =>
+      assertTheSqlIsAPredicate({ registry, translate: statement }),
+    ).toThrow(/not part of the vocabulary/);
+  });
 });
 
 describe('the fuzz corpus', () => {
@@ -200,6 +250,29 @@ describe('the injection corpus', () => {
    * the most damage — and this test is what stops them being quietly dropped
    * from it later.
    */
+  it('names every command that changes data, and the ones that only read', () => {
+    // The list the SQL is checked against. A command missing from it is a
+    // command a payload could use, so the list is the whole family rather than
+    // the two that are famous.
+    for (const command of [
+      'insert',
+      'update',
+      'delete',
+      'drop',
+      'truncate',
+      'create',
+      'alter',
+      'grant',
+      'revoke',
+      'execute',
+      'call',
+      'set',
+      'select',
+    ]) {
+      expect(STATEMENT_COMMANDS, command).toContain(command);
+    }
+  });
+
   it('holds the statements that would destroy the database', () => {
     expect(
       INJECTION_CORPUS.some((value) => /\bdrop\s+table\b/i.test(value)),

