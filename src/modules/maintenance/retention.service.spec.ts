@@ -17,6 +17,7 @@ import {
   type RetentionRunResult,
 } from './retention.service.js';
 import { RETENTION_TARGETS } from './retention.policy.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 
 /**
  * The shape a TypeORM query runner returns for `DELETE ... RETURNING`, which is
@@ -77,6 +78,15 @@ class FakeQueryRunner {
   counts(): string[] {
     return this.queries.filter((sql) => sql.startsWith('SELECT count'));
   }
+
+  /** The parameters of the statements that start with the given prefix. */
+  parametersOf(prefix: string): unknown[][] {
+    return this.queries
+      .map((sql, index) =>
+        sql.startsWith(prefix) ? this.parameters[index] : null,
+      )
+      .filter((params): params is unknown[] => params !== null);
+  }
 }
 
 interface Harness {
@@ -128,6 +138,7 @@ function harness(options: {
     // The real service: with `prom-client` absent every method is a no-op, which
     // is the state this suite runs in.
     new MetricsService(),
+    new TenantContextService(),
   );
 
   return {
@@ -370,11 +381,38 @@ describe('RetentionService', () => {
 
       await h.run();
 
-      for (const params of h.runner.parameters) {
+      for (const params of h.runner.parametersOf('DELETE')) {
         if (params.length > 0) {
           expect(params[0]).toBe(250);
         }
       }
+    });
+  });
+
+  describe('the tenant', () => {
+    /**
+     * The property the phase is about.
+     *
+     * **A run removes one tenant's rows.** Retention removes rows by age, and
+     * a row that is expired for one tenant is another tenant's live one.
+     */
+    it('only deletes the rows of the tenant it runs in', async () => {
+      await h.run();
+
+      for (const sql of h.runner.deletes()) {
+        expect(sql).toContain(`d."tenantId" = '`);
+      }
+    });
+
+    it('tells the database which tenant it is cleaning', async () => {
+      // Row-level security reads the tenant out of the session. A run that did
+      // not set it would match no rows at all: a clean report and an untouched
+      // table.
+      await h.run();
+
+      expect(
+        h.runner.queries.filter((sql) => sql.includes('set_config')),
+      ).toHaveLength(POLICY_LENGTH);
     });
   });
 
@@ -389,12 +427,17 @@ describe('RetentionService', () => {
       expect(result.dryRun).toBe(true);
     });
 
-    it('opens no transaction, because nothing is written', async () => {
+    it('opens a transaction per target, because the tenant scope is set in one', async () => {
+      // A dry run writes nothing, but the tenant scope is transaction-local:
+      // `set_config(..., true)` is undone by the commit, so a count that has to
+      // see the tenant's rows has to set the scope inside a transaction. A
+      // session-level setting would outlive the tenant it was set for.
       h = harness({ dryRun: true });
 
       await h.run();
 
-      expect(h.runner.started).toBe(0);
+      expect(h.runner.started).toBe(POLICY_LENGTH);
+      expect(h.runner.deletes()).toEqual([]);
     });
 
     it('can be forced on from the caller even when the config is off', async () => {
@@ -865,7 +908,11 @@ describe('RetentionService', () => {
     it('quotes every table it interpolates', async () => {
       await h.run();
 
-      for (const sql of h.runner.queries) {
+      for (const sql of h.runner.queries.filter(
+        (statement) =>
+          statement.startsWith('DELETE') ||
+          statement.startsWith('SELECT count'),
+      )) {
         expect(sql).toMatch(/(FROM|DELETE FROM) "\w+"/);
       }
     });
