@@ -124,7 +124,7 @@ export interface JobResult {
  * opposite things — one needs attention, the other was asked for.
  */
 export type JobStatus =
-  'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'replayed';
 
 /**
  * What a job's outcome means for its record.
