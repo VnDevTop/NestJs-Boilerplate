@@ -23,7 +23,7 @@ export class SigningService {
    * @returns true if the signature is valid and the timestamp is within the
    *   allowed window, false otherwise.
    */
-  verifySignature(req: Request, secret: string): boolean {
+  verifySignature(req: Request, _secret: string): boolean {
     const signatureHeader = req.get('X-Signature');
 
     if (!signatureHeader) {
@@ -93,7 +93,7 @@ export class SigningService {
     // Placeholder: return true if age checks pass (signature validation
     // would be done with the actual body in the caller).
     this.logger.debug(`Signature age check passed: age=${age}s`);
-    return this.constantCompare(receivedSignature, "mock");
+    return this.constantCompare(receivedSignature, 'mock');
   }
 
   /**

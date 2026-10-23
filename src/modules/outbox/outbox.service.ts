@@ -24,10 +24,8 @@ export class OutboxService {
     eventId: string,
     payload: Record<string, unknown>,
   ): Promise<void> {
-    const repository: Repository<Outbox> = this.dataSource.getRepository(
-      Outbox,
-      'master',
-    );
+    const repository: Repository<Outbox> =
+      this.dataSource.getRepository(Outbox);
 
     const event = new Outbox();
     event.id = crypto.randomUUID();
@@ -48,14 +46,12 @@ export class OutboxService {
    * @param queryRunner The query runner
    * @returns List of unprocessed events
    */
-  async getUnprocessedEvents(queryRunner: QueryRunner): Promise<Outbox[]> {
-    const repository: Repository<Outbox> = this.dataSource.getRepository(
-      Outbox,
-      'master',
-    );
+  async getUnprocessedEvents(_queryRunner: QueryRunner): Promise<Outbox[]> {
+    const repository: Repository<Outbox> =
+      this.dataSource.getRepository(Outbox);
 
     return repository.find({
-      where: { processedAt: null },
+      where: { processedAt: null as any },
       order: { createdAt: 'ASC' },
     });
   }
@@ -70,10 +66,8 @@ export class OutboxService {
     queryRunner: QueryRunner,
     eventId: string,
   ): Promise<void> {
-    const repository: Repository<Outbox> = this.dataSource.getRepository(
-      Outbox,
-      'master',
-    );
+    const repository: Repository<Outbox> =
+      this.dataSource.getRepository(Outbox);
 
     await repository.update({ eventId }, { processedAt: new Date() });
 

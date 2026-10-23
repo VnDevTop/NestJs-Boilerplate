@@ -53,7 +53,6 @@ export function createServiceToken(
   scopes: ReadonlySet<ServiceTokenScope>,
   expiresIn?: number,
 ): string {
-  const expiry = expiresIn ?? SERVICE_TOKEN_MAX_AGE;
   const issuedAt = Math.floor(Date.now() / 1000);
   const expiresAt =
     issuedAt + Math.floor((expiresIn ?? SERVICE_TOKEN_MAX_AGE) / 1000);

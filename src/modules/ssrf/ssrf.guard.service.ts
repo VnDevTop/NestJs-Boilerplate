@@ -6,12 +6,8 @@ const resolveV4 = promisify(resolve4);
 const resolveV6 = promisify(resolve6);
 
 const LOOPBACK = '127.0.0.1';
-const PRIVATE_RANGES = [
-  '10.0.0.0/8',
-  '172.16.0.0/12',
-  '192.168.0.0/16',
-];
-const LINK_LOCAL = '169.254.0.0/16';
+const _PRIVATE_RANGES = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+const _LINK_LOCAL = '169.254.0.0/16';
 const METADATA_ADDRESS = '169.254.169.254';
 
 @Injectable()
@@ -38,8 +34,13 @@ export class SsrfGuardService {
 
       for (const addr of addresses) {
         if (this.isRestrictedAddress(addr)) {
-          this.logger.warn(`SSRF blocked: resolved to restricted address ${addr}`);
-          return { safe: false, reason: `Resolved to restricted address: ${addr}` };
+          this.logger.warn(
+            `SSRF blocked: resolved to restricted address ${addr}`,
+          );
+          return {
+            safe: false,
+            reason: `Resolved to restricted address: ${addr}`,
+          };
         }
       }
 

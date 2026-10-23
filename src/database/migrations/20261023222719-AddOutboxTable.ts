@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddOutboxTable implements MigrationInterface {
-  name = 'AddOutboxTable';
+export class AddOutboxTable20261023222719 implements MigrationInterface {
+  name = 'AddOutboxTable20261023222719';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(

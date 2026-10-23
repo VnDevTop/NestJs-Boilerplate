@@ -1,5 +1,9 @@
-import { ServiceTokenService } from './service-token.service';
-import { ServiceTokenScope, ServiceTokenSubject } from './service-token.enum';
+import { ServiceTokenService } from './service-token.service.js';
+import {
+  ServiceTokenScope,
+  ServiceTokenSubject,
+  SERVICE_TOKEN_MAX_AGE,
+} from './service-token.enum.js';
 
 describe('ServiceTokenService', () => {
   let service: ServiceTokenService;
@@ -133,8 +137,12 @@ describe('ServiceTokenService', () => {
       const scopes = new Set([ServiceTokenScope.UserRead]);
       const { token } = service.generateToken(ServiceTokenSubject.User, scopes);
 
-      expect(service.hasAnyScope(token, ServiceTokenScope.UserRead)).toBe(true);
-      expect(service.hasAnyScope(token, ServiceTokenScope.JobRead)).toBe(false);
+      expect(
+        service.hasAnyScope(token, new Set([ServiceTokenScope.UserRead])),
+      ).toBe(true);
+      expect(
+        service.hasAnyScope(token, new Set([ServiceTokenScope.JobRead])),
+      ).toBe(false);
       expect(
         service.hasAnyScope(
           token,
@@ -146,7 +154,7 @@ describe('ServiceTokenService', () => {
     it('returns false for an invalid token', () => {
       const result = service.hasAnyScope(
         'invalid-token',
-        ServiceTokenScope.UserRead,
+        new Set([ServiceTokenScope.UserRead]),
       );
 
       expect(result).toBe(false);

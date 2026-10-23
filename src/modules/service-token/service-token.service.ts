@@ -1,4 +1,4 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   ServiceTokenScope,
@@ -6,8 +6,7 @@ import {
   createServiceToken,
   verifyServiceToken,
   SERVICE_TOKEN_MAX_AGE,
-  SERVICE_TOKEN_CLOCK_SKEW,
-} from './service-token.enum';
+} from './service-token.enum.js';
 
 @Injectable()
 export class ServiceTokenService {
@@ -108,7 +107,7 @@ export class ServiceTokenService {
     const requiredScopeSet =
       requiredScopes instanceof Set
         ? requiredScopes
-        : new Set([requiredScopes] as ServiceTokenScope);
+        : new Set([requiredScopes]);
 
     return Array.from(tokenScopes).some((s) =>
       requiredScopeSet.has(s as ServiceTokenScope),
@@ -123,7 +122,7 @@ export class ServiceTokenService {
    *
    * @param token The service token to revoke
    */
-  revokeToken(token: string): void {
+  revokeToken(_token: string): void {
     this.logger.log(`Revoking service token`);
     // In a real implementation, store the token ID in Redis with a TTL
   }

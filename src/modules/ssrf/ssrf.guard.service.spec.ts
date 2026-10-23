@@ -1,4 +1,4 @@
-import { SsrfGuardService } from './ssrf.guard.service';
+import { SsrfGuardService } from './ssrf.guard.service.js';
 
 describe('SsrfGuardService', () => {
   let service: SsrfGuardService;
@@ -20,7 +20,9 @@ describe('SsrfGuardService', () => {
     });
 
     it('should block link-local address 169.254.169.254', async () => {
-      const result = await service.checkUrl('http://169.254.169.254/latest/meta-data/');
+      const result = await service.checkUrl(
+        'http://169.254.169.254/latest/meta-data/',
+      );
       expect(result.safe).toBe(false);
       expect(result.reason).toContain('restricted');
     });

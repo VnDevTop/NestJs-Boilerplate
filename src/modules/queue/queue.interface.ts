@@ -136,7 +136,7 @@ export type JobStatus =
  */
 export const statusOf = (
   result: JobResult,
-): Exclude<JobStatus, 'queued' | 'running'> => {
+): Exclude<JobStatus, 'queued' | 'running' | 'replayed'> => {
   // Checked before the success flag: a job that stopped because it was asked
   // to did not finish, and reporting it as completed would say the work was
   // done when it was not.

@@ -1,6 +1,4 @@
-import { JwtService } from '@nestjs/jwt';
 import { SubscriptionService } from './subscription.service.js';
-import { SubscribeDto } from './dto/subscribe.dto.js';
 
 describe('SubscriptionService hmacSign', () => {
   const service = new SubscriptionService(

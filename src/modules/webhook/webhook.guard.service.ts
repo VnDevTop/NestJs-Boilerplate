@@ -57,7 +57,7 @@ export class WebhookGuardService {
     // Check for timestamp (replay protection)
     let timestamp: number | undefined;
     if (parts.length >= 2 && parts[0].startsWith('t=')) {
-      timestamp = parseInt(parts[0].replace('t='), 10);
+      timestamp = parseInt(parts[0].slice(2), 10);
       if (isNaN(timestamp)) {
         return { valid: false, error: 'Invalid timestamp format' };
       }
@@ -107,7 +107,7 @@ export class WebhookGuardService {
    * @param eventId The provider's event ID
    * @returns {object} Deduplication result
    */
-  checkDeduplication(eventId: string): {
+  checkDeduplication(_eventId: string): {
     alreadyProcessed: boolean;
     action: 'acknowledge' | 'process';
   } {

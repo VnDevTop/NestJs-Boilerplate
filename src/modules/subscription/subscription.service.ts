@@ -1,10 +1,7 @@
 import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  SubscriptionConfig,
-  SubscriptionEndpoint,
-} from '../../configs/subscription.config.js';
+import type { SubscriptionConfig } from '../../configs/subscription.config.js';
 import { SubscribeDto } from './dto/subscribe.dto.js';
 import { lastValueFrom } from 'rxjs';
 import crypto from 'crypto';

@@ -1,5 +1,6 @@
-import { OutboxService } from './outbox.service';
-import { DataSource } from 'typeorm';
+import { vi } from 'vitest';
+import { OutboxService } from './outbox.service.js';
+import { DataSource, QueryRunner } from 'typeorm';
 
 describe('OutboxService', () => {
   let service: OutboxService;
@@ -7,7 +8,7 @@ describe('OutboxService', () => {
 
   beforeEach(() => {
     mockDataSource = {
-      getRepository: jest.fn(),
+      getRepository: vi.fn(),
     } as any;
 
     service = new OutboxService(mockDataSource as DataSource);
@@ -15,7 +16,7 @@ describe('OutboxService', () => {
 
   describe('saveEvent', () => {
     it('saves an event to the outbox', async () => {
-      const mockQueryRunner = {
+      const _mockQueryRunner = {
         manager: undefined,
       } as unknown as QueryRunner;
 
