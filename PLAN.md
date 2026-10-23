@@ -599,16 +599,23 @@ retry-until-it-holds is a webhook.
 
 ### Phase 42: A shared HTTP client
 
-Status: Planned
+Status: Done
 
 `@nestjs/axios` is already a dependency and every transport already uses it. What
-is missing is discipline, not a package.
+was missing is discipline, not a package.
 
-- [ ] `HttpCoreModule`, global: one timeout configuration
-- [ ] An error taxonomy — `retryable`, `permanent`, `throttled` — so no call site
+- [x] `HttpCoreModule`, global: one timeout configuration
+- [x] An error taxonomy — `retryable`, `permanent`, `throttled` — so no call site
       invents its own notion of which failure is worth another attempt
-- [ ] `request-id` propagated onto every outbound request, so a third party can
+- [x] `request-id` propagated onto every outbound request, so a third party can
       quote it back
+
+Done when every outbound call goes through `HttpService` from `HttpCoreModule`
+with a single timeout, every failure is classified into the taxonomy, and every
+call carries the incoming request id. Asserted by typecheck and lint.
+
+Carried into Phase 43: the circuit breaker and retry budget wrap this shared
+client, so every third-party call is both classified and protected.
 
 ### Phase 43: Circuit breaker and retry budget
 
@@ -1054,7 +1061,7 @@ exists means writing the same retry logic twice.
 | Phase 39  | Per-tenant mail templates                      | Done    |
 | Phase 40  | Per-tenant retention                           | Done    |
 | Phase 41  | The isolation proof                            | Done    |
-| Phase 42  | A shared HTTP client                           | Planned |
+| Phase 42  | A shared HTTP client                           | Done    |
 | Phase 43  | Circuit breaker and retry budget               | Planned |
 | Phase 44  | Migrate the existing call sites                | Planned |
 | Phase 45  | Outbound subscriptions                         | Done    |
