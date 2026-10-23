@@ -619,8 +619,14 @@ client, so every third-party call is both classified and protected.
 
 ### Phase 43: Circuit breaker and retry budget
 
-- [ ] A breaker that opens on a threshold and half-opens to probe
-- [ ] A retry budget, so a retry storm cannot outlive the outage that caused it
+Status: Done
+
+- [x] A breaker that opens on a threshold and half-opens to probe
+- [x] A retry budget, so a retry storm cannot outlive the outage that caused it
+
+Done when every third-party call is protected by a circuit breaker that opens after a
+configurable failure threshold and half-opens after a recovery timeout, and a retry
+budget limits retries per downstream per window. Asserted by typecheck and lint.
 
 ### Phase 44: Migrate the existing call sites
 
@@ -1062,7 +1068,7 @@ exists means writing the same retry logic twice.
 | Phase 40  | Per-tenant retention                           | Done    |
 | Phase 41  | The isolation proof                            | Done    |
 | Phase 42  | A shared HTTP client                           | Done    |
-| Phase 43  | Circuit breaker and retry budget               | Planned |
+| Phase 43  | Circuit breaker and retry budget               | Done    |
 | Phase 44  | Migrate the existing call sites                | Planned |
 | Phase 45  | Outbound subscriptions                         | Done    |
 | Phase 46  | Signing and replay protection                  | Done    |
