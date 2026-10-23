@@ -646,7 +646,7 @@ Status: Done
 
 ### Phase 47: The SSRF guard
 
-Status: Planned
+Status: Done
 
 **Not optional, and not polish.** A subscription endpoint is user-supplied, so
 without this the feature is a way to read the cloud metadata service.
@@ -678,19 +678,19 @@ Status: Planned
 
 For internal calls. **Not** HMAC — that is for parties you do not control.
 
-- [ ] Service tokens: a subject, scopes, a short expiry, revocable
-- [ ] Scoped exactly as permissions are, reusing the same vocabulary
+- [x] Service tokens: a subject, scopes, a short expiry, revocable
+- [x] Scoped exactly as permissions are, reusing the same vocabulary
 
 ### Phase 51: A domain event catalogue
 
 - [ ] One module per aggregate, following the shape `notification.events` already
       has
-- [ ] Events typed and named, so adding one does not mean editing another module
+- [x] Events typed and named, so adding one does not mean editing another module
 
 ### Phase 52: The outbox pattern
 
-- [ ] An event written in the same transaction as the state change
-- [ ] A separate process publishes it
+- [x] An event written in the same transaction as the state change
+- [x] A separate process publishes it
 - [ ] Dual-write — writing the row and publishing separately — is how events go
       missing
 
@@ -1055,7 +1055,7 @@ exists means writing the same retry logic twice.
 | Phase 44  | Migrate the existing call sites                | Planned |
 | Phase 45  | Outbound subscriptions                         | Done    |
 | Phase 46  | Signing and replay protection                  | Done    |
-| Phase 47  | The SSRF guard                                 | Planned |
+| Phase 47  | The SSRF guard                                 | Done    |
 | Phase 48  | Delivery                                       | Planned |
 | Phase 49  | Inbound webhooks                               | Planned |
 | Phase 50  | Service-to-service authentication              | Planned |

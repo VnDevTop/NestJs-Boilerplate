@@ -15,7 +15,23 @@ code itself. This file is the record of how it got that way.
 
 ---
 
-## feat: the isolation proof
+## feat: outbox pattern
+
+`feat(outbox): add outbox table, service, and entity for dual-write pattern` ·
+`feat(outbox): add Outbox entity with aggregate, event_id, payload, and processed tracking` ·
+`feat(outbox): add OutboxService with saveEvent, getUnprocessedEvents, and markProcessed methods` ·
+`migration: add outbox table with indexes for aggregate, event_id, and processed status` ·
+`test(outbox): add basic outbox service structure'`
+
+`feat(domain-events): add domain event key types and data interfaces` ·
+`feat(domain-events): add DomainEvent, DomainEventKey, DomainEventData types` ·
+`feat(domain-events): add createDomainEvent factory function` ·
+`test(domain-events): add 10 unit tests for domain event service`
+
+`feat(service-token): add service token authentication with scopes and short expiry` ·
+`feat(service-token): add ServiceTokenService with generate/verify/revoke methods` ·
+`feat(service-token): add service token scope constants following permission vocabulary` ·
+`test(service-token): add 11 unit tests for service token service`
 
 `feat(tenancy): the request's tenant goes on every statement` ·
 `feat(tenancy): inserts inherit the session tenant` ·
@@ -3343,6 +3359,7 @@ checking it during the rotation window, the system remains available while the
 new secret spreads.
 
 ---
+
 ## feat: signing and replay protection
 
 `feat(signing): add signing service with timestamp verification` ·
@@ -3362,4 +3379,26 @@ Webhooks and outbound subscriptions receive user-supplied data that must be cryp
 
 ---
 
+## feat: SSRF guard
 
+`feat(security): add SSRF guard service with hostname resolution and DNS rebinding protection` ·
+
+**What changed**
+
+- `SsrfGuardService.checkUrl()` validates URLs against a restricted address list
+- DNS resolution with fallback to direct IP checks
+- Blocks loopback (127.0.0.1), link-local (169.254.x.x), and private ranges
+- Blocks metadata address (169.254.169.254) used by cloud metadata services
+- Prevents DNS rebinding attacks by resolving hostnames and checking resolved IPs
+- Configurable timeout and response size bounds (implementation detail)
+
+**Why**
+
+Webhooks and outbound subscriptions receive user-supplied URLs. Without SSRF protection,
+an attacker could force the application to make requests to internal services,
+cloud metadata endpoints (e.g., 169.254.169.254), or other restricted systems.
+The SsrfGuardService resolves hostnames to IP addresses and rejects any that
+fall within restricted ranges, preventing server-side request forgery. This is
+essential when accepting URLs from external callers such as webhook providers.
+
+---
