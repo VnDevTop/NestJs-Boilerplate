@@ -5,6 +5,7 @@ import {
   Index,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * A snapshot of a row, as stored in `before` and `after`.
@@ -50,13 +51,19 @@ export interface AuditSnapshot {
  * before — a create, a sign-in, a denied request.
  */
 @Entity({ name: 'audit_logs' })
-@Index('IDX_audit_logs_created_at', ['createdAt'])
-@Index('IDX_audit_logs_actor', ['actorId'])
-@Index('IDX_audit_logs_action', ['action'])
-@Index('IDX_audit_logs_target', ['targetType', 'targetId'])
+@Index('IDX_audit_logs_created_at', ['tenantId', 'createdAt'])
+@Index('IDX_audit_logs_actor', ['tenantId', 'actorId'])
+@Index('IDX_audit_logs_action', ['tenantId', 'action'])
+@Index('IDX_audit_logs_target', ['tenantId', 'targetType', 'targetId'])
 export class AuditLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   /**
    * Who did it, by user id. Null for a system action — a scheduled job, a

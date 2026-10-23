@@ -5,9 +5,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Role } from '../../common/enums/index.js';
 import { RolePermission } from './entities/index.js';
 import { PermissionsService } from './permissions.service.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
+
+const tenantScope = {
+  id: '22222222-2222-4222-8222-222222222222',
+  slug: 'acme',
+  name: 'Acme',
+  status: 'active',
+  plan: 'free',
+  schemaName: null,
+};
 
 interface Harness {
   service: PermissionsService;
+  tenantContext: TenantContextService;
   find: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
   insert: ReturnType<typeof vi.fn>;
@@ -21,27 +32,37 @@ interface Harness {
  * A store behind the cache, rather than a recorded call. A `delete` that only
  * recorded would pass with the entry still in place, which is the regression the
  * invalidation tests exist to catch.
+ *
+ * **The tenant is part of the key, as it is in the real cache.** A fake that
+ * ignored the tenant would let two tenants share one entry, and the test that
+ * asks for that separation would pass for the wrong reason.
  */
-function fakeCache() {
+function fakeCache(tenantContext: TenantContextService) {
   const store = new Map<string, unknown>();
   const deletedKeys: string[] = [];
+
+  const scoped = (key: string): string =>
+    `${tenantContext.current()?.id ?? 'default'}:${key}`;
 
   return {
     store,
     deletedKeys,
     wrap: async <T>(key: string, loader: () => Promise<T>): Promise<T> => {
-      if (store.has(key)) {
-        return store.get(key) as T;
+      const scopedKey = scoped(key);
+
+      if (store.has(scopedKey)) {
+        return store.get(scopedKey) as T;
       }
 
       const value = await loader();
-      store.set(key, value);
+      store.set(scopedKey, value);
 
       return value;
     },
     delete: vi.fn(async (key: string) => {
-      deletedKeys.push(key);
-      store.delete(key);
+      const scopedKey = scoped(key);
+      deletedKeys.push(scopedKey);
+      store.delete(scopedKey);
     }),
   };
 }
@@ -54,7 +75,8 @@ function harness(): Harness {
   const remove = vi.fn().mockResolvedValue({ affected: 0 });
   const insert = vi.fn().mockResolvedValue({ identifiers: [] });
   const findPermissions = vi.fn().mockResolvedValue([]);
-  const cache = fakeCache();
+  const tenantContext = new TenantContextService();
+  const cache = fakeCache(tenantContext);
 
   const manager = {
     delete: remove,
@@ -71,10 +93,12 @@ function harness(): Harness {
   } as unknown as Repository<RolePermission>;
 
   return {
+    tenantContext,
     service: new PermissionsService(
       grants,
       cache as never,
       { getOrThrow: () => ({ authRoleTtl: 600 }) } as never,
+      tenantContext,
     ),
     find,
     delete: remove,
@@ -123,7 +147,41 @@ describe('PermissionsService', () => {
     it('filters on the role it was given', async () => {
       await h.service.forRole('admin');
 
-      expect(h.find.mock.calls[0][0].where).toEqual({ role: 'admin' });
+      expect(h.find.mock.calls[0][0].where).toEqual({
+        role: 'admin',
+        tenantId: expect.any(String),
+      });
+    });
+
+    /**
+     * The property the phase is about.
+     *
+     * **Two tenants' roles do not answer for each other.** The same role name in
+     * two tenants is two different sets of grants, and the read filters by the
+     * tenant rather than trusting the role name to be unique.
+     */
+    it('reads the grants of the tenant it is asked in', async () => {
+      const acme = '22222222-2222-4222-8222-222222222222';
+      const other = '33333333-3333-4333-8333-333333333333';
+
+      h.find.mockImplementation(
+        async (options: { where: { tenantId: string } }) =>
+          options.where.tenantId === acme
+            ? [grant('admin', 'acme:read')]
+            : [grant('admin', 'other:read')],
+      );
+
+      const byAcme = await h.tenantContext.run(
+        { ...tenantScope, id: acme },
+        () => h.service.forRole('admin'),
+      );
+      const byOther = await h.tenantContext.run(
+        { ...tenantScope, id: other },
+        () => h.service.forRole('admin'),
+      );
+
+      expect(byAcme).toEqual(['acme:read']);
+      expect(byOther).toEqual(['other:read']);
     });
 
     it('reads the permission name rather than the whole row', async () => {
@@ -191,15 +249,18 @@ describe('PermissionsService', () => {
     it('replaces the grants rather than adding to them', async () => {
       await h.service.setForRole(Role.Admin, ['user:read']);
 
-      expect(h.delete).toHaveBeenCalledWith(RolePermission, { role: 'admin' });
+      expect(h.delete).toHaveBeenCalledWith(RolePermission, {
+        role: 'admin',
+        tenantId: expect.any(String),
+      });
     });
 
     it('inserts the ids it resolved', async () => {
       await h.service.setForRole(Role.Admin, ['user:read', 'user:delete']);
 
       expect(h.insert.mock.calls[0][1]).toEqual([
-        { role: 'admin', permissionId: 'p1' },
-        { role: 'admin', permissionId: 'p2' },
+        { role: 'admin', permissionId: 'p1', tenantId: expect.any(String) },
+        { role: 'admin', permissionId: 'p2', tenantId: expect.any(String) },
       ]);
     });
 
@@ -268,7 +329,7 @@ describe('PermissionsService', () => {
 
       await h.service.forRole('admin');
 
-      expect([...h.store.keys()]).toEqual(['role:admin']);
+      expect([...h.store.keys()]).toEqual(['default:role:admin']);
     });
 
     it('is read once for a role, however many holders ask', async () => {
@@ -292,7 +353,7 @@ describe('PermissionsService', () => {
       await h.service.forRole('user');
 
       expect(h.find).toHaveBeenCalledTimes(1);
-      expect(h.store.get('role:user')).toEqual([]);
+      expect(h.store.get('default:role:user')).toEqual([]);
     });
 
     it('caches nothing for an absent role', async () => {
@@ -307,12 +368,12 @@ describe('PermissionsService', () => {
 
     it('drops the entry after a role is rewritten', async () => {
       await h.service.forRole(Role.Admin);
-      expect(h.store.has('role:admin')).toBe(true);
+      expect(h.store.has('default:role:admin')).toBe(true);
 
       await h.service.setForRole(Role.Admin, ['user:read']);
 
-      expect(h.deletedKeys).toEqual(['role:admin']);
-      expect(h.store.has('role:admin')).toBe(false);
+      expect(h.deletedKeys).toEqual(['default:role:admin']);
+      expect(h.store.has('default:role:admin')).toBe(false);
     });
 
     it('makes the new grants visible to the next read', async () => {
@@ -357,7 +418,7 @@ describe('PermissionsService', () => {
         h.service.setForRole(Role.Admin, ['user:read']),
       ).rejects.toThrow('rollback');
 
-      expect(h.deletedKeys).toEqual(['role:admin']);
+      expect(h.deletedKeys).toEqual(['default:role:admin']);
     });
 
     it('leaves other roles alone', async () => {
@@ -365,8 +426,8 @@ describe('PermissionsService', () => {
       // the keyspace on every role change.
       await h.service.setForRole(Role.Admin, ['user:read']);
 
-      expect(h.deletedKeys).toEqual(['role:admin']);
-      expect(h.deletedKeys).not.toContain('role:super_admin');
+      expect(h.deletedKeys).toEqual(['default:role:admin']);
+      expect(h.deletedKeys).not.toContain('default:role:super_admin');
     });
   });
 });

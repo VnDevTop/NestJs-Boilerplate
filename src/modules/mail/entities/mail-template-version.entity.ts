@@ -1,4 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * A superseded version of an `email_templates` row.
@@ -26,11 +27,22 @@ import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 @Entity({ name: 'mail_template_versions' })
 // The read is "the versions of this template, newest first", which is the composite
 // key: template identity plus a monotonic ordering within it.
-@Index('IDX_mail_template_versions_template', ['name', 'locale', 'version'])
-@Index('IDX_mail_template_versions_created_at', ['createdAt'])
+@Index('IDX_mail_template_versions_template', [
+  'tenantId',
+  'name',
+  'locale',
+  'version',
+])
+@Index('IDX_mail_template_versions_created_at', ['tenantId', 'createdAt'])
 export class MailTemplateVersion {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   @Column({ type: 'varchar', length: 64 })
   name!: string;

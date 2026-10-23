@@ -8,6 +8,8 @@ import {
   mailTemplateKey,
   renderCandidate,
 } from './mail-template.store.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 import {
   TEMPLATE_NAMES,
   type TemplateName,
@@ -29,46 +31,74 @@ import {
 /** A repository whose rows this test controls. */
 class FakeTemplates {
   rows = new Map<string, EmailTemplate>();
-  deleted: { name: string; locale: string }[] = [];
+  deleted: { name: string; locale: string; tenantId: string }[] = [];
 
-  private key(name: string, locale: string): string {
-    return `${name}:${locale}`;
+  /**
+   * The key carries the tenant, because the row does.
+   *
+   * A fake that filed rows under `name:locale` would let one tenant's override
+   * answer for another, which is the mistake this phase is about — so the fake
+   * would hide it rather than show it.
+   */
+  private key(name: string, locale: string, tenantId: string): string {
+    return `${tenantId}:${name}:${locale}`;
   }
 
   findOneBy = async (where: {
     name: string;
     locale: string;
+    tenantId: string;
   }): Promise<EmailTemplate | null> =>
-    this.rows.get(this.key(where.name, where.locale)) ?? null;
+    this.rows.get(this.key(where.name, where.locale, where.tenantId)) ?? null;
 
-  delete = async (where: { name: string; locale: string }): Promise<void> => {
+  delete = async (where: {
+    name: string;
+    locale: string;
+    tenantId: string;
+  }): Promise<void> => {
     this.deleted.push(where);
-    this.rows.delete(this.key(where.name, where.locale));
+    this.rows.delete(this.key(where.name, where.locale, where.tenantId));
   };
 }
 
 /** A cache that actually remembers, so the invalidation assertions mean something. */
+/**
+ * A cache that actually remembers, so the invalidation assertions mean something.
+ *
+ * **The tenant is part of the key, as it is in the real cache.** The real service
+ * folds the tenant into every key it is given, and a fake that did not would let
+ * two tenants share one entry — which is the mistake this phase is about.
+ */
 class RecordingCache {
   readonly entries = new Map<string, unknown>();
   readonly deleted: string[] = [];
 
+  constructor(private readonly tenantContext: TenantContextService) {}
+
+  private scoped(key: string): string {
+    return `${this.tenantContext.current()?.id ?? DEFAULT_TENANT_ID}:${key}`;
+  }
+
   get = async <T>(key: string): Promise<T | undefined> =>
-    this.entries.get(key) as T | undefined;
+    this.entries.get(this.scoped(key)) as T | undefined;
 
   wrap = async <T>(key: string, loader: () => Promise<T>): Promise<T> => {
-    if (this.entries.has(key)) {
-      return this.entries.get(key) as T;
+    const scoped = this.scoped(key);
+
+    if (this.entries.has(scoped)) {
+      return this.entries.get(scoped) as T;
     }
 
     const value = await loader();
-    this.entries.set(key, value);
+    this.entries.set(scoped, value);
 
     return value;
   };
 
   delete = async (key: string): Promise<void> => {
-    this.deleted.push(key);
-    this.entries.delete(key);
+    const scoped = this.scoped(key);
+    this.deleted.push(scoped);
+    this.entries.delete(scoped);
   };
 
   asService(): CacheService {
@@ -76,14 +106,25 @@ class RecordingCache {
   }
 }
 
+const tenantScope = {
+  id: '22222222-2222-4222-8222-222222222222',
+  slug: 'acme',
+  name: 'Acme',
+  status: 'active',
+  plan: 'free',
+  schemaName: null,
+};
+
 function harness(): {
   store: MailTemplateStore;
   templates: FakeTemplates;
   cache: RecordingCache;
   saved: EmailTemplate[];
+  tenantContext: TenantContextService;
 } {
   const templates = new FakeTemplates();
-  const cache = new RecordingCache();
+  const tenantContext = new TenantContextService();
+  const cache = new RecordingCache(tenantContext);
   const saved: EmailTemplate[] = [];
 
   const repository = {
@@ -96,7 +137,10 @@ function harness(): {
             findOneBy: templates.findOneBy,
             save: async (row: EmailTemplate) => {
               saved.push(row);
-              templates.rows.set(`${row.name}:${row.locale}`, row);
+              templates.rows.set(
+                `${row.tenantId}:${row.name}:${row.locale}`,
+                row,
+              );
               return row;
             },
             create: (row: Partial<EmailTemplate>) => row as EmailTemplate,
@@ -118,9 +162,10 @@ function harness(): {
     repository as never,
     versions as never,
     cache.asService(),
+    tenantContext,
   );
 
-  return { store, templates, cache, saved };
+  return { store, templates, cache, saved, tenantContext };
 }
 
 describe('MailTemplateStore', () => {
@@ -128,6 +173,39 @@ describe('MailTemplateStore', () => {
 
   beforeEach(() => {
     h = harness();
+  });
+
+  /**
+   * The property the phase is about.
+   *
+   * **A template one tenant edited is not the template another tenant sends.**
+   * The row is an override of a shipped file, and an override one tenant's
+   * operator wrote belongs to that tenant: the other one falls back to the
+   * shipped file rather than sending somebody else's wording.
+   */
+  it("keeps one tenant's override away from another tenant", async () => {
+    const acme = '22222222-2222-4222-8222-222222222222';
+
+    h.templates.rows.set(`${acme}:welcome:en`, {
+      name: 'welcome',
+      locale: 'en',
+      subject: 'Acme subject',
+      text: 'Acme text',
+      html: '<p>Acme body</p>',
+      version: 1,
+      updatedBy: null,
+      tenantId: acme,
+    } as EmailTemplate);
+
+    const byAcme = await h.tenantContext.run({ ...tenantScope, id: acme }, () =>
+      h.store.resolve('welcome', 'en'),
+    );
+    const byDefault = await h.store.resolve('welcome', 'en');
+
+    // The other tenant gets the shipped file's source, not the other tenant's
+    // row: `resolve` returns the source, and the shipped source is the fallback.
+    expect(byAcme.subject).toBe('Acme subject');
+    expect(byDefault.subject).toBe('Welcome to {{appName}}');
   });
 
   it('renders the shipped file when the table is empty', async () => {
@@ -141,7 +219,7 @@ describe('MailTemplateStore', () => {
   });
 
   it('prefers a stored row over the shipped file', async () => {
-    h.templates.rows.set('welcome:en', {
+    h.templates.rows.set(`${DEFAULT_TENANT_ID}:welcome:en`, {
       name: 'welcome',
       locale: 'en',
       subject: 'Edited subject',
@@ -149,6 +227,7 @@ describe('MailTemplateStore', () => {
       html: '<p>Edited body</p>',
       version: 3,
       updatedBy: null,
+      tenantId: DEFAULT_TENANT_ID,
     } as EmailTemplate);
 
     const rendered = await h.store.render('welcome', {
@@ -227,8 +306,10 @@ describe('MailTemplateStore', () => {
 
     await h.store.invalidate('welcome');
 
+    // The key the cache service would have written: the tenant in front, because
+    // that is the shape the service uses.
     expect(h.cache.deleted).toContain(
-      mailTemplateKey('welcome', DEFAULT_LOCALE),
+      `${DEFAULT_TENANT_ID}:${mailTemplateKey('welcome', DEFAULT_LOCALE)}`,
     );
   });
 

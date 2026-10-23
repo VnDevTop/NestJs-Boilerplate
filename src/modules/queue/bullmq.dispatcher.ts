@@ -13,6 +13,8 @@ import type {
   QueueName,
 } from './queue.interface.js';
 import { statusOf } from './queue.interface.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 import type { ProcessorRegistry } from './in-process.dispatcher.js';
 import type { JobProgressService } from './job-progress.service.js';
 import { newJobId } from './job-id.js';
@@ -107,6 +109,7 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
     private readonly configService: ConfigService,
     private readonly processors: ProcessorRegistry,
     private readonly progress: JobProgressService,
+    private readonly context: TenantContextService,
     private readonly bullmq: BullModuleLike | null = loadOptional<BullModuleLike>(
       BULLMQ_SPECIFIER,
     ),
@@ -265,7 +268,11 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
    * the worker's write is the later one.
    */
   async enqueue(queue: QueueName, request: JobRequest): Promise<string> {
-    const job: Job = { ...request, id: newJobId() };
+    const job: Job = {
+      ...request,
+      id: newJobId(),
+      tenantId: this.context.current()?.id ?? DEFAULT_TENANT_ID,
+    };
 
     const options: Record<string, unknown> = {
       attempts: this.config.retry.attempts,
@@ -307,9 +314,11 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
 
     await this.progress.markRunning(job);
 
-    const result: JobResult = await this.processors.process(
-      job,
-      this.progress.context(job),
+    // The worker is a different context from the request that enqueued the
+    // job. The id travels in the job precisely so the writes here carry the
+    // same tenant as the enqueue.
+    const result: JobResult = await this.context.runAs(job.tenantId, () =>
+      this.processors.process(job, this.progress.context(job)),
     );
 
     await this.progress.finish(job.id, statusOf(result), result.error);
@@ -366,7 +375,14 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
       );
     }
 
-    const job: Job = { id: jobId, name, payload };
+    const job: Job = {
+      id: jobId,
+      name,
+      payload,
+      // A job stored by an older version has no tenant on it, and a job with
+      // no tenant would be a job that could write anywhere.
+      tenantId: DEFAULT_TENANT_ID,
+    };
 
     // Only carried over when it is a non-empty string, so a job that was enqueued
     // without one comes back without the key rather than with an empty one. An

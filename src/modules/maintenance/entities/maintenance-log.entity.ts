@@ -8,6 +8,7 @@ import {
 
 import { RetentionTrigger } from './retention-trigger.enum.js';
 import type { RetentionTargetResult } from '../retention.service.js';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * One retention run, recorded permanently.
@@ -37,10 +38,16 @@ import type { RetentionTargetResult } from '../retention.service.js';
 // Phase 23 added this, against the note below that used to say the table carries
 // no index. It does now: the history route is cursor paged, and the table grows
 // for the life of the deployment because nothing prunes it.
-@Index('IDX_maintenance_logs_created_cursor', ['createdAt', 'id'])
+@Index('IDX_maintenance_logs_created_cursor', ['tenantId', 'createdAt', 'id'])
 export class MaintenanceLog {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   @Column({ type: 'timestamptz' })
   startedAt!: Date;

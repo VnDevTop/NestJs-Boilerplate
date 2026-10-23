@@ -3,6 +3,7 @@ import type { DataSource } from 'typeorm';
 import { AdminSeeder, type Seeder } from './admin.seeder.js';
 import { MailTemplateSeeder } from './mail-template.seeder.js';
 import { PermissionSeeder } from './permission.seeder.js';
+import { TenantSeeder } from './tenant.seeder.js';
 
 /**
  * Runs every seeder in order and reports what happened, so a seed is never a
@@ -19,6 +20,11 @@ import { PermissionSeeder } from './permission.seeder.js';
  * usable administrator rather than with nothing.
  */
 export const SEEDERS: Seeder[] = [
+  // The tenants first, because the permission catalogue is cloned into each of
+  // them: a catalogue seeded before the registry exists would be cloned into
+  // nothing, and a deployment would come up with a user who holds no
+  // permission at all.
+  new TenantSeeder(),
   new PermissionSeeder(),
   new AdminSeeder(),
   new MailTemplateSeeder(),

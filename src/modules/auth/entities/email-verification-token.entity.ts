@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 
 import { User } from '../../users/entities/index.js';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * A single-use email verification token.
@@ -20,10 +21,20 @@ import { User } from '../../users/entities/index.js';
  * rather than a scan over variable-length text.
  */
 @Entity({ name: 'email_verification_tokens' })
-@Index('IDX_email_verification_tokens_user', ['userId'])
+@Index('UQ_email_verification_tokens_token', ['tenantId', 'tokenHash'], {
+  unique: true,
+})
+@Index('IDX_email_verification_tokens_expires_at', ['tenantId', 'expiresAt'])
+@Index('IDX_email_verification_tokens_user', ['tenantId', 'userId'])
 export class EmailVerificationToken {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   @Column({ type: 'uuid' })
   userId!: string;
@@ -33,7 +44,6 @@ export class EmailVerificationToken {
   user!: User;
 
   /** Hex sha256 of the token, 64 characters. */
-  @Index({ unique: true })
   @Column({ type: 'varchar', length: 64 })
   tokenHash!: string;
 
@@ -53,7 +63,6 @@ export class EmailVerificationToken {
    * this column and an unindexed range scan over a growing table is a nightly
    * cost nobody notices until it is expensive.
    */
-  @Index()
   @Column({ type: 'timestamptz' })
   expiresAt!: Date;
 

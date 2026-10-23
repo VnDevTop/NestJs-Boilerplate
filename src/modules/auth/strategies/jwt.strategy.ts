@@ -8,6 +8,7 @@ import { PermissionsService } from '../../users/permissions.service.js';
 import { UsersService } from '../../users/index.js';
 import { DeviceService } from '../device.service.js';
 import { RefreshTokenService } from '../refresh-token.service.js';
+import { TenantContextService } from '../../../common/tenancy/tenant-context.service.js';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -17,6 +18,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private readonly permissionsService: PermissionsService,
     private readonly deviceService: DeviceService,
     private readonly refreshTokenService: RefreshTokenService,
+    private readonly tenantContext: TenantContextService = new TenantContextService(),
   ) {
     const secretOrKey = configService.get<string>('jwtAccessToken.secret');
 
@@ -106,6 +108,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       await this.assertSessionLive(payload.sid);
     }
 
+    const current = this.tenantContext.current();
+
+    if (
+      payload.tenantId !== undefined &&
+      current !== undefined &&
+      payload.tenantId !== current.id
+    ) {
+      throw new UnauthorizedException('Invalid access token');
+    }
+
     return {
       id: user.id,
       email: user.email,
@@ -120,6 +132,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // From the row, not the token: confirming an address must take effect on the
       // next request rather than when a fifteen minute token expires.
       isEmailVerified: user.isEmailVerified,
+      tenantId: payload.tenantId ?? current?.id,
     };
   }
 

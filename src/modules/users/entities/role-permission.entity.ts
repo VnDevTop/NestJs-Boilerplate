@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 
 import { Permission } from './permission.entity.js';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * Grants one permission to one role.
@@ -28,12 +29,22 @@ import { Permission } from './permission.entity.js';
  * grants with it, and a grant row cannot outlive the permission it names.
  */
 @Entity({ name: 'role_permissions' })
-@Index('IDX_role_permissions_role_permission', ['role', 'permissionId'], {
-  unique: true,
-})
+@Index(
+  'IDX_role_permissions_role_permission',
+  ['tenantId', 'role', 'permissionId'],
+  {
+    unique: true,
+  },
+)
 export class RolePermission {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   @Column({ type: 'varchar', length: 50 })
   role!: string;

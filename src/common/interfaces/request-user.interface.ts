@@ -28,4 +28,5 @@ export interface RequestUser {
    * nothing extra and takes effect on the next request.
    */
   isEmailVerified: boolean;
+  tenantId?: string;
 }

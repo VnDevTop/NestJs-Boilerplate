@@ -1,0 +1,311 @@
+import { MigrationInterface, QueryRunner } from 'typeorm';
+
+/**
+ * Row-level security, as the layer underneath the repository scope.
+ *
+ * ## Why it is underneath and not instead
+ *
+ * **The repository scope is the first line and this is the second.** An
+ * application bug that forgets the scope gets an empty result from this rather
+ * than another tenant's data — which is the difference between a bug and a
+ * breach. The two are not alternatives: the scope is what the code *intends*,
+ * and the policy is what the database *enforces*.
+ *
+ * ## Why FORCE
+ *
+ * **Without `FORCE`, the table owner bypasses the policy** — and the
+ * application connects as the owner, because the owner is the role that owns
+ * the tables. `FORCE ROW LEVEL SECURITY` applies the policy to the owner too,
+ * which is the only way the policy applies to the application at all.
+ *
+ * ## Why the application is not a superuser
+ *
+ * **A superuser bypasses every policy.** So the migration creates a second
+ * role for the application — one with the ordinary grants and without the
+ * bypass — and the application connects as that role rather than as the owner.
+ * The roles are created here rather than by hand so that a deployment has them
+ * and a reviewer can see what they are.
+ *
+ * ## How the tenant is set
+ *
+ * **`current_setting('app.tenant_id', true)`**, which is read per statement
+ * and is empty when nothing set it. The empty case is the point: a query that
+ * runs without a tenant set matches *no* rows, because `current_setting` returns
+ * null and nothing equals null. A query that forgot the tenant gets an empty
+ * result rather than every tenant's rows.
+ *
+ * The setting is a session setting, so the application sets it with
+ * `SET LOCAL` inside the transaction it is working in — `SET LOCAL` rather than
+ * `SET`, because a session setting that outlived the transaction would leak the
+ * tenant into the next one.
+ */
+export class AddRowLevelSecurity1792800000000 implements MigrationInterface {
+  name = 'AddRowLevelSecurity1792800000000';
+
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "account_unlock_tokens" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "account_unlock_tokens" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "account_unlock_tokens" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "audit_logs" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "audit_logs" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "audit_logs" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "email_templates" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "email_templates" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "email_templates" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "email_verification_tokens" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "email_verification_tokens" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "email_verification_tokens" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "mail_logs" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "mail_logs" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(`ALTER TABLE "mail_logs" FORCE ROW LEVEL SECURITY`);
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "mail_template_versions" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "mail_template_versions" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "mail_template_versions" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "maintenance_logs" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "maintenance_logs" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "maintenance_logs" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "notification_logs" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "notification_logs" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "notification_logs" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "notification_preferences" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "notification_preferences" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "notification_preferences" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "password_history" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "password_history" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "password_history" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "password_reset_tokens" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "password_reset_tokens" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "password_reset_tokens" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "permissions" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "permissions" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "permissions" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "refresh_tokens" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "refresh_tokens" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "refresh_tokens" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "role_permissions" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "role_permissions" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "role_permissions" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "two_factor_secrets" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "two_factor_secrets" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "two_factor_secrets" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "user_devices" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "user_devices" ENABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "user_devices" FORCE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `CREATE POLICY "tenant_isolation" ON "users" USING ("tenantId" = current_setting('app.tenant_id', true)::uuid) WITH CHECK ("tenantId" = current_setting('app.tenant_id', true)::uuid)`,
+    );
+    await queryRunner.query(`ALTER TABLE "users" ENABLE ROW LEVEL SECURITY`);
+    await queryRunner.query(`ALTER TABLE "users" FORCE ROW LEVEL SECURITY`);
+
+    /**
+     * The role the application connects as.
+     *
+     * **Not a superuser, because a superuser bypasses every policy** — and the
+     * policies are the layer underneath the repository scope, so a bypass would
+     * make them decoration.
+     *
+     * The password is the deployment's to set: this role is created so that the
+     * shape exists, and the credentials belong in the environment.
+     */
+    await queryRunner.query(
+      `CREATE ROLE app_user LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`,
+    );
+    await queryRunner.query(`GRANT USAGE ON SCHEMA public TO app_user`);
+    await queryRunner.query(
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user`,
+    );
+  }
+
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`ALTER TABLE "users" DISABLE ROW LEVEL SECURITY`);
+    await queryRunner.query(`DROP POLICY "tenant_isolation" ON "users"`);
+    await queryRunner.query(
+      `ALTER TABLE "user_devices" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(`DROP POLICY "tenant_isolation" ON "user_devices"`);
+    await queryRunner.query(
+      `ALTER TABLE "two_factor_secrets" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "two_factor_secrets"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "role_permissions" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "role_permissions"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "refresh_tokens" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "refresh_tokens"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "permissions" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(`DROP POLICY "tenant_isolation" ON "permissions"`);
+    await queryRunner.query(
+      `ALTER TABLE "password_reset_tokens" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "password_reset_tokens"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "password_history" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "password_history"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "notification_preferences" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "notification_preferences"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "notification_logs" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "notification_logs"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "maintenance_logs" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "maintenance_logs"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "mail_template_versions" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "mail_template_versions"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "mail_logs" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(`DROP POLICY "tenant_isolation" ON "mail_logs"`);
+    await queryRunner.query(
+      `ALTER TABLE "email_verification_tokens" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "email_verification_tokens"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "email_templates" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "email_templates"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "audit_logs" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(`DROP POLICY "tenant_isolation" ON "audit_logs"`);
+    await queryRunner.query(
+      `ALTER TABLE "account_unlock_tokens" DISABLE ROW LEVEL SECURITY`,
+    );
+    await queryRunner.query(
+      `DROP POLICY "tenant_isolation" ON "account_unlock_tokens"`,
+    );
+
+    await queryRunner.query(
+      `REVOKE SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public FROM app_user`,
+    );
+    await queryRunner.query(`REVOKE USAGE ON SCHEMA public FROM app_user`);
+    await queryRunner.query(`DROP ROLE IF EXISTS app_user`);
+  }
+}

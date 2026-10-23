@@ -58,10 +58,25 @@ jobs:
     runs-on: ubuntu-24.04
     needs: verify
 
+    # The three modes the isolation proof needs. `off` is the single-tenant
+    # application, `on` resolves a tenant per request, and `rls` also connects
+    # as the non-superuser role so the policies catch any query that forgot the
+    # scope. The third is not a repetition of the second: it is the only one
+    # where a missing filter fails instead of quietly returning rows.
+    strategy:
+      fail-fast: false
+      matrix:
+        tenancy: [off, on, rls]
+
+    name: e2e (${{ matrix.tenancy }})
+
     # The suite starts its own postgres and redis through testcontainers, which
     # talks to the runner's docker daemon directly. A service container would be a
     # second way to get the same two processes and one more thing to keep in step
     # with `test/e2e/global-setup.ts`.
+    env:
+      E2E_TENANCY_MODE: ${{ matrix.tenancy }}
+
     steps:
       - uses: actions/checkout@v7
 

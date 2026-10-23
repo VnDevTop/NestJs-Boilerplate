@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 
 import { User } from '../../users/entities/index.js';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * A single-use token that clears a permanent lockout.
@@ -23,10 +24,20 @@ import { User } from '../../users/entities/index.js';
  * keeps them apart would be a string comparison at runtime.
  */
 @Entity({ name: 'account_unlock_tokens' })
-@Index('IDX_account_unlock_tokens_user', ['userId'])
+@Index('UQ_account_unlock_tokens_token', ['tenantId', 'tokenHash'], {
+  unique: true,
+})
+@Index('IDX_account_unlock_tokens_expires_at', ['tenantId', 'expiresAt'])
+@Index('IDX_account_unlock_tokens_user', ['tenantId', 'userId'])
 export class AccountUnlockToken {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   @Column({ type: 'uuid' })
   userId!: string;
@@ -36,7 +47,6 @@ export class AccountUnlockToken {
   user!: User;
 
   /** Hex sha256 of the token, 64 characters. */
-  @Index({ unique: true })
   @Column({ type: 'varchar', length: 64 })
   tokenHash!: string;
 
@@ -47,7 +57,6 @@ export class AccountUnlockToken {
    * this column nightly, and an unindexed range scan over a growing table is a cost
    * nobody notices until it is expensive.
    */
-  @Index()
   @Column({ type: 'timestamptz' })
   expiresAt!: Date;
 

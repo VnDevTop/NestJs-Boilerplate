@@ -492,102 +492,103 @@ touching every query, index and unique constraint again.
 
 ### Phase 32: The tenant column, present from the start
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
-- [ ] `tenant_id` on all seventeen tables, **always**, including while
+- [x] `tenant_id` on all seventeen tables, **always**, including while
       `MULTI_TENANT=false`
-- [ ] Composite uniques: `(tenantId, email)`, and the same for every other natural
+- [x] Composite uniques: `(tenantId, email)`, and the same for every other natural
       key
-- [ ] Migration with a fixed default tenant seeded, so the feature can be enabled
+- [x] Migration with a fixed default tenant seeded, so the feature can be enabled
       without a backfill
-- [ ] Indexes lead with `tenantId`
-- [ ] `MULTI_TENANT=false` produces byte-identical behaviour to today
+- [x] Indexes lead with `tenantId`
+- [x] `MULTI_TENANT=false` produces byte-identical behaviour to today
 
 ### Phase 33: The tenant registry
 
-- [ ] A `tenants` table: slug, name, status, plan, and where its data lives
-- [ ] Resolution from host, subdomain or header — the one untrusted input that
+- [x] A `tenants` table: slug, name, status, plan, and where its data lives
+- [x] Resolution from host, subdomain or header — the one untrusted input that
       decides what you can read
-- [ ] An unknown or disabled tenant answers 401 rather than falling back to a
+- [x] An unknown or disabled tenant answers 401 rather than falling back to a
       default
-- [ ] One fixed tenant row seeded for single-tenant deployments
+- [x] One fixed tenant row seeded for single-tenant deployments
 
 ### Phase 34: Tenant context
 
-- [ ] `TenantContext` on AsyncLocalStorage, set before any guard runs
-- [ ] Propagated into queued jobs, because a job with no tenant context is a job
+- [x] `TenantContext` on AsyncLocalStorage, set before any guard runs
+- [x] Propagated into queued jobs, because a job with no tenant context is a job
       that writes in the wrong place
-- [ ] Propagated into scheduled work
+- [x] Propagated into scheduled work
 
 ### Phase 35: Repository scoping
 
-- [ ] A tenant-aware repository base class
-- [ ] Scope applied at the repository, **never** per query — a query that has to
+- [x] A tenant-aware repository base class
+- [x] Scope applied at the repository, **never** per query — a query that has to
       remember is a query that will forget
-- [ ] A test that fails when a repository method is added without a scope
+- [x] A test that fails when a repository method is added without a scope
 
 ### Phase 36: Row-level security
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 Every table. RLS is not a replacement for the repository scope, it is the layer
 underneath: an application bug that forgets the filter gets an empty result rather
 than another customer's data.
 
-- [ ] `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY` on every table —
+- [x] `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY` on every table —
       without `FORCE`, the table owner bypasses it and TypeORM connects as the
       owner
-- [ ] `USING ("tenantId" = current_setting('app.tenant_id', true))`, with `WITH
+- [x] `USING ("tenantId" = current_setting('app.tenant_id', true))`, with `WITH
 CHECK` so an insert cannot write into another tenant
-- [ ] The application role documented as **not** a superuser, because a superuser
+- [x] The application role documented as **not** a superuser, because a superuser
       bypasses every policy
-- [ ] A second, non-superuser role for the app, created by the migration
-- [ ] A test that proves the policy binds: a query with no tenant filter returns
+- [x] A second, non-superuser role for the app, created by the migration
+- [x] A test that proves the policy binds: a query with no tenant filter returns
       nothing rather than everything
 
 ### Phase 37: Cache namespacing
 
-- [ ] `tenantId` folded into the key prefix in **one** place
-- [ ] A test asserting no two tenants' entries can collide
+- [x] `tenantId` folded into the key prefix in **one** place
+- [x] A test asserting no two tenants' entries can collide
 
 ### Phase 38: Per-tenant permissions
 
-Status: Planned
+Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
-- [ ] `permissions` and `role_permissions` gain `tenantId`
-- [ ] `role:<tenantId>:<role>` cache keys
-- [ ] The seeder clones the catalogue into each tenant rather than writing one
+- [x] `permissions` and `role_permissions` gain `tenantId`
+- [x] `role:<tenantId>:<role>` cache keys
+- [x] The seeder clones the catalogue into each tenant rather than writing one
       global copy
-- [ ] `PUT /admin/roles/:role/permissions` tenant-scoped
-- [ ] No `roles` table: `users.role` stays a `varchar`. Converting it is its own
+- [x] `PUT /admin/roles/:role/permissions` tenant-scoped
+- [x] No `roles` table: `users.role` stays a `varchar`. Converting it is its own
       refactor and would change the API surface for no gain here
 
 ### Phase 39: Per-tenant mail templates
 
-- [ ] `email_templates` and `email_template_versions` gain `tenantId`
-- [ ] An operator edits their tenant's wording and nobody else's
-- [ ] The shipped `.hbs` files remain the fallback for every tenant
+- [x] `email_templates` and `email_template_versions` gain `tenantId`
+- [x] An operator edits their tenant's wording and nobody else's
+- [x] The shipped `.hbs` files remain the fallback for every tenant
 
 ### Phase 40: Per-tenant retention
 
-- [ ] The retention run iterates tenants
-- [ ] `maintenance_logs` gains `tenantId`; the history API is tenant-scoped
-- [ ] **Open decision, revisit past five tenants**: one job per tenant means N
+- [x] The retention run iterates tenants
+- [x] `maintenance_logs` gains `tenantId`; the history API is tenant-scoped
+- [x] **Open decision, revisit past five tenants**: one job per tenant means N
       batch-delete passes a night. A single job scanning every tenant is
       compatible with the data but changes the API shape
 
 ### Phase 41: The isolation proof
 
-Status: Planned
+Status: Done
 
 The answer to "how do you know it does not leak".
 
-- [ ] CI runs the suite in **three modes**: `off`, `on`, and `on + RLS on`
-- [ ] The third is the one that earns its keep: it turns "the scope looks right"
+- [x] CI runs the suite in **three modes**: `off`, `on`, and `on + RLS on`
+- [x] The third is the one that earns its keep: it turns "the scope looks right"
       into a check, because any test relying on a row it forgot to scope fails
-- [ ] A cross-tenant isolation spec covering every path: read, write, delete, list,
-      search, export, Excel export, background job, audit query, and cache
-- [ ] A multi-tenant playground in `docs/installation.md`
+- [x] A cross-tenant isolation spec covering every path: read, write, delete, list,
+      search, export, background job, audit query, and cache. Excel export is
+      Phase 55 and joins the same suite when it lands
+- [x] A multi-tenant playground in `docs/installation.md`
 
 ---
 
@@ -983,8 +984,10 @@ Before starting a phase:
 2. Confirm the target phase.
 3. Implement only the required files.
 4. Run `npm run check`.
-5. Commit the phase separately, and add its entry to
-   [CHANGELOG.md](CHANGELOG.md).
+5. Commit each task on its own — a phase is several tasks, and the ones that
+   are easiest to get wrong are the ones worth being able to read on their own.
+6. End the phase with a documentation commit that ticks the phase here and
+   adds its entry to [CHANGELOG.md](CHANGELOG.md).
 
 The order is not arbitrary. Groups 4 to 8 all store data, and they all need a
 paging list route and a tenant column that already exists — retrofitting a tenant
@@ -1032,16 +1035,16 @@ exists means writing the same retry logic twice.
 | Phase 29  | The Postgres translator                        | Done    |
 | Phase 30  | User search                                    | Done    |
 | Phase 31  | The search documentation                       | Done    |
-| Phase 32  | The tenant column, present from the start      | Planned |
-| Phase 33  | The tenant registry                            | Planned |
-| Phase 34  | Tenant context                                 | Planned |
-| Phase 35  | Repository scoping                             | Planned |
-| Phase 36  | Row-level security                             | Planned |
-| Phase 37  | Cache namespacing                              | Planned |
-| Phase 38  | Per-tenant permissions                         | Planned |
-| Phase 39  | Per-tenant mail templates                      | Planned |
-| Phase 40  | Per-tenant retention                           | Planned |
-| Phase 41  | The isolation proof                            | Planned |
+| Phase 32  | The tenant column, present from the start      | Done    |
+| Phase 33  | The tenant registry                            | Done    |
+| Phase 34  | Tenant context                                 | Done    |
+| Phase 35  | Repository scoping                             | Done    |
+| Phase 36  | Row-level security                             | Done    |
+| Phase 37  | Cache namespacing                              | Done    |
+| Phase 38  | Per-tenant permissions                         | Done    |
+| Phase 39  | Per-tenant mail templates                      | Done    |
+| Phase 40  | Per-tenant retention                           | Done    |
+| Phase 41  | The isolation proof                            | Done    |
 | Phase 42  | A shared HTTP client                           | Planned |
 | Phase 43  | Circuit breaker and retry budget               | Planned |
 | Phase 44  | Migrate the existing call sites                | Planned |

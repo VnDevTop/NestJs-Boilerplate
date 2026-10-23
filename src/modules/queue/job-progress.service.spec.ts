@@ -6,6 +6,7 @@ import type { QueueConfig } from '../../configs/queue.config.js';
 import { JobProgressService } from './job-progress.service.js';
 import type { Job } from './queue.interface.js';
 import type { RedisClientService } from './redis-client.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 
 const config: QueueConfig = {
   enabled: false,
@@ -23,6 +24,7 @@ const config: QueueConfig = {
 
 const job: Job = {
   id: '11111111-1111-4111-8111-111111111111',
+  tenantId: DEFAULT_TENANT_ID,
   name: 'maintenance.run-retention',
   payload: {},
 };

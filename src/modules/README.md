@@ -11,6 +11,7 @@ modules
 ├── mail/       transactional email, queued, swappable transport
 ├── queue/      background jobs, with an in-process fallback
 ├── maintenance/ nightly retention, batching, dry run
+├── tenancy/     the tenant registry and how a request is resolved
 └── notification/ operator alerts to Telegram, Slack, Discord, email, log
 ```
 
@@ -28,6 +29,7 @@ decision is what it is.
 | [mail](mail/INTRODUCTION.md)                 | templates, transports, delivery records              |
 | [queue](queue/INTRODUCTION.md)               | drivers, retry, idempotency                          |
 | [maintenance](maintenance/INTRODUCTION.md)   | retention, batching, rehearsal                       |
+| [tenancy](tenancy/INTRODUCTION.md)           | the tenant registry and the request resolution       |
 | [notification](notification/INTRODUCTION.md) | operator alerts and opt-out                          |
 
 **The standards mappings are technical, not compliance claims.** A control being

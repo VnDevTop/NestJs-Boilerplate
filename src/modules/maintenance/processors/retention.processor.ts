@@ -6,6 +6,9 @@ import type {
   JobResult,
 } from '../../queue/queue.interface.js';
 import { NotificationService } from '../../notification/notification.service.js';
+import { TenantRegistry } from '../../tenancy/tenant-registry.service.js';
+import { TenantContextService } from '../../../common/tenancy/tenant-context.service.js';
+import type { TenantContextValue } from '../../tenancy/tenant-registry.service.js';
 import { RetentionTrigger } from '../entities/retention-trigger.enum.js';
 import {
   RetentionService,
@@ -46,6 +49,8 @@ export class RetentionProcessor {
   constructor(
     private readonly retentionService: RetentionService,
     private readonly notifications: NotificationService,
+    private readonly tenants: TenantRegistry,
+    private readonly tenantContext: TenantContextService,
   ) {}
 
   /** True for the job name this processor handles, so routing stays in one place. */
@@ -68,21 +73,52 @@ export class RetentionProcessor {
       };
     }
 
+    // **One run per tenant.** Retention removes rows by age, and a row that is
+    // expired for one tenant is another tenant's live one. A single run over
+    // every table would clean them together, so the job visits each tenant in
+    // turn and each visit is scoped to that tenant.
+    const tenants = await this.tenants.active();
+
+    if (tenants.length === 0) {
+      return { ok: true };
+    }
+
+    for (const tenant of tenants) {
+      const outcome = await this.runForTenant(tenant, payload, context);
+
+      if (!outcome.ok) {
+        return outcome;
+      }
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * Runs the policy for one tenant, in that tenant's context.
+   */
+  private async runForTenant(
+    tenant: TenantContextValue,
+    payload: RetentionJobPayload,
+    context?: JobContext,
+  ): Promise<JobResult> {
     let result: RetentionRunResult;
 
     try {
-      result = await this.retentionService.run({
-        dryRun: payload.dryRun,
-        shouldStop: context ? () => context.isCancelled() : undefined,
-        onProgress: context
-          ? (progress) =>
-              context.report({
-                processed: progress.processed,
-                total: progress.total,
-                current: progress.current,
-              })
-          : undefined,
-      });
+      result = await this.tenantContext.run(tenant, () =>
+        this.retentionService.run({
+          dryRun: payload.dryRun,
+          shouldStop: context ? () => context.isCancelled() : undefined,
+          onProgress: context
+            ? (progress) =>
+                context.report({
+                  processed: progress.processed,
+                  total: progress.total,
+                  current: progress.current,
+                })
+            : undefined,
+        }),
+      );
     } catch (error) {
       // The service catches per target, so a throw here came from outside the
       // loop: no connection, or a pool that would not hand one out. No log row is

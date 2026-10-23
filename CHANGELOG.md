@@ -15,6 +15,365 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: the isolation proof
+
+`feat(tenancy): the request's tenant goes on every statement` ·
+`feat(tenancy): inserts inherit the session tenant` ·
+`feat(tenancy): queued jobs run in the tenant that enqueued them` ·
+`fix(users): stream the tenant-scoped export` ·
+`chore(deps): add pg-query-stream for streamed exports` ·
+`test(tenancy): one tenant cannot reach another` ·
+`ci(tenancy): the suite runs in three modes` ·
+`docs(tenancy): phase 41 — the isolation proof`
+
+**What changed**
+
+- The e2e suite runs in three modes: `E2E_TENANCY_MODE=off`, `on`, and `rls`.
+  The CI matrix runs all three with `fail-fast: false`
+- `TenantScopeSubscriber` puts the request's tenant on the session around every
+  statement when `MULTI_TENANT` or `DATABASE_RLS` is on, and resets it after
+- `TenantContextService.runAs()` runs queued work in the tenant that enqueued it
+- `app_set_tenant_id()` triggers fill `tenantId` from the session for inserts
+  that bypass TypeORM subscribers
+- `ExportService` scopes its streamed cursor inside its own transaction
+- `test/e2e/tenant-isolation.e2e-spec.ts` proves one tenant cannot read, write,
+  delete, list, search, export, audit or cache another tenant's data
+- `docs/installation.md` has a multi-tenant playground; `docs/production.md`
+  describes the request path that now sets the scope
+
+**Why**
+
+Two tenants sharing a database means every query that forgets a filter is a
+leak, and a code review cannot prove otherwise. The third mode connects the
+application as the `app_user` role the RLS migration creates, so a forgotten
+scope returns no rows and a test that depends on one fails. That turns "the
+scope looks right" into something CI checks.
+
+**The setting is per statement, not per request.** There is no transaction per
+request, and a session setting that outlived its query would be the next
+tenant's on a pooled connection. `beforeQuery` sets it, `afterQuery` resets it,
+and a `WeakSet` keeps the subscriber's own `set_config` from recursing.
+
+**Inserts get the tenant from the database.** `repository.insert()` and raw SQL
+never reach a TypeORM subscriber, and the audit writer, mail log and password
+history all insert that way. A `BEFORE INSERT` trigger reads the same session
+setting, so the row passes the policy's `WITH CHECK` without every writer
+having to name the tenant. With no setting it does nothing, which is what keeps
+single-tenant deployments unchanged.
+
+**The export stream is not a query.** TypeORM does not broadcast subscriber
+events for a streamed cursor, so the export opens a query runner, sets the
+scope transaction-local, streams with `.setQueryRunner()`, and rolls the
+transaction back when the cursor is released. The e2e mode also exposed that
+`pg-query-stream` had never been installed and the stream path had never run;
+it is a dependency now, and the file passes through the response interceptor
+instead of being wrapped as JSON.
+
+**Every request in the suite carries the default tenant.** The harness adds the
+header when multi-tenancy is on, so the existing specs keep testing what they
+were written to test rather than turning into 401s; a spec about tenants sets
+its own header afterwards.
+
+---
+
+## feat: retention cleans one tenant at a time
+
+`feat(tenancy): a retention run cleans one tenant` ·
+`feat(tenancy): the retention job visits every tenant`
+
+**What changed**
+
+- The retention job visits every tenant, and each run is scoped to its own
+  tenant
+- The run's predicate filters by the tenant, and the run sets
+  `app.tenant_id` inside the transaction
+- `maintenance_logs` history and the latest run are tenant-scoped
+
+**Why**
+
+Retention removes rows by age, and a row that is expired for one tenant is
+another tenant's live one. A single run over every table would clean them
+together.
+
+**Both halves of the scope are set, because they are not the same half.** The
+`WHERE` clause is what the run intends; `set_config('app.tenant_id', ...)` is
+what the database will let it see. A run that never set the scope would match no
+rows at all, and would report a clean table it had not touched.
+
+**The scope is set inside a transaction, because it is transaction-local.**
+`set_config(..., true)` is undone by the commit, and a session-level setting
+would outlive the tenant it was set for.
+
+**The history is one tenant's.** The numbers in it are the ones that decide
+whether the data is being cleaned.
+
+**A disabled tenant is not visited.** Housekeeping that reached a disabled
+tenant would touch data an operator has asked to leave alone.
+
+---
+
+## feat: a mail template belongs to the tenant that wrote it
+
+`feat(tenancy): a mail template belongs to the tenant that wrote it` ·
+`test(tenancy): one tenant's template is not another's`
+
+**What changed**
+
+- The template read, the write, the history and the reset filter by the tenant
+- The process-local compiled template cache is keyed by the tenant as well
+
+**Why**
+
+An override of a shipped template is one tenant's wording, and it is not another
+tenant's to send: a password reset with the wrong tenant's support address is
+one customer's words landing in another customer's inbox.
+
+**The shipped file stays the fallback.** A tenant with no override of its own
+renders exactly what it rendered before, which is what keeps the phase
+additive.
+
+**The compiled cache is scoped by hand.** The distributed cache needs nothing —
+`CacheService` folds the tenant into every key it is given — but the compiled
+templates are a plain map in this process, and the compiled form is a function
+of the source, which is the tenant's own.
+
+---
+
+## feat: a role holds different grants in different tenants
+
+`feat(tenancy): a role holds different grants in different tenants` ·
+`feat(tenancy): the catalogue is seeded into every tenant`
+
+**What changed**
+
+- The permission read, the catalogue, the write and the bulk read filter by the
+  tenant
+- The seeder clones the catalogue into every tenant rather than writing one
+  global copy
+- `PUT /admin/roles/:role/permissions` is tenant-scoped, by being the same
+  route
+
+**Why**
+
+The same role name in two tenants is two different sets of grants. Without this,
+a tenant's admin role would answer with the grants of whichever tenant seeded
+last.
+
+**The catalogue is cloned, not shared.** The unique index on
+`(tenantId, name)` is what says a permission name belongs to one tenant, and the
+seed walks the tenant registry for that reason: a permission introduced in code
+reaches every tenant on the next seed.
+
+**The tenants are seeded first.** A catalogue cloned into nothing is a
+deployment whose users hold no permission, and the fixed default tenant is the
+one every row written before the registry existed belongs to.
+
+**The seed evicts the keys the service would have written.** The seed talks to
+the raw store rather than to the cache service, so it has to build the key the
+service builds — tenant in front and all.
+
+**The key is `<tenantId>:role:<role>`, and the plan said `role:<tenantId>:<role>`.**
+The cache service folds the tenant into the key prefix in one place, and the
+role key is built on top of that, so the tenant comes first. The plan's
+spelling is the one a key has when nothing scopes it.
+
+---
+
+## feat: the tenant is folded into the cache key, in one place
+
+`feat(tenancy): the tenant is folded into the cache key, in one place` ·
+`test(tenancy): two tenants cannot reach the same entry`
+
+**What changed**
+
+- `src/core/cache/cache.service.ts` — every key carries the tenant, including
+  the read-through wrapper
+- A spec asserting that two tenants' entries cannot collide
+
+**Why**
+
+A key without a tenant is a key two tenants can reach, and the second one to ask
+is served the first one's answer. The tenant is folded in by the cache service
+rather than by the call sites, because a call site that had to remember it would
+be the one that forgot it.
+
+**The wrapper is scoped too.** It coalesces concurrent misses against a key of
+its own, so leaving it alone would have meant a delete that did not delete.
+
+**Work outside a request still caches, under the default tenant.** A seed, a
+scheduled job and a migration are not inside a tenant's context, and refusing
+to cache them would be a strange thing for a cache to do.
+
+---
+
+## feat: row-level security, as the layer underneath
+
+`feat(tenancy): row-level security, enabled and forced` ·
+`feat(tenancy): the policy, on every table` ·
+`feat(tenancy): the application role is not a superuser` ·
+`feat(tenancy): the tenant scope on the connection` ·
+`test(tenancy): the policy binds`
+
+**What changed**
+
+- `src/database/migrations/1792800000000-AddRowLevelSecurity.ts` — the policies
+  on all seventeen tables, and the `app_user` role
+- `src/common/tenancy/tenant-scope.ts` — `setTenantScope()`
+
+**Why**
+
+RLS is not a replacement for the repository scope; it is the layer underneath.
+An application bug that forgets the filter gets an empty result rather than
+another customer's data.
+
+**`FORCE ROW LEVEL SECURITY` is on every table.** Without it the table owner
+bypasses the policy, and TypeORM connects as the owner.
+
+**`WITH CHECK` on every policy, so an insert cannot write into another
+tenant.** A policy that only reads is a policy that guards the wrong direction.
+
+**The application role is not a superuser**, because a superuser bypasses every
+policy — which would make the whole layer a comment.
+
+**The setting is transaction-local, and only the retention run sets it.** The
+request path does not, so the policies bind for the paths that set the scope
+and the repository scope is what holds the line on the others — which the
+production notes say out loud rather than leaving to be discovered.
+
+---
+
+## feat: a repository that only ever sees one tenant's rows
+
+`feat(tenancy): a repository that only ever sees one tenant's rows` ·
+`test(tenancy): a repository method without a scope fails the suite`
+
+**What changed**
+
+- `src/common/tenancy/tenant-scoped.repository.ts` — the base class that applies
+  the scope on every read and write
+- A spec that lists the public methods, so a method added without a scope fails
+
+**Why**
+
+A query that has to remember the tenant is a query that will forget it. The
+scope lives in one place, and the spec fails when a new public method appears
+without one, which is the only way the guarantee survives the next person.
+
+---
+
+## feat: the tenant context
+
+`feat(tenancy): the tenant context` ·
+`feat(tenancy): a request runs inside its tenant` ·
+`feat(tenancy): a job carries its tenant`
+
+**What changed**
+
+- `src/common/tenancy/tenant-context.service.ts` — the context on
+  `AsyncLocalStorage`
+- The middleware sets it before the guard runs
+- `Job.tenantId` is required, and both dispatchers stamp it
+
+**Why**
+
+A job with no tenant context is a job that writes in the wrong place, so the
+tenant travels with the job rather than being looked up when it is processed.
+The field is required on the type, so a job that does not carry one does not
+compile.
+
+**The scope ends with the work.** A callback that outlived the request would
+keep the tenant alive, and the work would be done in a context that says
+something that is no longer true.
+
+**A tenant that had to be passed to every service would be passed to every
+service that remembered**, and the one that forgot would read another tenant's
+rows. The context is the only version of this that cannot be forgotten,
+because nothing has to carry it.
+
+---
+
+## feat: the tenant registry
+
+`feat(tenancy): the tenants table` ·
+`feat(tenancy): the tenant registry` ·
+`feat(tenancy): a request is resolved to a tenant` ·
+`feat(tenancy): the fixed tenant row is seeded`
+
+**What changed**
+
+- `src/modules/tenancy/entities/tenant.entity.ts` — the `tenants` table: slug,
+  name, status, plan and `schemaName`
+- `src/modules/tenancy/tenant-registry.service.ts` — the lookup: by slug, by
+  id, and the default tenant
+- `src/modules/tenancy/tenant.middleware.ts` — the resolution, and the 401s it
+  answers with
+- `src/database/migrations/1792700000000-AddTenantsTable.ts` and a seeder that
+  writes the fixed default row
+
+**Why**
+
+A tenant is a row rather than a setting, because the day a deployment serves
+more than one, an operator has to be able to see them, disable one and give one
+a plan — and none of that is possible with a constant.
+
+**Resolution is header first, host only when a base domain is configured.** The
+header is explicit; the host is inferred, so it is only used where the
+deployment has said what its hosts look like.
+
+**An unknown or disabled tenant is a 401, never a fallback.** Falling back to
+the default tenant would answer a request for another customer's data with
+this deployment's rows.
+
+**The default tenant is a constant and is not looked up.** The feature being
+off must not depend on a row existing: a database that has not been seeded
+still has to answer a request. The seeder writes the row so that an operator
+can see it, and it carries the same id the column's default does — which is
+what makes the feature switchable without a backfill.
+
+---
+
+## feat: the tenant column on every table
+
+`feat(tenancy): the default tenant and the tenancy config` ·
+`feat(tenancy): the tenant column on every table` ·
+`feat(tenancy): a natural key is unique inside its tenant` ·
+`feat(tenancy): an index leads with the tenant` ·
+`test(tenancy): the tenant column, checked on every table`
+
+**What changed**
+
+- `src/common/tenancy/tenant.constants.ts` — `DEFAULT_TENANT_ID` and the header
+  name
+- `src/configs/tenancy.config.ts` — the `tenancy` namespace: `enabled`, `header`
+  and `defaultTenantId`
+- `tenantId` on all seventeen tables, `NOT NULL` with the fixed default
+- The natural keys are composite — `(tenantId, email)`, `(tenantId, name)`,
+  `(tenantId, role, permissionId)` — and every b-tree index leads with the
+  tenant
+- `src/database/migrations/1792600000000-AddTenantColumn.ts`, and a spec that
+  checks every entity, the composite uniques and the index order
+
+**Why**
+
+The column is present from the start rather than added when the feature is
+switched on, because a tenant column added afterwards means touching every
+query, every index and every unique constraint again — and the ones nobody
+remembers are the ones that let two tenants share a row.
+
+**A fixed default, so the feature is switchable without a backfill.** The
+default is a constant rather than a lookup, so a database that has not been
+seeded still answers, and `MULTI_TENANT=false` behaves exactly as it did.
+
+**An address is only unique within a tenant.** A unique key on the address
+alone would stop the second tenant from having an account with an address the
+first one already has, which is the whole point of having more than one tenant.
+
+**Every index leads with the tenant.** A lookup that filters by tenant and then
+by something else needs the index to be in that order, and an index that does not
+lead with the tenant is one that serves one tenant's query at another's cost.
+
+---
+
 ## docs: the search documentation
 
 `docs(search): the search layer's documentation` ·

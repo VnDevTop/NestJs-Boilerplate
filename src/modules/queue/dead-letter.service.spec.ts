@@ -8,9 +8,11 @@ import {
 } from './dead-letter.service.js';
 import type { Job, JobResult } from './queue.interface.js';
 import type { RedisClientService } from './redis-client.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 
 const job: Job = {
   id: '11111111-1111-4111-8111-111111111111',
+  tenantId: DEFAULT_TENANT_ID,
   name: 'mail.send',
   payload: {},
   dedupeKey: 'dedupe:abc',
@@ -116,6 +118,7 @@ describe('DeadLetterService.record', () => {
     await new DeadLetterService(service, 'mail').record(
       {
         id: '11111111-1111-4111-8111-111111111111',
+        tenantId: DEFAULT_TENANT_ID,
         name: 'mail.send',
         payload: {},
       },

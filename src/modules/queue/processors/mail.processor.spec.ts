@@ -7,6 +7,7 @@ import {
   MailProcessor,
   type MailJobPayload,
 } from './mail.processor.js';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 const WELCOME = { firstName: 'Ada', appName: 'Example' };
 
@@ -19,6 +20,7 @@ function job(
 ): Job<MailJobPayload> {
   return {
     id: '11111111-1111-4111-8111-111111111111',
+    tenantId: DEFAULT_TENANT_ID,
     name: MAIL_JOB,
     payload: payload(),
     ...overrides,

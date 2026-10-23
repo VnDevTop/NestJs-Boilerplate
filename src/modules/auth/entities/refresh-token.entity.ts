@@ -11,13 +11,21 @@ import {
 
 import { User } from '../../users/entities/index.js';
 import { RefreshTokenRevokedReason } from '../enums/index.js';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 @Entity({ name: 'refresh_tokens' })
-@Index('IDX_refresh_tokens_user_revoked', ['userId', 'revokedAt'])
+@Index('IDX_refresh_tokens_device', ['tenantId', 'deviceId'])
+@Index('UQ_refresh_tokens_jti', ['tenantId', 'jti'], { unique: true })
+@Index('IDX_refresh_tokens_user_revoked', ['tenantId', 'userId', 'revokedAt'])
 // Cursor paging for `GET /auth/sessions`. Replaces nothing — the `(userId,
 // revokedAt)` index above still serves the "revoke every session" write path,
 // which does not sort.
-@Index('IDX_refresh_tokens_user_created_cursor', ['userId', 'createdAt', 'id'])
+@Index('IDX_refresh_tokens_user_created_cursor', [
+  'tenantId',
+  'userId',
+  'createdAt',
+  'id',
+])
 // The index the session-age check reads.
 //
 // **Declared on the class, not on the column.** A property-level `@Index` records
@@ -31,10 +39,20 @@ import { RefreshTokenRevokedReason } from '../enums/index.js';
 // The composite is the one worth having: the question is "which of *this user's*
 // sessions have outlived the limit", and an index leading with `userId` seeks
 // straight to that user's rows.
-@Index('IDX_refresh_tokens_session_started', ['userId', 'sessionStartedAt'])
+@Index('IDX_refresh_tokens_session_started', [
+  'tenantId',
+  'userId',
+  'sessionStartedAt',
+])
 export class RefreshToken {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   @Column({ type: 'uuid' })
   userId!: string;
@@ -43,7 +61,6 @@ export class RefreshToken {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Index({ unique: true })
   @Column({ type: 'uuid' })
   jti!: string;
 
@@ -74,7 +91,6 @@ export class RefreshToken {
   @Column({ type: 'uuid', nullable: true })
   replacedById!: string | null;
 
-  @Index()
   @Column({ type: 'uuid', nullable: true })
   deviceId!: string | null;
 

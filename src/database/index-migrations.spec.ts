@@ -79,10 +79,17 @@ function migrationIndexes(): MigrationIndex[] {
 
   const found: MigrationIndex[] = [];
 
-  for (const file of readdirSync(directory)) {
+  // Sorted, because the order decides which definition of an index is the
+  // current one, and the directory's order is not the migration's order.
+  for (const file of readdirSync(directory).sort()) {
     const source = readFileSync(join(directory, file), 'utf8');
 
-    for (const match of source.matchAll(
+    // **Only the `up` section.** A migration whose `down` restores an index
+    // names it there too, and the schema *after* the migration is the `up`'s
+    // version.
+    const up = source.split('public async down')[0] ?? source;
+
+    for (const match of up.matchAll(
       /CREATE (UNIQUE )?INDEX "([^"]+)" ON (?:"public"\.)?"([^"]+)"(?:\s+USING\s+\w+)?\s*\(([^)]*)\)/g,
     )) {
       found.push({
@@ -100,9 +107,60 @@ function migrationIndexes(): MigrationIndex[] {
   return found;
 }
 
+/**
+ * The indexes a later migration dropped.
+ *
+ * **An index that was replaced is not in the current schema**, so it is not
+ * something the entity has to declare: the migration that replaced it created
+ * the new one, and the entity declares that. A check that compared the entity
+ * with every migration's history would fail on every index the tenant column
+ * replaced — which is exactly the set of indexes this repository just changed.
+ */
+function droppedIndexNames(): Set<string> {
+  const dropped = new Set<string>();
+
+  // Sorted, because the order decides which definition of an index is the
+  // current one, and the directory's order is not the migration's order.
+  for (const file of readdirSync(
+    join(process.cwd(), 'src', 'database', 'migrations'),
+  ).sort()) {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'database', 'migrations', file),
+      'utf8',
+    );
+
+    for (const match of source.matchAll(
+      /DROP INDEX\s+(?:"[^"]*"\.)?"([^"]+)"/g,
+    )) {
+      dropped.add(match[1] ?? '');
+    }
+  }
+
+  return dropped;
+}
+
+/**
+ * The current definition of each index.
+ *
+ * **The last migration that created it wins.** An index that was replaced keeps
+ * both definitions in the folder — the old one and the new one — and the schema
+ * today is the new one. Comparing the entity with the *old* definition would
+ * fail on every index the tenant column replaced.
+ */
+function currentIndexes(): MigrationIndex[] {
+  const current = new Map<string, MigrationIndex>();
+
+  for (const index of migrationIndexes()) {
+    current.set(`${index.table}.${index.name}`, index);
+  }
+
+  return [...current.values()];
+}
+
 describe('the index declarations and the DDL that creates them', () => {
   const declared = entityIndexes();
   const created = migrationIndexes();
+  const current = currentIndexes();
 
   it('creates every index an entity names, with the same columns', () => {
     // The name is the contract between the two. A migration creating
@@ -114,7 +172,7 @@ describe('the index declarations and the DDL that creates them', () => {
         continue;
       }
 
-      const match = created.find(
+      const match = current.find(
         (candidate) =>
           candidate.name === index.name && candidate.table === index.table,
       );
@@ -142,8 +200,16 @@ describe('the index declarations and the DDL that creates them', () => {
     // What is still checked is that the *coverage* matches: the index a
     // migration creates over these columns is the one the entity declares over
     // the same columns.
+    const dropped = droppedIndexNames();
+
     for (const index of created) {
       if (index.name === null || index.name === '') {
+        continue;
+      }
+
+      // Replaced by a later migration, so it is not part of the schema the
+      // entity describes.
+      if (dropped.has(index.name)) {
         continue;
       }
 

@@ -17,6 +17,7 @@ import {
   redisConfig,
   securityConfig,
   swaggerConfig,
+  tenancyConfig,
   throttlerConfig,
   throttlerModuleConfig,
   twoFactorConfig,
@@ -29,6 +30,7 @@ import {
   MaintenanceSchedulerModule,
   NotificationEventsModule,
   QueueModule,
+  TenancyModule,
   UsersModule,
 } from './modules/index.js';
 import {
@@ -74,6 +76,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
         redisConfig,
         securityConfig,
         swaggerConfig,
+        tenancyConfig,
         throttlerConfig,
         twoFactorConfig,
       ],
@@ -154,6 +157,15 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     UsersModule,
     AuthModule,
     AdminModule,
+
+    /**
+     * Which tenant a request is for.
+     *
+     * At the root, because the tenant decides what a request may see, and a
+     * module every other module depends on cannot be below any of them. Its
+     * middleware runs before the guards.
+     */
+    TenancyModule,
 
     /**
      * The audit trail.

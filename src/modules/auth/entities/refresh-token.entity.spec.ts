@@ -60,7 +60,7 @@ describe('the refresh_tokens table', () => {
     // a column lands in the indices list with a flattened `unique` field.
     const unique = indices().filter((index) => index.unique);
 
-    expect(unique.map((index) => index.columns)).toEqual([['jti']]);
+    expect(unique.map((index) => index.columns)).toEqual([['tenantId', 'jti']]);
   });
 
   it('records the session start separately from the token creation', () => {
@@ -75,7 +75,12 @@ describe('the refresh_tokens table', () => {
 
 describe('indexing for cursor paging', () => {
   it('carries the keyset index the session list pages on', () => {
-    expect(indexColumns(CURSOR_INDEX)).toEqual(['userId', 'createdAt', 'id']);
+    expect(indexColumns(CURSOR_INDEX)).toEqual([
+      'tenantId',
+      'userId',
+      'createdAt',
+      'id',
+    ]);
   });
 
   it('leads with the owner, so the index seeks to one user', () => {
@@ -83,7 +88,8 @@ describe('indexing for cursor paging', () => {
     // postgres can walk that user's rows in order rather than filter the table.
     const columnsOf = indexColumns(CURSOR_INDEX);
 
-    expect(columnsOf?.[0]).toBe('userId');
+    expect(columnsOf?.[0]).toBe('tenantId');
+    expect(columnsOf?.[1]).toBe('userId');
     expect(columnsOf?.slice(-2)).toEqual(['createdAt', 'id']);
   });
 
@@ -94,13 +100,21 @@ describe('indexing for cursor paging', () => {
   it('keeps the revocation index, because that write does not sort', () => {
     // "Revoke every session of this user" is an equality on `userId` and a
     // filter on `revokedAt`, and the keyset index cannot serve it.
-    expect(indexColumns(REVOKE_INDEX)).toEqual(['userId', 'revokedAt']);
+    expect(indexColumns(REVOKE_INDEX)).toEqual([
+      'tenantId',
+      'userId',
+      'revokedAt',
+    ]);
   });
 
   it('keeps the session-age index, because that question is asked by column', () => {
     // "Which sessions of this user have outlived the limit" is an indexed
     // comparison on `sessionStartedAt`, and it is not the session list's sort.
-    expect(indexColumns(AGE_INDEX)).toEqual(['userId', 'sessionStartedAt']);
+    expect(indexColumns(AGE_INDEX)).toEqual([
+      'tenantId',
+      'userId',
+      'sessionStartedAt',
+    ]);
   });
 
   it('sorts on a column that is never null', () => {

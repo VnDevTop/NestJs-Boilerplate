@@ -19,6 +19,8 @@ import {
   readPaginatedResult,
 } from '../../common/query/index.js';
 import { retentionConfig } from '../../configs/retention.config.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 import { MaintenanceLog } from './entities/maintenance-log.entity.js';
 import { RETENTION_QUERY_SPEC } from './retention-query.js';
 import { RetentionTrigger } from './entities/retention-trigger.enum.js';
@@ -169,7 +171,36 @@ export class RetentionService {
     @InjectRepository(MaintenanceLog)
     private readonly logs: Repository<MaintenanceLog>,
     private readonly metrics: MetricsService,
+    private readonly tenantContext: TenantContextService,
   ) {}
+
+  /**
+   * The tenant whose rows this run cleans.
+   *
+   * **The run is one tenant's.** Retention removes rows by age, and age is not
+   * a tenant's business: one tenant's expired tokens are another tenant's live
+   * ones, and a run that swept the whole table would delete the other tenant's
+   * while it was cleaning this one.
+   */
+  private tenantId(): string {
+    return this.tenantContext.current()?.id ?? DEFAULT_TENANT_ID;
+  }
+
+  /**
+   * The predicate narrowed to one tenant.
+   *
+   * **Both halves are needed, and they are not the same half.** The `WHERE`
+   * clause says which rows this run is allowed to remove; the `set_config` says
+   * which rows the database will let it see. Row-level security is the floor,
+   * not the ceiling: a policy that is not in force because the setting was never
+   * set reads as "no rows", which is a run that reports success and deletes
+   * nothing.
+   */
+  private tenantPredicate(target: RetentionTarget, cutoff: Date): string {
+    const tenantId = this.tenantId();
+
+    return `(${target.buildPredicate(cutoff)}) AND d."tenantId" = '${tenantId}'`;
+  }
 
   async run(options: RetentionRunOptions = {}): Promise<RetentionRunResult> {
     const dryRun = options.dryRun ?? this.config.dryRun;
@@ -298,7 +329,10 @@ export class RetentionService {
   }> {
     const { dryRun, deadline, now, sleep, shouldStop, onProgress } = context;
     const startedAtMs = now();
-    const predicate = target.buildPredicate(resolveCutoff(target.ageDays));
+    const predicate = this.tenantPredicate(
+      target,
+      resolveCutoff(target.ageDays),
+    );
 
     const base = {
       id: target.id,
@@ -310,10 +344,7 @@ export class RetentionService {
 
     try {
       if (dryRun) {
-        const rows = await runner.query(
-          `SELECT count(*)::int AS n FROM "${target.table}" d WHERE ${predicate}`,
-        );
-        const deleted = Number(rows[0]?.n ?? 0);
+        const deleted = await this.countRows(runner, target, predicate);
 
         return {
           result: {
@@ -395,6 +426,52 @@ export class RetentionService {
     }
   }
 
+  /**
+   * Counts the rows a target would delete.
+   *
+   * **Inside a transaction, because the tenant scope is transaction-local.**
+   * `set_config(..., true)` is undone by the commit, so a session-level setting
+   * would be the only way to count outside one — and a session-level setting
+   * outlives the tenant it was set for, which is how the next tenant's count
+   * ends up reading the first tenant's rows.
+   */
+  private async countRows(
+    runner: QueryRunner,
+    target: RetentionTarget,
+    predicate: string,
+  ): Promise<number> {
+    await runner.startTransaction();
+
+    try {
+      await this.applyTenantScope(runner);
+
+      const rows = await runner.query(
+        `SELECT count(*)::int AS n FROM "${target.table}" d WHERE ${predicate}`,
+      );
+
+      await runner.commitTransaction();
+
+      return Number(rows[0]?.n ?? 0);
+    } catch (error) {
+      await runner.rollbackTransaction().catch(() => undefined);
+
+      throw error;
+    }
+  }
+
+  /**
+   * Tells the database which tenant this run is cleaning.
+   *
+   * **The same statement the request path uses.** Row-level security reads the
+   * tenant out of the session, and a run that did not set it would match no rows
+   * at all — a clean report and an untouched table.
+   */
+  private async applyTenantScope(runner: QueryRunner): Promise<void> {
+    await runner.query(`SELECT set_config('app.tenant_id', $1, true)`, [
+      this.tenantId(),
+    ]);
+  }
+
   /** One batch, in its own transaction so a failure is contained. */
   private async deleteBatch(
     runner: QueryRunner,
@@ -412,6 +489,8 @@ export class RetentionService {
     await runner.startTransaction();
 
     try {
+      await this.applyTenantScope(runner);
+
       const result = await runner.query(sql, [this.config.batchSize]);
       await runner.commitTransaction();
 
@@ -445,6 +524,7 @@ export class RetentionService {
     trigger: RetentionTrigger,
   ): Promise<MaintenanceLog> {
     const entry = this.logs.create({
+      tenantId: this.tenantId(),
       startedAt: new Date(result.startedAt),
       finishedAt: new Date(
         new Date(result.startedAt).getTime() + result.durationMs,
@@ -484,7 +564,16 @@ export class RetentionService {
 
     return readPaginatedResult({
       query: this.logs.createQueryBuilder('run'),
-      criteria,
+      // The history is one tenant's. A run against another tenant's rows is
+      // somebody else's record, and the numbers in it are the ones that decide
+      // whether the data is being cleaned.
+      criteria: {
+        ...criteria,
+        filters: [
+          ...criteria.filters,
+          { column: 'tenantId', operator: 'eq', value: this.tenantId() },
+        ],
+      },
       alias: 'run',
     });
   }
@@ -497,6 +586,7 @@ export class RetentionService {
     // non-empty table. A repository mock never reached that, which is why it
     // passed every test and failed on the first real call.
     const [entry] = await this.logs.find({
+      where: { tenantId: this.tenantId() },
       order: { startedAt: 'DESC' },
       take: 1,
     });

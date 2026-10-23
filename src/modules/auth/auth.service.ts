@@ -10,6 +10,8 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 
 import { JwtPayload, RequestUser } from '../../common/interfaces/index.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 import {
   CursorPaginationQueryDto,
   PaginatedResultDto,
@@ -127,6 +129,7 @@ export class AuthService {
     // fourteen collaborators still builds. With `prom-client` absent it is a no-op,
     // which is the state this runs in.
     private readonly metrics: MetricsService = new MetricsService(),
+    private readonly tenantContext: TenantContextService = new TenantContextService(),
   ) {}
 
   private get appConfig(): AppConfig {
@@ -1252,6 +1255,7 @@ export class AuthService {
       // of after this token expires. Read from the DTO rather than re-fetched, so
       // the value in the token always matches the row it was minted from.
       sv: user.sessionsVersion,
+      tenantId: this.tenantContext.current()?.id ?? DEFAULT_TENANT_ID,
     };
 
     return this.jwtService.signAsync(payload);

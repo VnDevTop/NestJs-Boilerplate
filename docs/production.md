@@ -144,6 +144,75 @@ Human readable elsewhere. A message containing newlines is collapsed to a single
 line so a stack trace cannot be misread as several entries, and an `Error` is
 serialised with its name, message and stack rather than as `{}`.
 
+## Multi-tenancy
+
+Off by default, and off means every request belongs to the fixed default
+tenant. The `tenantId` column is on every table either way, so turning the
+feature on is a configuration change and not a migration.
+
+```dotenv
+MULTI_TENANT=false
+TENANT_HEADER=x-tenant-id
+# TENANT_BASE_DOMAIN=example.com
+```
+
+**The header carries a slug, not an id.** The slug is what an operator reads
+out of a support ticket, and the id is what the database stores.
+
+**The host is only read when `TENANT_BASE_DOMAIN` is set.** Inferring a tenant
+from a host is only safe where the deployment has said what its hosts look
+like; everywhere else it would let a stray `Host` header choose the customer.
+
+**An unknown or disabled tenant is a 401.** Not a fallback to the default
+tenant: a fallback would answer a request for another customer's data with
+this deployment's rows.
+
+**Three layers enforce the isolation, and none of them replaces another:**
+
+| Layer                         | What it does                                             |
+| ----------------------------- | -------------------------------------------------------- |
+| The tenant context            | decides which tenant this request is                     |
+| The scoped repository         | says which rows the query is asking for                  |
+| The row-level security policy | says which rows the database will let the connection see |
+
+**The application role must not be a superuser.** A superuser bypasses every
+policy, which would make the whole layer a comment. The migration creates an
+`app_user` role for it, with `LOGIN` and no password — set one before pointing
+`DATABASE_URL` at it, and keep an owner connection for migrations and seeding:
+
+```sql
+ALTER ROLE app_user WITH PASSWORD 'a-secret-you-generated';
+```
+
+**The policies need the tenant in the session.** They read
+`current_setting('app.tenant_id', true)`, and the application sets it with
+`set_config(…, false)` around every statement, then `RESET`s it before the
+connection returns to the pool. Per statement rather than per request, because
+there is no transaction per request: a session setting left behind on a pooled
+connection would be the next tenant's.
+
+**The subscriber that sets it is installed when `MULTI_TENANT` or
+`DATABASE_RLS` is on.** It goes through the same TypeORM event as every ordinary
+query, including the request path, the retention run and the export stream.
+Transaction control and the `set_config` statement itself are left alone.
+
+**Inserts are covered by a trigger, not only by the subscriber.** A policy's
+`WITH CHECK` compares the new row with the session tenant, and the audit writer,
+mail log and password history insert through raw SQL — paths a TypeORM
+subscriber does not see for every insert. `app_set_tenant_id()` fills `tenantId`
+from the session on every tenant table, and does nothing when no session tenant
+is set, so single-tenant deployments are unchanged.
+
+**The export stream scopes its own transaction.** A streamed cursor is not a
+`query()`, so TypeORM does not broadcast it; `ExportService` opens a query
+runner, sets the scope transaction-local, and rolls the transaction back when
+the cursor is released.
+
+So the policies bind for any deployment that sets `DATABASE_RLS=true` and
+connects as `app_user`. The repository scope remains the first layer — it is
+what makes the query ask for the right rows — and row-level security is the
+backstop that turns a forgotten filter into an empty result rather than a leak.
+
 ## Cache and what it holds
 
 Authentication is served from Redis, so an authenticated request costs cache reads
@@ -162,6 +231,10 @@ when it should be, so this section is mostly about what has to be dropped.
 CACHE_AUTH_USER_TTL=60       # claims, and the device versions beside them
 CACHE_AUTH_ROLE_TTL=600      # one entry per role, not per user
 ```
+
+**Every key carries the tenant.** A key without one is a key two tenants can
+reach, and the second one to ask is served the first one's answer. The cache
+service folds the tenant in, in one place, so a call site cannot forget it.
 
 **Fail open.** A dead Redis means a miss, so the request falls back to the database
 and is slower rather than refused. `/health/ready` reports `degraded` and still

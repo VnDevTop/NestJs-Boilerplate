@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
   VersionColumn,
 } from 'typeorm';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 /**
  * One user's answer to "should this event reach this channel".
@@ -37,10 +38,16 @@ import {
   'event',
   'channel',
 ])
-@Index('IDX_notification_preferences_user', ['userId'])
+@Index('IDX_notification_preferences_user', ['tenantId', 'userId'])
 export class NotificationPreference {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   /**
    * No foreign key on purpose, unlike `role_permissions`.

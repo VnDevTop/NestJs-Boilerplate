@@ -4,6 +4,8 @@ import { authRoleKey } from '../../core/cache/auth-cache.keys.js';
 import { createRedisStore } from '../../core/cache/redis-store.js';
 import { cacheConfig } from '../../configs/index.js';
 import { ROLE_PERMISSIONS } from '../../common/enums/permission.enum.js';
+import { Tenant } from '../../modules/tenancy/entities/tenant.entity.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 import {
   Permission,
   RolePermission,
@@ -39,66 +41,110 @@ import type { Seeder } from './admin.seeder.js';
 export const CACHED_ROLE_GRANT_KEYS: readonly string[] =
   Object.keys(ROLE_PERMISSIONS).map(authRoleKey);
 
+/**
+ * The cache keys a tenant's grants live under.
+ *
+ * **The tenant is in front, because the cache service puts it there.** The
+ * seed invalidates the raw store rather than going through the service, so it
+ * has to build the key the service would have built — and a key without the
+ * tenant would be a key in the default tenant's namespace, which is not where
+ * the grant sets are.
+ */
+export function cachedRoleGrantKeys(tenantId: string): string[] {
+  return Object.keys(ROLE_PERMISSIONS).map(
+    (role) => `${tenantId}:${authRoleKey(role)}`,
+  );
+}
+
 export class PermissionSeeder implements Seeder {
   readonly name = 'permissions';
 
   async run(dataSource: DataSource): Promise<void> {
     const permissions = dataSource.getRepository(Permission);
     const grants = dataSource.getRepository(RolePermission);
+    const registered = await dataSource.getRepository(Tenant).find();
 
-    const byName = new Map<string, string>();
-
-    for (const name of Object.values(ROLE_PERMISSIONS).flat()) {
-      const existing = await permissions.findOneBy({ name });
-
-      // Skipped when the row exists with the same description, so a re-seed is a
-      // read rather than a write on every permission.
-      if (existing === null) {
-        await permissions.insert({ name, description: '' });
-      }
-
-      const id =
-        existing?.id ?? (await permissions.findOneByOrFail({ name })).id;
-
-      byName.set(name, id);
-    }
+    // The default tenant is always in the list, even when the registry has
+    // not been seeded. A catalogue cloned into nothing is a deployment whose
+    // users hold no permission at all, and the fixed default is the tenant
+    // every row before the registry existed belongs to.
+    const tenants =
+      registered.length > 0
+        ? registered
+        : [{ id: DEFAULT_TENANT_ID } as Tenant];
 
     let inserted = 0;
 
-    for (const [role, names] of Object.entries(ROLE_PERMISSIONS)) {
-      for (const name of names) {
-        const permissionId = byName.get(name);
+    // **The catalogue is cloned into every tenant**, rather than written once
+    // globally. A tenant's permissions are its own: the same role name in two
+    // tenants is two different sets of grants, and the unique index on
+    // `(tenantId, name)` is what says so.
+    for (const tenant of tenants) {
+      const byName = new Map<string, string>();
 
-        if (permissionId === undefined) {
-          throw new Error(
-            `Role ${role} lists permission ${name}, which is not in the catalogue`,
-          );
+      for (const name of Object.values(ROLE_PERMISSIONS).flat()) {
+        const existing = await permissions.findOneBy({
+          name,
+          tenantId: tenant.id,
+        });
+
+        // Skipped when the row exists with the same description, so a re-seed
+        // is a read rather than a write on every permission.
+        if (existing === null) {
+          await permissions.insert({
+            name,
+            description: '',
+            tenantId: tenant.id,
+          });
         }
 
-        // `orIgnore` so the conflict is resolved by the unique index rather than
-        // by a check another process could invalidate between check and insert.
-        //
-        // `returning` because `InsertResult.identifiers` counts the rows it
-        // *attempted*, not the ones the database kept. Without it the summary
-        // reported every grant as new on every run, which is the kind of number
-        // that teaches an operator to ignore the line that tells them something.
-        const result = await grants
-          .createQueryBuilder()
-          .insert()
-          .into(RolePermission)
-          .values({ role, permissionId })
-          .orIgnore()
-          .returning('id')
-          .execute();
+        const id =
+          existing?.id ??
+          (
+            await permissions.findOneByOrFail({
+              name,
+              tenantId: tenant.id,
+            })
+          ).id;
 
-        inserted += result.raw.length;
+        byName.set(name, id);
       }
+
+      for (const [role, names] of Object.entries(ROLE_PERMISSIONS)) {
+        for (const name of names) {
+          const permissionId = byName.get(name);
+
+          if (permissionId === undefined) {
+            throw new Error(
+              `Role ${role} lists permission ${name}, which is not in the catalogue`,
+            );
+          }
+
+          // `orIgnore` so the conflict is resolved by the unique index rather than
+          // by a check another process could invalidate between check and insert.
+          //
+          // `returning` because `InsertResult.identifiers` counts the rows it
+          // *attempted*, not the ones the database kept. Without it the summary
+          // reported every grant as new on every run, which is the kind of number
+          // that teaches an operator to ignore the line that tells them something.
+          const result = await grants
+            .createQueryBuilder()
+            .insert()
+            .into(RolePermission)
+            .values({ role, permissionId, tenantId: tenant.id })
+            .orIgnore()
+            .returning('id')
+            .execute();
+
+          inserted += result.raw.length;
+        }
+      }
+
+      await this.dropCachedRoleGrants(tenant.id);
     }
 
-    await this.dropCachedRoleGrants();
-
     process.stdout.write(
-      `  permissions: ${byName.size} in the catalogue, ${inserted} new grants\n`,
+      `  permissions: ${tenants.length} tenant(s), ${inserted} new grants\n`,
     );
   }
 
@@ -124,7 +170,7 @@ export class PermissionSeeder implements Seeder {
    * holds entries no other process can reach, so the only correct response is to
    * let them expire, which is what the configured TTL bounds.
    */
-  private async dropCachedRoleGrants(): Promise<void> {
+  private async dropCachedRoleGrants(tenantId: string): Promise<void> {
     const config = cacheConfig();
 
     if (config.backend === 'memory') {
@@ -134,7 +180,7 @@ export class PermissionSeeder implements Seeder {
     const store = createRedisStore(config);
 
     try {
-      await store.deleteMany?.([...CACHED_ROLE_GRANT_KEYS]);
+      await store.deleteMany?.(cachedRoleGrantKeys(tenantId));
     } catch {
       process.stderr.write(
         `  could not clear cached role grants; newly seeded permissions may take ` +

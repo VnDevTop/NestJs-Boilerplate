@@ -1,4 +1,5 @@
-import { ExecutionContext } from '@nestjs/common';
+import { ExecutionContext, StreamableFile } from '@nestjs/common';
+import { Readable } from 'node:stream';
 import { firstValueFrom, of } from 'rxjs';
 
 import { describe, expect, it } from 'vitest';
@@ -55,6 +56,15 @@ describe('ResponseTransformInterceptor', () => {
       hasMore: true,
       nextCursor: 'abc',
     });
+  });
+
+  it('leaves a file’s stream untouched', async () => {
+    const file = new StreamableFile(Readable.from('a,b\n1,2\n'));
+    const result = await wrap(file);
+
+    // The stream is the body. Wrapping it would answer with a JSON description
+    // of a stream and lose the download.
+    expect(result).toBe(file);
   });
 
   it('keeps a page with nothing after it honest', async () => {

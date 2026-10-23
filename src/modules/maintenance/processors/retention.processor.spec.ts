@@ -13,6 +13,9 @@ import type {
 } from '../retention.service.js';
 import type { Job } from '../../queue/queue.interface.js';
 import type { NotificationService } from '../../notification/notification.service.js';
+import { TenantContextService } from '../../../common/tenancy/tenant-context.service.js';
+import { TenantRegistry } from '../../tenancy/tenant-registry.service.js';
+import type { TenantContextValue } from '../../tenancy/tenant-registry.service.js';
 
 function runResult(
   overrides: Partial<RetentionRunResult> = {},
@@ -60,7 +63,10 @@ interface Harness {
   notify: ReturnType<typeof vi.fn>;
 }
 
-function harness(result: RetentionRunResult | Error = runResult()): Harness {
+function harness(
+  result: RetentionRunResult | Error = runResult(),
+  tenants: TenantContextValue[] = [],
+): Harness {
   const run =
     result instanceof Error
       ? vi.fn().mockRejectedValue(result)
@@ -71,6 +77,15 @@ function harness(result: RetentionRunResult | Error = runResult()): Harness {
   const insert = vi.fn().mockResolvedValue({ id: 'log-1' });
   const notify = vi.fn().mockResolvedValue({ deliveries: [] });
 
+  const tenantScope: TenantContextValue = {
+    id: '22222222-2222-4222-8222-222222222222',
+    slug: 'acme',
+    name: 'Acme',
+    status: 'active',
+    plan: 'free',
+    schemaName: null,
+  };
+
   return {
     processor: new RetentionProcessor(
       {
@@ -78,6 +93,13 @@ function harness(result: RetentionRunResult | Error = runResult()): Harness {
         record: insert,
       } as unknown as RetentionService,
       { notify } as unknown as NotificationService,
+      // One tenant, so the run is the one the tenant has. A registry with no
+      // tenants would make the job a no-op, which is a job that reports success
+      // without cleaning anything.
+      {
+        active: async () => (tenants.length > 0 ? tenants : [tenantScope]),
+      } as unknown as TenantRegistry,
+      new TenantContextService(),
     ),
     run,
     insert,
@@ -224,6 +246,43 @@ describe('RetentionProcessor', () => {
       // `undefined` rather than `false`, so a deployment configured for dry runs
       // cannot be flipped into deleting real rows by an empty payload.
       expect(h.run).toHaveBeenCalledWith({ dryRun: undefined });
+    });
+  });
+
+  /**
+   * The property the phase is about.
+   *
+   * **The job visits every tenant.** Retention removes rows by age, and a row
+   * that is expired for one tenant is another tenant's live one — so the job
+   * cleans them one at a time, each run scoped to its own tenant.
+   */
+  describe('the tenants it visits', () => {
+    it('runs the policy once per tenant', async () => {
+      h = harness(runResult(), [
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          slug: 'acme',
+          name: 'Acme',
+          status: 'active',
+          plan: 'free',
+          schemaName: null,
+        },
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          slug: 'other',
+          name: 'Other',
+          status: 'active',
+          plan: 'free',
+          schemaName: null,
+        },
+      ]);
+
+      const result = await h.processor.process(job({}));
+
+      expect(result.ok).toBe(true);
+      expect(h.run).toHaveBeenCalledTimes(2);
+      // A row per tenant, so the history says whose rows went.
+      expect(h.insert).toHaveBeenCalledTimes(2);
     });
   });
 

@@ -111,6 +111,71 @@ The application is working when:
 - a registered user appears in `mail_logs` (the memory transport records the
   attempt; nothing is actually delivered in development)
 
+## A multi-tenant playground
+
+Tenancy is off by default. Turn it on in `.env` and restart:
+
+```dotenv
+MULTI_TENANT=true
+TENANT_HEADER=x-tenant-id
+```
+
+The seeded `default` tenant already exists. Create a second one with the owner
+connection — there is no tenant-creation API, because provisioning is an
+operator decision:
+
+```bash
+docker compose exec postgres psql -U postgres -d nestjs_boiler_plate -c \
+  "INSERT INTO tenants (id, slug, name, status, plan) \
+   VALUES (gen_random_uuid(), 'acme', 'Acme', 'active', 'free')"
+```
+
+Every request now has to say which tenant it is for. The same email can exist in
+both, because uniqueness is per tenant:
+
+```bash
+BASE=http://localhost:3000/api/v1
+
+curl -s $BASE/auth/register -H 'Content-Type: application/json' \
+  -H 'x-tenant-id: default' \
+  -d '{"email":"you@example.test","password":"E2e-password-1-Strong","firstName":"You","lastName":"Default"}'
+
+curl -s $BASE/auth/register -H 'Content-Type: application/json' \
+  -H 'x-tenant-id: acme' \
+  -d '{"email":"you@example.test","password":"E2e-password-1-Strong","firstName":"You","lastName":"Acme"}'
+```
+
+Listing users with one header never shows the other tenant's row. Put the
+`accessToken` from either registration into `TOKEN` first — the body is
+`{ "success": true, "data": { "accessToken": "…" } }`:
+
+```bash
+curl -s $BASE/users -H 'x-tenant-id: default' -H "Authorization: Bearer $TOKEN"
+curl -s $BASE/users -H 'x-tenant-id: acme' -H "Authorization: Bearer $TOKEN"
+```
+
+The application filters by tenant, and the third layer is the database. To see
+it, run the migrations and seed as the owner, then point the application at the
+`app_user` role the RLS migration creates:
+
+```bash
+docker compose exec postgres psql -U postgres -d nestjs_boiler_plate -c \
+  "ALTER ROLE app_user WITH PASSWORD 'local-app-user'"
+```
+
+```dotenv
+DATABASE_URL=postgresql://app_user:local-app-user@localhost:5432/nestjs_boiler_plate
+DATABASE_RLS=true
+MULTI_TENANT=true
+```
+
+Now a query that forgets its tenant returns no rows at all, rather than another
+tenant's. The end-to-end suite runs in exactly this mode:
+
+```bash
+E2E_TENANCY_MODE=rls npm run test:e2e
+```
+
 ## Running the tests
 
 ```bash

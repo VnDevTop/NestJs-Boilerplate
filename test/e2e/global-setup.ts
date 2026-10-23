@@ -133,6 +133,29 @@ export function planInfra(inputs: InfraInputs): InfraPlan {
   return { action: 'run' };
 }
 
+/**
+ * The isolation mode this run proves.
+ *
+ * `off` is the single-tenant application. `on` resolves a tenant per request
+ * and carries it through the context, cache and queue. `rls` additionally
+ * connects as the non-superuser role, so the policies are the thing that
+ * catches a query that forgot the scope — which is the mode that earns its
+ * keep.
+ */
+export type TenancyMode = 'off' | 'on' | 'rls';
+
+export function tenancyMode(): TenancyMode {
+  const configured = process.env.E2E_TENANCY_MODE ?? 'off';
+
+  if (configured !== 'off' && configured !== 'on' && configured !== 'rls') {
+    throw new Error(
+      `E2E_TENANCY_MODE must be one of off, on, rls (got "${configured}")`,
+    );
+  }
+
+  return configured;
+}
+
 const TEST_ENV: Record<string, string> = {
   NODE_ENV: 'test',
   APP_NAME: 'Boilerplate E2E',
@@ -210,14 +233,29 @@ export async function setup(): Promise<void> {
 
   await migrate(databaseUrl);
 
+  const mode = tenancyMode();
+  const appDatabaseUrl =
+    mode === 'rls' ? await connectAsAppUser(databaseUrl) : databaseUrl;
+
   mkdirSync(HERE, { recursive: true });
   writeFileSync(
     ENV_FILE,
     JSON.stringify(
       {
         ...TEST_ENV,
-        DATABASE_URL: databaseUrl,
+        DATABASE_URL: appDatabaseUrl,
+        // The owner connection the suite uses to reset the database, seed every
+        // tenant and read rows across tenants. The application itself never gets
+        // this url: in `rls` mode it connects as `app_user`.
+        ADMIN_DATABASE_URL: databaseUrl,
         DATABASE_SSL: 'false',
+        MULTI_TENANT: mode === 'off' ? 'false' : 'true',
+        DATABASE_RLS: mode === 'rls' ? 'true' : 'false',
+        TENANT_HEADER: 'x-tenant-id',
+        // The tenant every existing spec means. The harness attaches it to every
+        // request when multi-tenancy is on, so a spec that is not about tenancy
+        // does not have to know about it.
+        E2E_TENANT_SLUG: 'default',
         // Separate databases on one server, because the cache and the queue
         // redis are deliberately different namespaces in production, and a suite
         // that shared them could not catch a prefix collision.
@@ -277,6 +315,40 @@ async function startRedis(): Promise<string> {
     .start();
 
   return `redis://${redis.getHost()}:${redis.getMappedPort(6379)}`;
+}
+
+/**
+ * Gives the RLS role a password and returns the url the application uses.
+ *
+ * The migration creates `app_user` without one on purpose: credentials are the
+ * deployment's, not a migration's. A test container has no deployment to set
+ * them, so the suite does, and then points the application at that role.
+ *
+ * The owner url is kept separately so the harness can seed and truncate: the
+ * whole point of this mode is that the application cannot.
+ */
+async function connectAsAppUser(databaseUrl: string): Promise<string> {
+  const password = 'e2e-app-user-password';
+  const dataSource = new DataSource({
+    type: 'postgres',
+    url: databaseUrl,
+    ssl: false,
+    extra: { ssl: false },
+  });
+
+  await dataSource.initialize();
+
+  try {
+    await dataSource.query(`ALTER ROLE app_user WITH PASSWORD '${password}'`);
+  } finally {
+    await dataSource.destroy();
+  }
+
+  const url = new URL(databaseUrl);
+  url.username = 'app_user';
+  url.password = password;
+
+  return url.toString();
 }
 
 /**

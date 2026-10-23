@@ -9,14 +9,16 @@ import {
 } from 'typeorm';
 
 import { User } from '../../users/entities/index.js';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
 
 @Entity({ name: 'user_devices' })
-@Index('IDX_user_devices_user_active', ['userId', 'isActive'])
+@Index('IDX_user_devices_user_active', ['tenantId', 'userId', 'isActive'])
 // Cursor paging for `GET /auth/devices`. The equality columns lead because they
 // are constants in that query, and the sort columns follow so the index can walk
 // one user's rows in order rather than filter the table. Ascending only: postgres
 // scans an index backwards for the opposite direction.
 @Index('IDX_user_devices_user_active_cursor', [
+  'tenantId',
   'userId',
   'isActive',
   'createdAt',
@@ -25,6 +27,12 @@ import { User } from '../../users/entities/index.js';
 export class UserDevice {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+  /**
+   * The tenant this row belongs to. Present on every table from the start, so
+   * the feature is switchable without a migration — see the constant for why.
+   */
+  @Column({ type: 'uuid', default: DEFAULT_TENANT_ID })
+  tenantId!: string;
 
   @Column({ type: 'uuid' })
   userId!: string;

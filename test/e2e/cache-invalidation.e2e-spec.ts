@@ -19,6 +19,7 @@ import { Permission, Role } from '../../src/common/enums/index.js';
 import { authRoleKey, authUserKey } from '../../src/core/cache/index.js';
 import { PermissionsService } from '../../src/modules/users/permissions.service.js';
 import { UsersService } from '../../src/modules/users/users.service.js';
+import { DEFAULT_TENANT_ID } from '../../src/common/tenancy/tenant.constants.js';
 
 /**
  * Cache invalidation against a real redis, not a stand-in for one.
@@ -200,9 +201,13 @@ describe.skipIf(!e2eEnabled())('cache invalidation (e2e)', () => {
     expect(id).toBeTruthy();
   });
 
-  /** Cache keys go through keyv, which applies the configured prefix itself. */
+  /**
+   * Cache keys go through keyv, which applies the configured prefix itself, and
+   * the tenant is in front of them: the cache service folds it in, so a key
+   * without a tenant is a key two tenants can reach.
+   */
   const cacheKey = (key: string): string =>
-    `${process.env.CACHE_KEY_PREFIX}:${key}`;
+    `${process.env.CACHE_KEY_PREFIX}:${DEFAULT_TENANT_ID}:${key}`;
 
   async function idOf(email: string): Promise<[string]> {
     const [row] = await dataSource.query<[{ id: string }]>(

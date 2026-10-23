@@ -21,6 +21,7 @@ import type {
   MailTransport,
   SendResult,
 } from './transports/transport.interface.js';
+import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 
 const mailConfig: MailConfig = {
   transport: 'memory',
@@ -115,7 +116,9 @@ function build(
           wrap: async (_k: string, l: () => Promise<unknown>) => l(),
         } as never,
         {} as never,
+        new TenantContextService(),
       ),
+      new TenantContextService(),
     ),
   );
 }
@@ -395,6 +398,10 @@ describe('MailService as a Nest provider', () => {
         // name a dependency fails to compile with a message naming it, and this one
         // caught the gap the first time it ran.
         MailTemplateStore,
+        // The tenant the template store reads through. Declared rather than
+        // mocked, so the store behaves as it does in the application: a template
+        // belongs to the tenant the request was made in.
+        TenantContextService,
         // `getRepositoryToken`, not the entity class: `@InjectRepository` resolves
         // through a generated token, so providing the class satisfies nothing. The
         // error names the token, which is the only reason this was quick to find.
