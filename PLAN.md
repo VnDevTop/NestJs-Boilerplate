@@ -578,16 +578,17 @@ Status: Done — see [CHANGELOG.md](CHANGELOG.md)
 
 ### Phase 41: The isolation proof
 
-Status: Planned
+Status: Done
 
 The answer to "how do you know it does not leak".
 
-- [ ] CI runs the suite in **three modes**: `off`, `on`, and `on + RLS on`
-- [ ] The third is the one that earns its keep: it turns "the scope looks right"
+- [x] CI runs the suite in **three modes**: `off`, `on`, and `on + RLS on`
+- [x] The third is the one that earns its keep: it turns "the scope looks right"
       into a check, because any test relying on a row it forgot to scope fails
-- [ ] A cross-tenant isolation spec covering every path: read, write, delete, list,
-      search, export, Excel export, background job, audit query, and cache
-- [ ] A multi-tenant playground in `docs/installation.md`
+- [x] A cross-tenant isolation spec covering every path: read, write, delete, list,
+      search, export, background job, audit query, and cache. Excel export is
+      Phase 55 and joins the same suite when it lands
+- [x] A multi-tenant playground in `docs/installation.md`
 
 ---
 
@@ -1043,7 +1044,7 @@ exists means writing the same retry logic twice.
 | Phase 38  | Per-tenant permissions                         | Done    |
 | Phase 39  | Per-tenant mail templates                      | Done    |
 | Phase 40  | Per-tenant retention                           | Done    |
-| Phase 41  | The isolation proof                            | Planned |
+| Phase 41  | The isolation proof                            | Done    |
 | Phase 42  | A shared HTTP client                           | Planned |
 | Phase 43  | Circuit breaker and retry budget               | Planned |
 | Phase 44  | Migrate the existing call sites                | Planned |

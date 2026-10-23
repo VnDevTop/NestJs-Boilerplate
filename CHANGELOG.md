@@ -15,6 +15,67 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: the isolation proof
+
+`feat(tenancy): the request's tenant goes on every statement` ·
+`feat(tenancy): inserts inherit the session tenant` ·
+`feat(tenancy): queued jobs run in the tenant that enqueued them` ·
+`fix(users): stream the tenant-scoped export` ·
+`chore(deps): add pg-query-stream for streamed exports` ·
+`test(tenancy): one tenant cannot reach another` ·
+`ci(tenancy): the suite runs in three modes` ·
+`docs(tenancy): phase 41 — the isolation proof`
+
+**What changed**
+
+- The e2e suite runs in three modes: `E2E_TENANCY_MODE=off`, `on`, and `rls`.
+  The CI matrix runs all three with `fail-fast: false`
+- `TenantScopeSubscriber` puts the request's tenant on the session around every
+  statement when `MULTI_TENANT` or `DATABASE_RLS` is on, and resets it after
+- `TenantContextService.runAs()` runs queued work in the tenant that enqueued it
+- `app_set_tenant_id()` triggers fill `tenantId` from the session for inserts
+  that bypass TypeORM subscribers
+- `ExportService` scopes its streamed cursor inside its own transaction
+- `test/e2e/tenant-isolation.e2e-spec.ts` proves one tenant cannot read, write,
+  delete, list, search, export, audit or cache another tenant's data
+- `docs/installation.md` has a multi-tenant playground; `docs/production.md`
+  describes the request path that now sets the scope
+
+**Why**
+
+Two tenants sharing a database means every query that forgets a filter is a
+leak, and a code review cannot prove otherwise. The third mode connects the
+application as the `app_user` role the RLS migration creates, so a forgotten
+scope returns no rows and a test that depends on one fails. That turns "the
+scope looks right" into something CI checks.
+
+**The setting is per statement, not per request.** There is no transaction per
+request, and a session setting that outlived its query would be the next
+tenant's on a pooled connection. `beforeQuery` sets it, `afterQuery` resets it,
+and a `WeakSet` keeps the subscriber's own `set_config` from recursing.
+
+**Inserts get the tenant from the database.** `repository.insert()` and raw SQL
+never reach a TypeORM subscriber, and the audit writer, mail log and password
+history all insert that way. A `BEFORE INSERT` trigger reads the same session
+setting, so the row passes the policy's `WITH CHECK` without every writer
+having to name the tenant. With no setting it does nothing, which is what keeps
+single-tenant deployments unchanged.
+
+**The export stream is not a query.** TypeORM does not broadcast subscriber
+events for a streamed cursor, so the export opens a query runner, sets the
+scope transaction-local, streams with `.setQueryRunner()`, and rolls the
+transaction back when the cursor is released. The e2e mode also exposed that
+`pg-query-stream` had never been installed and the stream path had never run;
+it is a dependency now, and the file passes through the response interceptor
+instead of being wrapped as JSON.
+
+**Every request in the suite carries the default tenant.** The harness adds the
+header when multi-tenancy is on, so the existing specs keep testing what they
+were written to test rather than turning into 401s; a spec about tenants sets
+its own header afterwards.
+
+---
+
 ## feat: retention cleans one tenant at a time
 
 `feat(tenancy): a retention run cleans one tenant` ·

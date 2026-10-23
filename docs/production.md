@@ -177,28 +177,41 @@ this deployment's rows.
 
 **The application role must not be a superuser.** A superuser bypasses every
 policy, which would make the whole layer a comment. The migration creates an
-`app_user` role for it — but the request path does not set the scope yet (see
-below), so pointing `DATABASE_URL` at that role today would make every table
-read as empty. The role is there for the deployment that wires the scope up.
+`app_user` role for it, with `LOGIN` and no password — set one before pointing
+`DATABASE_URL` at it, and keep an owner connection for migrations and seeding:
+
+```sql
+ALTER ROLE app_user WITH PASSWORD 'a-secret-you-generated';
+```
 
 **The policies need the tenant in the session.** They read
 `current_setting('app.tenant_id', true)`, and the application sets it with
-`set_config(…, true)` — transaction-local, so it ends with the transaction. A
-connection that never set it matches no rows, which is the safe direction but
-looks like an empty table.
+`set_config(…, false)` around every statement, then `RESET`s it before the
+connection returns to the pool. Per statement rather than per request, because
+there is no transaction per request: a session setting left behind on a pooled
+connection would be the next tenant's.
 
-**Right now the setting is set by the retention run, and by nothing else.** The
-retention run is a raw query runner, so it sets the scope inside the
-transaction it runs in. The request path does not: it goes through TypeORM,
-which does not open a transaction per request, and a session-level setting
-would outlive the tenant it was set for on a pooled connection.
+**The subscriber that sets it is installed when `MULTI_TENANT` or
+`DATABASE_RLS` is on.** It goes through the same TypeORM event as every ordinary
+query, including the request path, the retention run and the export stream.
+Transaction control and the `set_config` statement itself are left alone.
 
-So the policies bind only for a deployment that has been wired up to set the
-scope, and the application connects as the database owner — whose rows the
-policies do not restrict, because a superuser bypasses every policy. The
-repository scope is what is actually holding the line today; the row-level
-security is the layer underneath it, ready for the connection to be moved to
-the `app_user` role.
+**Inserts are covered by a trigger, not only by the subscriber.** A policy's
+`WITH CHECK` compares the new row with the session tenant, and the audit writer,
+mail log and password history insert through raw SQL — paths a TypeORM
+subscriber does not see for every insert. `app_set_tenant_id()` fills `tenantId`
+from the session on every tenant table, and does nothing when no session tenant
+is set, so single-tenant deployments are unchanged.
+
+**The export stream scopes its own transaction.** A streamed cursor is not a
+`query()`, so TypeORM does not broadcast it; `ExportService` opens a query
+runner, sets the scope transaction-local, and rolls the transaction back when
+the cursor is released.
+
+So the policies bind for any deployment that sets `DATABASE_RLS=true` and
+connects as `app_user`. The repository scope remains the first layer — it is
+what makes the query ask for the right rows — and row-level security is the
+backstop that turns a forgotten filter into an empty result rather than a leak.
 
 ## Cache and what it holds
 
