@@ -29,4 +29,26 @@ describe('SubscriptionService hmacSign', () => {
     const sig2 = service['hmacSign']({ b: 2 }, 'secret');
     expect(sig1).not.toBe(sig2);
   });
+
+  it('isOldSecretValid returns true for valid HMAC shape', () => {
+    const service = new SubscriptionService(
+      {} as any,
+      {} as any,
+      { enabled: true, endpoints: {} } as any,
+    );
+    const payload = { test: 'data' };
+    expect(service['isOldSecretValid']('test-secret', payload)).toBe(true);
+  });
+
+  it('isOldSecretValid returns false for invalid input', () => {
+    const service = new SubscriptionService(
+      {} as any,
+      {} as any,
+      { enabled: true, endpoints: {} } as any,
+    );
+    expect(service['isOldSecretValid']('', {})).toBe(false);
+    expect(service['isOldSecretValid'](undefined, { test: 'data' })).toBe(
+      false,
+    );
+  });
 });
