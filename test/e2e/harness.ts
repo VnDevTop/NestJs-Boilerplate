@@ -52,6 +52,23 @@ export function e2eEnabled(): boolean {
 }
 
 /**
+ * One value from the generated environment, without mutating `process.env`.
+ *
+ * `describe.skipIf` runs while the file is being collected, before any
+ * `beforeAll` has applied the environment, so a spec that needs to know which
+ * mode it is running under cannot read `process.env` yet.
+ */
+export function e2eSetting(key: string): string | undefined {
+  if (!existsSync(ENV_FILE)) {
+    return undefined;
+  }
+
+  return (JSON.parse(readFileSync(ENV_FILE, 'utf8')) as Record<string, string>)[
+    key
+  ];
+}
+
+/**
  * Copies the generated environment into `process.env`.
  *
  * Not a merge that skips existing keys. A developer's shell may already hold a
@@ -106,7 +123,42 @@ export async function boot(): Promise<BootedApp> {
   // the prefix this run actually mounted rather than the one someone typed.
   API_ROOT = apiRoot(app);
 
-  return { app, dataSource: app.get(getDataSourceToken()) };
+  const applicationDataSource = app.get<DataSource>(getDataSourceToken());
+  const adminUrl = process.env.ADMIN_DATABASE_URL;
+
+  if (adminUrl === undefined || adminUrl === process.env.DATABASE_URL) {
+    return { app, dataSource: applicationDataSource };
+  }
+
+  // In RLS mode the application connects as a role that deliberately cannot
+  // truncate or see across tenants. The suite still has to do both, so it holds
+  // the owner connection as its `dataSource` and leaves the application's own
+  // one inside the app.
+  const { DataSource: DataSourceClass } = await import('typeorm');
+  const adminDataSource = new DataSourceClass({
+    type: 'postgres',
+    url: adminUrl,
+    entities: applicationDataSource.options.entities,
+    synchronize: false,
+    ssl: false,
+    extra: { ssl: false },
+  });
+
+  await adminDataSource.initialize();
+
+  const close = app.close.bind(app);
+  let closed = false;
+
+  app.close = async (): Promise<void> => {
+    if (!closed) {
+      closed = true;
+      await adminDataSource.destroy();
+    }
+
+    await close();
+  };
+
+  return { app, dataSource: adminDataSource };
 }
 
 /**
@@ -237,6 +289,17 @@ export async function resetRedis(): Promise<void> {
 export async function cleanState({ dataSource }: BootedApp): Promise<void> {
   await resetDatabase(dataSource);
   await resetRedis();
+
+  // Truncating every table removes the default tenant too. That is invisible
+  // with multi-tenancy off, but with it on the middleware refuses every request
+  // without a tenant row to resolve the header against. Seeding the registry
+  // back is part of what "a fresh set of tables" means in that mode.
+  if (process.env.MULTI_TENANT === 'true') {
+    const { TenantSeeder } =
+      await import('../../src/database/seeds/tenant.seeder.js');
+
+    await new TenantSeeder().run(dataSource);
+  }
 }
 
 /**
@@ -449,7 +512,18 @@ const newIdempotencyKey = (): string => `e2e-${randomUUID()}`;
  */
 export function createHttp(agent: RequestMethods): HttpAgent {
   const call = (method: Verb, url: string): request.Test => {
-    const built = agent[method](url);
+    let built = agent[method](url);
+
+    // The tenant every spec means unless it says otherwise. Set here rather
+    // than in each spec so enabling multi-tenancy does not turn the whole suite
+    // into 401s. A spec about tenants calls `.set(header, slug)` afterwards,
+    // and supertest keeps the last value.
+    if (process.env.MULTI_TENANT === 'true') {
+      built = built.set(
+        process.env.TENANT_HEADER ?? 'x-tenant-id',
+        process.env.E2E_TENANT_SLUG ?? 'default',
+      );
+    }
 
     const withKey = SAFE_METHODS.has(method)
       ? built
