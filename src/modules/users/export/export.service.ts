@@ -3,6 +3,9 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import type { Readable } from 'node:stream';
 import { DataSource } from 'typeorm';
 
+import { TenantContextService } from '../../../common/tenancy/tenant-context.service.js';
+import { DEFAULT_TENANT_ID } from '../../../common/tenancy/tenant.constants.js';
+import { setTenantScope } from '../../../common/tenancy/tenant-scope.js';
 import { UserDevice } from '../../auth/entities/user-device.entity.js';
 import { RefreshToken } from '../../auth/entities/refresh-token.entity.js';
 import { PasswordHistoryEntry } from '../../auth/entities/password-history.entity.js';
@@ -128,7 +131,10 @@ const SECTIONS: readonly ExportSection[] = [
 
 @Injectable()
 export class ExportService {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly tenantContext: TenantContextService,
+  ) {}
 
   /**
    * The export, in one format.
@@ -147,11 +153,13 @@ export class ExportService {
     // The generators are built here and consumed by the writer, so the queries are
     // not started until something reads the first byte. An export that opened five
     // cursors at request time would hold five of them for a client on a slow link.
+    const tenantId = this.tenantContext.current()?.id ?? DEFAULT_TENANT_ID;
+
     const sections = () =>
       SECTIONS.map((section) => ({
         name: section.name,
         columns: section.columns,
-        rows: this.rowsFor(section, userId),
+        rows: this.rowsFor(section, userId, tenantId),
       }));
 
     return format === 'json' ? jsonStream(sections()) : csvStream(sections());
@@ -160,20 +168,42 @@ export class ExportService {
   private async *rowsFor(
     section: ExportSection,
     userId: string,
+    tenantId: string,
   ): AsyncGenerator<Record<string, unknown>> {
-    const cursor = this.dataSource
-      .createQueryBuilder()
-      .select([...section.columns])
-      .from(section.entity as never, section.table)
-      .where(`"${section.whereColumn}" = :userId`, { userId })
-      .stream();
+    // A streamed cursor is not a `query()`: TypeORM does not broadcast the
+    // subscriber events for it, so the tenant has to be put on this connection
+    // explicitly. A transaction is what makes the setting last exactly as long
+    // as the cursor, and rolling it back releases the connection without
+    // leaving the setting behind.
+    const runner = this.dataSource.createQueryRunner();
 
-    // `stream()` is typed as a `Promise<ReadStream>`; it is a `ReadStream`, which
-    // is async-iterable in Node. The cast is at that boundary and nowhere else.
-    const rows = cursor as unknown as AsyncIterable<Record<string, unknown>>;
+    await runner.connect();
+    await runner.startTransaction();
 
-    for await (const row of rows) {
-      yield row;
+    try {
+      await setTenantScope(runner, tenantId);
+
+      const cursor = await this.dataSource
+        .createQueryBuilder()
+        .setQueryRunner(runner)
+        .select(section.columns.map((column) => `"${column}"`))
+        .from(section.entity as never, section.table)
+        .where(`"${section.whereColumn}" = :userId`, { userId })
+        .stream();
+
+      // `stream()` is typed as a `Promise<ReadStream>`; it is a `ReadStream`, which
+      // is async-iterable in Node. The cast is at that boundary and nowhere else.
+      const rows = cursor as unknown as AsyncIterable<Record<string, unknown>>;
+
+      for await (const row of rows) {
+        yield row;
+      }
+    } finally {
+      if (runner.isTransactionActive) {
+        await runner.rollbackTransaction().catch(() => undefined);
+      }
+
+      await runner.release();
     }
   }
 
