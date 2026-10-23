@@ -314,9 +314,11 @@ export class BullMqDispatcher implements JobQueue, OnModuleDestroy {
 
     await this.progress.markRunning(job);
 
-    const result: JobResult = await this.processors.process(
-      job,
-      this.progress.context(job),
+    // The worker is a different context from the request that enqueued the
+    // job. The id travels in the job precisely so the writes here carry the
+    // same tenant as the enqueue.
+    const result: JobResult = await this.context.runAs(job.tenantId, () =>
+      this.processors.process(job, this.progress.context(job)),
     );
 
     await this.progress.finish(job.id, statusOf(result), result.error);

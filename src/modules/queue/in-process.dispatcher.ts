@@ -202,9 +202,11 @@ export class InProcessDispatcher implements JobQueue, OnModuleDestroy {
     await this.progress.markRunning(entry.job);
 
     try {
-      result = await this.processors.process(
-        entry.job,
-        this.progress.context(entry.job),
+      // The request that enqueued this is long gone, and the processor writes
+      // rows whose tenant comes from the session. Without the id the job would
+      // write as the default tenant no matter who asked for it.
+      result = await this.context.runAs(entry.job.tenantId, () =>
+        this.processors.process(entry.job, this.progress.context(entry.job)),
       );
     } catch (error) {
       // The mail processor catches its own failures, so reaching this is a bug in
