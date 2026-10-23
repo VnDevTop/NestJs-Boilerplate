@@ -1,18 +1,3 @@
-/**
- * Domain event keys, keyed by aggregate root.
- * Each key is a dotted, namespaced string following the format:
- * `aggregate.eventName`
- *
- * These keys are used across the system:
- * - As the `event` column in event store tables
- * - As the `event` column in notification_logs
- * - As the key in preference silencing
- * - As the topic name in message queues
- *
- * The spelling is chosen once and used everywhere, so adding a new event
- * requires updating only this file.
- */
-
 export type DomainEventKey =
   | 'user.registered'
   | 'user.deleted'
@@ -31,172 +16,74 @@ export type DomainEventKey =
   | 'service.token.revoked'
   | 'outbox.published';
 
-/**
- * The domain event interface.
- * Every event must implement `headline` and `body` methods that take the event's
- * data and return a string. The `key` identifies the event type, and `perUser`
- * decides whether the event is silenced per user or globally.
- */
-
-export interface DomainEvent<Data = unknown> {
-  readonly key: DomainEventKey;
-  readonly perUser: boolean;
-
-  /**
-   * One-line headline. Used by channels for the main display text.
-   */
-  headline(data: Data): string;
-
-  /**
-   * The body. Plain text with `\n` line breaks.
-   */
-  body(data: Data): string;
-}
-
-/**
- * Data interfaces for each domain event, keyed by `DomainEventKey`.
- * Adding a new event requires adding its data interface here and extending
- * the `DomainEventKey` union type.
- */
-
-export interface UserRegisteredData {
-  email: string;
-  firstName: '' | undefined;
-}
-
-export interface UserDeletedData {
-  email: string;
-  actor: string;
-}
-
-export interface UserUpdatedData {
-  email: string;
-  changes: Record<string, unknown>;
-}
-
-export interface AuthLoginData {
-  email: string;
-  ip: '' | undefined;
-  userAgent: '' | undefined;
-}
-
-export interface AuthLogoutData {
-  userId: string;
-}
-
-export interface AuthTokenRefreshedData {
-  userId: string;
-  previousTokenVersion: number;
-}
-
-export interface MailTemplateCreatedData {
-  templateId: string;
-  name: string;
-}
-
-export interface MailTemplateUpdatedData {
-  templateId: string;
-  name: string;
-}
-
-export interface MailSentData {
-  templateId: string;
-  recipient: string;
-  sentAt: string;
-}
-
-export interface MailLogentryCreatedData {
-  messageId: string;
-  status: 'sent' | 'failed' | 'delayed';
-}
-
-export interface JobEnqueuedData {
-  jobId: string;
-  queue: string;
-  payload: Record<string, unknown>;
-}
-
-export interface JobCompletedData {
-  jobId: string;
-  result: Record<string, unknown>;
-}
-
-export interface JobFailedData {
-  jobId: string;
-  error: string;
-  retries: number;
-}
-
-export interface ServiceTokenCreatedData {
-  subject: string;
-  scopes: string[];
-}
-
-export interface ServiceTokenRevokedData {
-  subject: string;
-  reason: string;
-}
-
-export interface OutboxPublishedData {
-  aggregate: string;
-  eventId: string;
-}
-
-/**
- * Maps each `DomainEventKey` to its corresponding data interface.
- * This is enforced at the type system level: adding a new key without adding
- * its data interface is a TypeScript error at the call site.
- */
-
-/**
- * Domain event data interfaces, mapped by event key.
- * This is both a type (for compile-time safety) and a runtime object.
- * Adding a new event requires:
- * 1. Adding its data interface above
- * 2. Adding its entry here
- * 3. Adding the key to DomainEventKey union
- * 4. Adding its headline/body in createDomainEvent
- */
-
-export const DomainEventData: Record<
-  DomainEventKey,
-  Record<string, unknown>
-> = {
-  'user.registered': { email: '', firstName: '' },
-  'user.deleted': { email: '', actor: '' },
-  'user.updated': { email: '', changes: {} },
-  'auth.login': { email: '', ip: '', userAgent: '' },
-  'auth.logout': { userId: '' },
-  'auth.token_refreshed': { userId: '', previousTokenVersion: 0 },
-  'mail.template.created': { templateId: '', name: '' },
-  'mail.template.updated': { templateId: '', name: '' },
-  'mail sent': { templateId: '', recipient: '', sentAt: '' },
+export interface DomainEventDataI {
+  'user.registered': { email: string; firstName?: string };
+  'user.deleted': { email: string; actor: string };
+  'user.updated': { email: string; changes: Record<string, unknown> };
+  'auth.login': { email: string; ip?: string; userAgent?: string };
+  'auth.logout': { userId: string };
+  'auth.token_refreshed': { userId: string; previousTokenVersion: number };
+  'mail.template.created': { templateId: string; name: string };
+  'mail.template.updated': { templateId: string; name: string };
+  'mail sent': { templateId: string; recipient: string; sentAt: string };
   'mail.logentry.created': {
-    messageId: '',
-    status: 'sent' as 'sent' | 'failed' | 'delayed',
+    messageId: string;
+    status: 'sent' | 'failed' | 'delayed';
+  };
+  'job.enqueued': {
+    jobId: string;
+    queue: string;
+    payload: Record<string, unknown>;
+  };
+  'job.completed': { jobId: string; result: Record<string, unknown> };
+  'job.failed': { jobId: string; error: string; retries: number };
+  'service.token.created': { subject: string; scopes: string[] };
+  'service.token.revoked': { subject: string; reason: string };
+  'outbox.published': { aggregate: string; eventId: string };
+}
+
+export const domainEventData: DomainEventDataI = {
+  'user.registered': { email: 'test@test.com', firstName: 'Test' },
+  'user.deleted': { email: 'test@test.com', actor: 'admin' },
+  'user.updated': { email: 'test@test.com', changes: { name: 'new' } },
+  'auth.login': { email: 'test@test.com', ip: '127.0.0.1', userAgent: 'Test' },
+  'auth.logout': { userId: 'user-123' },
+  'auth.token_refreshed': { userId: 'user-123', previousTokenVersion: 1 },
+  'mail.template.created': { templateId: 'tmpl-1', name: 'Test' },
+  'mail.template.updated': { templateId: 'tmpl-1', name: 'Test Updated' },
+  'mail sent': {
+    templateId: 'tmpl-1',
+    recipient: 'test@test.com',
+    sentAt: '2024-01-15T10:30:00Z',
   },
-  'job.enqueued': { jobId: '', queue: '', payload: {} },
-  'job.completed': { jobId: '', result: {} },
-  'job.failed': { jobId: '', error: '', retries: 0 },
-  'service.token.created': { subject: '', scopes: [] },
-  'service.token.revoked': { subject: '', reason: '' },
-  'outbox.published': { aggregate: '', eventId: '' },
+  'mail.logentry.created': { messageId: 'msg-1', status: 'sent' },
+  'job.enqueued': { jobId: 'job-1', queue: 'default', payload: {} },
+  'job.completed': { jobId: 'job-1', result: { success: true } },
+  'job.failed': { jobId: 'job-1', error: 'Timeout', retries: 0 },
+  'service.token.created': {
+    subject: 'user',
+    scopes: ['user:read', 'user:write'],
+  },
+  'service.token.revoked': { subject: 'user', reason: 'Key rotation' },
+  'outbox.published': { aggregate: 'user', eventId: 'evt-1' },
 };
 
 /**
  * Creates a domain event instance.
- * This is a factory function that ensures the correct key and data types are used.
+ * @param key - The event key
+ * @param data - The event data
+ * @param perUser - Whether the event is per-user (silenceable by preference)
+ * @returns A domain event object with headline and body methods
  */
-
-export function createDomainEvent<Data extends keyof DomainEventData>(
-  key: Data,
-  data: DomainEventData[Data],
+export function createDomainEvent(
+  key: DomainEventKey,
+  data: any,
   perUser: boolean = false,
-): DomainEvent<DomainEventData[Data]> {
+) {
   return {
     key,
     perUser,
-    headline: (d: DomainEventData[Data]) => {
+    headline: (d: any) => {
       switch (key) {
         case 'user.registered':
           return `User registered: ${d.email}`;
@@ -234,7 +121,7 @@ export function createDomainEvent<Data extends keyof DomainEventData>(
           return 'Domain event';
       }
     },
-    body: (d: DomainEventData[Data]) => {
+    body: (d: any) => {
       switch (key) {
         case 'user.registered':
           return `User ${d.email} has been registered`;

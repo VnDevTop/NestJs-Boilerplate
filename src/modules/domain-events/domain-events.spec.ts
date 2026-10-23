@@ -1,7 +1,6 @@
 import {
-  DomainEvent,
   DomainEventKey,
-  DomainEventData,
+  domainEventData,
   createDomainEvent,
 } from './domain-events.js';
 
@@ -39,7 +38,7 @@ describe('DomainEvent', () => {
     });
   });
 
-  describe('DomainEventData', () => {
+  describe('domainEventData', () => {
     it('has data for each key', () => {
       const keys: DomainEventKey[] = [
         'user.registered',
@@ -53,7 +52,7 @@ describe('DomainEvent', () => {
       ] as DomainEventKey[];
 
       keys.forEach((key) => {
-        expect(DomainEventData[key]).toBeDefined();
+        expect(domainEventData[key]).toBeDefined();
       });
     });
   });
