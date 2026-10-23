@@ -42,6 +42,7 @@ export interface JwtPayload {
    * revocation" rather than as belonging to no session.
    */
   sid?: string;
+  tenantId?: string;
   iat?: number;
   exp?: number;
 }

@@ -6,6 +6,7 @@ import type { UserResponseDto } from '../users/dto/index.js';
 import { User } from '../users/entities/index.js';
 import { Role } from '../../common/enums/index.js';
 import { AuthService } from './auth.service.js';
+import { DEFAULT_TENANT_ID } from '../../common/tenancy/tenant.constants.js';
 
 /**
  * The claim and the bump are the two halves of `sessionsVersion`, and a test that
@@ -180,6 +181,10 @@ describe('the access token claim', () => {
     expect(claims.sub).toBe('u1');
     expect(claims.role).toBe('admin');
     expect(claims.isManager).toBe(true);
+  });
+
+  it('carries the tenant the request was minted as', async () => {
+    expect((await signedToken(userDto())).tenantId).toBe(DEFAULT_TENANT_ID);
   });
 });
 

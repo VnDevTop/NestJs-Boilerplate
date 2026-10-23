@@ -6,6 +6,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { User } from '../../users/entities/index.js';
 import { JwtPayload } from '../../../common/interfaces/index.js';
 import { JwtStrategy } from './jwt.strategy.js';
+import {
+  TenantContextService,
+  type TenantScope,
+} from '../../../common/tenancy/tenant-context.service.js';
 
 // `.repeat`, not ``'a' * 32``: string times number is NaN in JavaScript, and a
 // NaN secret is falsy, which the strategy reports as a missing configuration.
@@ -67,6 +71,36 @@ const payload = (overrides: Partial<JwtPayload> = {}): JwtPayload => ({
   email: 'a@x.com',
   ...overrides,
 });
+
+function tenantScope(tenantId: string): TenantScope {
+  return {
+    id: tenantId,
+    slug: tenantId,
+    name: tenantId,
+    status: 'active',
+    plan: '',
+    schemaName: null,
+  };
+}
+
+function strategyWithTenant(tenantId: string) {
+  const context = new TenantContextService();
+  const config = {
+    get: vi.fn().mockReturnValue(SECRET),
+  } as unknown as ConfigService;
+
+  return {
+    strategy: new JwtStrategy(
+      config,
+      { findAuthClaims: vi.fn().mockResolvedValue(user()) } as never,
+      { forRole: vi.fn().mockResolvedValue([]) } as never,
+      { findSessionVersions: vi.fn().mockResolvedValue({}) } as never,
+      { isSessionRevoked: vi.fn().mockResolvedValue(false) } as never,
+      context,
+    ),
+    context,
+  };
+}
 
 describe('JwtStrategy sessionsVersion', () => {
   let h: ReturnType<typeof harness>;
@@ -217,6 +251,38 @@ describe('JwtStrategy sessionsVersion', () => {
       h = harness({ user: legacy });
 
       const result = await h.strategy.validate(payload({ sv: 0 }));
+
+      expect(result.id).toBe('u1');
+    });
+  });
+
+  describe('tenant claim', () => {
+    it('refuses a token minted for another tenant', async () => {
+      const h = strategyWithTenant('tenant-b');
+
+      await expect(
+        h.context.run(tenantScope('tenant-b'), () =>
+          h.strategy.validate(payload({ tenantId: 'tenant-a' })),
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('accepts a token minted for the current tenant', async () => {
+      const h = strategyWithTenant('tenant-a');
+
+      const result = await h.context.run(tenantScope('tenant-a'), () =>
+        h.strategy.validate(payload({ tenantId: 'tenant-a' })),
+      );
+
+      expect(result.tenantId).toBe('tenant-a');
+    });
+
+    it('accepts a token minted before the claim existed', async () => {
+      const h = strategyWithTenant('tenant-a');
+
+      const result = await h.context.run(tenantScope('tenant-a'), () =>
+        h.strategy.validate(payload()),
+      );
 
       expect(result.id).toBe('u1');
     });
