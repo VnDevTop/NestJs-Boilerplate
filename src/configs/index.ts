@@ -2,6 +2,7 @@ export * from './app.config.js';
 export * from './cache.config.js';
 export * from './cors.config.js';
 export * from './database.config.js';
+export * from './http.config.js';
 export * from './jwt.config.js';
 export * from './env.validation.js';
 export * from './observe.config.js';
