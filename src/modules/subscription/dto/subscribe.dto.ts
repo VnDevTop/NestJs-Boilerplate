@@ -1,4 +1,4 @@
-export interface SubscriptionDto {
+export interface SubscribeDto {
   event: string;
   payload: unknown;
 }

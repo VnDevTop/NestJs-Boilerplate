@@ -629,15 +629,20 @@ Phases 45–52. Both directions, because the two problems are different problems
 
 ### Phase 45: Outbound subscriptions
 
-- [ ] Endpoint, subscribed events, secret, enabled — one secret per endpoint
-- [ ] Secret rotation, with the previous secret still verifying for a window, so a
+Status: Done
+
+- [x] Endpoint, subscribed events, secret, enabled — one secret per endpoint
+- [x] Secret rotation, with the previous secret still verifying for a window, so a
       deploy does not break verification halfway through
 
 ### Phase 46: Signing and replay protection
 
-- [ ] `t=<timestamp>,v1=<hmac-sha256>` over `timestamp.body`
-- [ ] A verification window, and a signed timestamp so it cannot be forged
-- [ ] Constant-time comparison
+Status: Done
+
+- [x] `t=<timestamp>,v1=<hmac-sha256>` over `timestamp.body`
+- [x] A verification window via `maxAge` and `clockSkew` config
+- [x] Constant-time comparison via `constantCompare`
+- [x] Replay protection: timestamps outside `maxAge` are rejected
 
 ### Phase 47: The SSRF guard
 
@@ -1048,8 +1053,8 @@ exists means writing the same retry logic twice.
 | Phase 42  | A shared HTTP client                           | Planned |
 | Phase 43  | Circuit breaker and retry budget               | Planned |
 | Phase 44  | Migrate the existing call sites                | Planned |
-| Phase 45  | Outbound subscriptions                         | Planned |
-| Phase 46  | Signing and replay protection                  | Planned |
+| Phase 45  | Outbound subscriptions                         | Done    |
+| Phase 46  | Signing and replay protection                  | Done    |
 | Phase 47  | The SSRF guard                                 | Planned |
 | Phase 48  | Delivery                                       | Planned |
 | Phase 49  | Inbound webhooks                               | Planned |

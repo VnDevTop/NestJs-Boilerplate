@@ -70,9 +70,9 @@ export class SubscriptionService {
   }
 
   private isOldSecretValid(secret: string, payload: unknown): boolean {
-    // In a real implementation, this would check a timestamp or replay window.
-    // For now, we accept the old secret if it produces a valid HMAC shape.
-    // The actual timing guard is enforced by the signing service's maxAge check.
+    if (!secret) {
+      return false;
+    }
     try {
       const hmac = crypto.createHmac('sha256', secret);
       hmac.update(JSON.stringify(payload));

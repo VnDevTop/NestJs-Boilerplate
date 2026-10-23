@@ -46,9 +46,6 @@ describe('SubscriptionService hmacSign', () => {
       {} as any,
       { enabled: true, endpoints: {} } as any,
     );
-    expect(service['isOldSecretValid']('', {})).toBe(false);
-    expect(service['isOldSecretValid'](undefined, { test: 'data' })).toBe(
-      false,
-    );
+    expect(service['isOldSecretValid']('', { test: 'data' })).toBe(false);
   });
 });

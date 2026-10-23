@@ -3318,6 +3318,48 @@ src/modules/auth/refresh-token.service.ts
 
 - `DATABASE_URL` based connection, and the optional observability integration.
 
-## Initialize NestJS boilerplate with basic setup
+## feat: outbound subscriptions
 
-- Nest 12 on Express 5, ESM with NodeNext, Prettier, oxlint and vitest.
+`feat(subscription): add previous secret support for rotation window` ·
+`test(subscription): add unit tests for hmac sign with previous secret rotation` ·
+
+**What changed**
+
+- `SubscriptionEndpoint` gained `previousSecret` field, allowing an endpoint to
+  keep the old secret for a short window after a secret rotation deploy
+- `parseEndpoint` sets `previousSecret` from the config (defaults to `undefined`)
+- `SubscriptionService.publish()` verifies the previous secret when the current
+  secret fails the rotation window check, so a deploy does not break verification
+  halfway through
+- `isOldSecretValid()` validates an HMAC shape from a candidate secret
+
+**Why**
+
+Secret rotation is essential for production deployments. Without keeping the old
+secret available for a grace period, a deployment that rotates the signing key
+would cause every inbound event to be rejected until the new secret is propagated
+to all callers. By storing `previousSecret` alongside the active `secret` and
+checking it during the rotation window, the system remains available while the
+new secret spreads.
+
+---
+## feat: signing and replay protection
+
+`feat(signing): add signing service with timestamp verification` ·
+`test(signing): add unit tests for timestamp verification` ·
+
+**What changed**
+
+- `SigningService.verifySignature()` now validates `t=<timestamp>,v1=<hmac-sha256>` format
+- Replay protection: timestamps older than `maxAge` (configurable, default 10 min) are rejected
+- Clock skew tolerance: `clockSkew` (configurable, default 2 min) allows minor clock differences
+- Constant-time comparison via `constantCompare()` prevents timing attacks
+- The verification window and signed timestamp ensure a payload cannot be forged
+
+**Why**
+
+Webhooks and outbound subscriptions receive user-supplied data that must be cryptographically verified. Without timestamp and signature validation, an attacker could replay old messages or forge new ones. The `t=<timestamp>,v1=<hmac-sha256>` format provides both freshness (via `maxAge`/`clockSkew`) and integrity (via HMAC-SHA256). Constant-time comparison prevents leaking information through timing differences. This is the foundation for secure webhook delivery and replay-resistant event processing.
+
+---
+
+

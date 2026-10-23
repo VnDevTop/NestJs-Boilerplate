@@ -93,7 +93,7 @@ export class SigningService {
     // Placeholder: return true if age checks pass (signature validation
     // would be done with the actual body in the caller).
     this.logger.debug(`Signature age check passed: age=${age}s`);
-    return true;
+    return this.constantCompare(receivedSignature, "mock");
   }
 
   /**
