@@ -106,6 +106,11 @@ function createEnvSchema(strict: boolean) {
           : z.string().optional(),
         DATABASE_SSL: z.enum(['true', 'false']).optional(),
         DATABASE_SCHEMA: z.string().regex(SQL_IDENTIFIER).optional(),
+        // Set by a deployment whose DATABASE_URL points at the non-superuser
+        // role the RLS policies apply to. It makes the application set the
+        // tenant on every statement; without it the policies still exist but
+        // the connection is the owner and bypasses them.
+        DATABASE_RLS: z.enum(['true', 'false']).optional(),
 
         CACHE_URL: z
           .url()

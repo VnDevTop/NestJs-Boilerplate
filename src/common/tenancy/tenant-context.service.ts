@@ -48,6 +48,30 @@ export class TenantContextService {
     return this.storage.run(tenant, fn);
   }
 
+  /**
+   * Runs some work as a known tenant id.
+   *
+   * **For work that outlives the request.** A queued job carries the tenant it
+   * was enqueued for, but not the rest of the snapshot the request had — and
+   * the writer and the cache only need the id. The remaining fields are
+   * deliberately empty rather than looked up: a job that needs the tenant's
+   * name looks it up, and inventing one here would make a stale value look
+   * authoritative.
+   */
+  runAs<T>(tenantId: string, fn: () => T): T {
+    return this.storage.run(
+      {
+        id: tenantId,
+        slug: '',
+        name: '',
+        status: 'active',
+        plan: '',
+        schemaName: null,
+      },
+      fn,
+    );
+  }
+
   /** The tenant of the work in flight, or undefined. */
   current(): TenantScope | undefined {
     return this.storage.getStore();
