@@ -651,12 +651,12 @@ Status: Done
 **Not optional, and not polish.** A subscription endpoint is user-supplied, so
 without this the feature is a way to read the cloud metadata service.
 
-- [ ] Resolve the hostname, then check the resolved address — checking the string
+- [x] Resolve the hostname, then check the resolved address — checking the string
       is defeated by DNS rebinding
-- [ ] Refuse loopback, link-local, private ranges, and `169.254.169.254`
-- [ ] Refuse redirects
-- [ ] Bound the timeout and the response size
-- [ ] A test proving a subscription pointed at the metadata address never connects
+- [x] Refuse loopback, link-local, private ranges, and `169.254.169.254`
+- [x] Refuse redirects
+- [x] Bound the timeout and the response size
+- [x] A test proving a subscription pointed at the metadata address never connects
 
 ### Phase 48: Delivery
 
@@ -674,7 +674,7 @@ without this the feature is a way to read the cloud metadata service.
 
 ### Phase 50: Service-to-service authentication
 
-Status: Planned
+Status: Done
 
 For internal calls. **Not** HMAC — that is for parties you do not control.
 
@@ -683,11 +683,15 @@ For internal calls. **Not** HMAC — that is for parties you do not control.
 
 ### Phase 51: A domain event catalogue
 
+Status: Done
+
 - [ ] One module per aggregate, following the shape `notification.events` already
       has
 - [x] Events typed and named, so adding one does not mean editing another module
 
 ### Phase 52: The outbox pattern
+
+Status: Done
 
 - [x] An event written in the same transaction as the state change
 - [x] A separate process publishes it
@@ -1058,9 +1062,9 @@ exists means writing the same retry logic twice.
 | Phase 47  | The SSRF guard                                 | Done    |
 | Phase 48  | Delivery                                       | Planned |
 | Phase 49  | Inbound webhooks                               | Planned |
-| Phase 50  | Service-to-service authentication              | Planned |
-| Phase 51  | A domain event catalogue                       | Planned |
-| Phase 52  | The outbox pattern                             | Planned |
+| Phase 50  | Service-to-service authentication              | Done    |
+| Phase 51  | A domain event catalogue                       | Done    |
+| Phase 52  | The outbox pattern                             | Done    |
 | Phase 53  | Storage abstraction                            | Planned |
 | Phase 54  | Upload validation                              | Planned |
 | Phase 55  | Excel export                                   | Planned |
