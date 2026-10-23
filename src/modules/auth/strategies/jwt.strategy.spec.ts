@@ -83,7 +83,7 @@ function tenantScope(tenantId: string): TenantScope {
   };
 }
 
-function strategyWithTenant(tenantId: string) {
+function strategyWithTenant(_tenantId: string) {
   const context = new TenantContextService();
   const config = {
     get: vi.fn().mockReturnValue(SECRET),

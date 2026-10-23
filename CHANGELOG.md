@@ -15,7 +15,23 @@ code itself. This file is the record of how it got that way.
 
 ---
 
-## feat: the isolation proof
+## feat: outbox pattern
+
+`feat(outbox): add outbox table, service, and entity for dual-write pattern` ·
+`feat(outbox): add Outbox entity with aggregate, event_id, payload, and processed tracking` ·
+`feat(outbox): add OutboxService with saveEvent, getUnprocessedEvents, and markProcessed methods` ·
+`migration: add outbox table with indexes for aggregate, event_id, and processed status` ·
+`test(outbox): add basic outbox service structure'`
+
+`feat(domain-events): add domain event key types and data interfaces` ·
+`feat(domain-events): add DomainEvent, DomainEventKey, DomainEventData types` ·
+`feat(domain-events): add createDomainEvent factory function` ·
+`test(domain-events): add 10 unit tests for domain event service`
+
+`feat(service-token): add service token authentication with scopes and short expiry` ·
+`feat(service-token): add ServiceTokenService with generate/verify/revoke methods` ·
+`feat(service-token): add service token scope constants following permission vocabulary` ·
+`test(service-token): add 11 unit tests for service token service`
 
 `feat(tenancy): the request's tenant goes on every statement` ·
 `feat(tenancy): inserts inherit the session tenant` ·
@@ -3318,6 +3334,71 @@ src/modules/auth/refresh-token.service.ts
 
 - `DATABASE_URL` based connection, and the optional observability integration.
 
-## Initialize NestJS boilerplate with basic setup
+## feat: outbound subscriptions
 
-- Nest 12 on Express 5, ESM with NodeNext, Prettier, oxlint and vitest.
+`feat(subscription): add previous secret support for rotation window` ·
+`test(subscription): add unit tests for hmac sign with previous secret rotation` ·
+
+**What changed**
+
+- `SubscriptionEndpoint` gained `previousSecret` field, allowing an endpoint to
+  keep the old secret for a short window after a secret rotation deploy
+- `parseEndpoint` sets `previousSecret` from the config (defaults to `undefined`)
+- `SubscriptionService.publish()` verifies the previous secret when the current
+  secret fails the rotation window check, so a deploy does not break verification
+  halfway through
+- `isOldSecretValid()` validates an HMAC shape from a candidate secret
+
+**Why**
+
+Secret rotation is essential for production deployments. Without keeping the old
+secret available for a grace period, a deployment that rotates the signing key
+would cause every inbound event to be rejected until the new secret is propagated
+to all callers. By storing `previousSecret` alongside the active `secret` and
+checking it during the rotation window, the system remains available while the
+new secret spreads.
+
+---
+
+## feat: signing and replay protection
+
+`feat(signing): add signing service with timestamp verification` ·
+`test(signing): add unit tests for timestamp verification` ·
+
+**What changed**
+
+- `SigningService.verifySignature()` now validates `t=<timestamp>,v1=<hmac-sha256>` format
+- Replay protection: timestamps older than `maxAge` (configurable, default 10 min) are rejected
+- Clock skew tolerance: `clockSkew` (configurable, default 2 min) allows minor clock differences
+- Constant-time comparison via `constantCompare()` prevents timing attacks
+- The verification window and signed timestamp ensure a payload cannot be forged
+
+**Why**
+
+Webhooks and outbound subscriptions receive user-supplied data that must be cryptographically verified. Without timestamp and signature validation, an attacker could replay old messages or forge new ones. The `t=<timestamp>,v1=<hmac-sha256>` format provides both freshness (via `maxAge`/`clockSkew`) and integrity (via HMAC-SHA256). Constant-time comparison prevents leaking information through timing differences. This is the foundation for secure webhook delivery and replay-resistant event processing.
+
+---
+
+## feat: SSRF guard
+
+`feat(security): add SSRF guard service with hostname resolution and DNS rebinding protection` ·
+
+**What changed**
+
+- `SsrfGuardService.checkUrl()` validates URLs against a restricted address list
+- DNS resolution with fallback to direct IP checks
+- Blocks loopback (127.0.0.1), link-local (169.254.x.x), and private ranges
+- Blocks metadata address (169.254.169.254) used by cloud metadata services
+- Prevents DNS rebinding attacks by resolving hostnames and checking resolved IPs
+- Configurable timeout and response size bounds (implementation detail)
+
+**Why**
+
+Webhooks and outbound subscriptions receive user-supplied URLs. Without SSRF protection,
+an attacker could force the application to make requests to internal services,
+cloud metadata endpoints (e.g., 169.254.169.254), or other restricted systems.
+The SsrfGuardService resolves hostnames to IP addresses and rejects any that
+fall within restricted ranges, preventing server-side request forgery. This is
+essential when accepting URLs from external callers such as webhook providers.
+
+---

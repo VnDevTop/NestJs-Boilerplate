@@ -124,7 +124,7 @@ export interface JobResult {
  * opposite things — one needs attention, the other was asked for.
  */
 export type JobStatus =
-  'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'replayed';
 
 /**
  * What a job's outcome means for its record.
@@ -136,7 +136,7 @@ export type JobStatus =
  */
 export const statusOf = (
   result: JobResult,
-): Exclude<JobStatus, 'queued' | 'running'> => {
+): Exclude<JobStatus, 'queued' | 'running' | 'replayed'> => {
   // Checked before the success flag: a job that stopped because it was asked
   // to did not finish, and reporting it as completed would say the work was
   // done when it was not.

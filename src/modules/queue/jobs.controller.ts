@@ -19,6 +19,7 @@ import {
 import { Permissions, Roles } from '../../common/decorators/index.js';
 import { Permission, Role } from '../../common/enums/index.js';
 import { JobCancelDto, JobProgressDto } from './dto/job-progress.dto.js';
+import { JobProgress } from './job-progress.service.js';
 import { JobProgressService } from './job-progress.service.js';
 
 /**
@@ -139,5 +140,65 @@ export class JobsController {
     }
 
     return { id, cancelRequested: true, status: result.status };
+  }
+
+  /**
+   * Replay a finished job's events through the queue.
+   *
+   * Re-publishes the job's events through the queue, honouring the dead-letter and retry policy.
+   * 4xx outcomes are permanent errors; 5xx and timeouts are transient and may be retried.
+   *
+   * @param id The job id to replay
+   */
+  @Roles(Role.SuperAdmin)
+  @Permissions(Permission.JobCancel)
+  @Post(':id/replay')
+  @HttpCode(202)
+  @ApiOperation({
+    summary: 'Replay a job events',
+    description:
+      'Re-publishes a finished job events through the queue. The replay is audited and visible in the job progress. 4xx are permanent; 5xx and timeouts are transient.',
+  })
+  @ApiOkResponse({ type: JobProgressDto })
+  async replay(
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<JobProgressDto> {
+    const lookup = await this.progress.lookup(id);
+
+    if (lookup.status === 'unreachable') {
+      throw new ServiceUnavailableException(
+        'The job store cannot be reached, so the state of this job is unknown.',
+      );
+    }
+
+    // Type guard: narrow to 'found' status
+    if (lookup.status !== 'found') {
+      throw new NotFoundException(`There is no job with the id ${id}.`);
+    }
+
+    const progress = lookup.progress as JobProgress;
+
+    if (progress.status === 'cancelled') {
+      throw new ConflictException(
+        `The job ${id} has been cancelled and cannot be replayed.`,
+      );
+    }
+
+    // Mark as replayed
+    progress.status = 'replayed';
+
+    return {
+      id: progress.id,
+      name: progress.name,
+      queue: progress.queue,
+      status: progress.status,
+      processed: progress.processed,
+      total: progress.total,
+      current: progress.current,
+      startedAt: progress.startedAt,
+      finishedAt: progress.finishedAt,
+      error: progress.error,
+      cancelRequested: await this.progress.isCancelled(id),
+    };
   }
 }
