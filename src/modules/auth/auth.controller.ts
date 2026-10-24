@@ -30,7 +30,7 @@ import {
 } from '@nestjs/swagger';
 
 import { ThrottleByEmailGuard } from '../../common/guards/index.js';
-import { Idempotent } from '../../common/guards/idempotency.decorator.js';
+import { Idempotent } from '@nestjs/idempotency';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
 import {
   DEVICE_NAME_HEADER,
@@ -92,7 +92,7 @@ export class AuthController {
   // response to a register has a token it never saw and an account it cannot sign
   // into; retrying gets it a conflict, because the address now exists. The replayed
   // answer hands back the same tokens instead.
-  @Idempotent()
+  @Idempotent({ required: true })
   @Public()
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })

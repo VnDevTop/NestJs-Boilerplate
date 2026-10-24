@@ -5,7 +5,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 
 import { CacheService } from '../../core/cache/index.js';
-import { classifyHttpError, CircuitBreaker } from '../../core/http/index.js';
+import { classifyHttpError } from '../../core/http/index.js';
+import { CircuitBreakerPolicy, CircuitOpenError } from '@nestjs/resilience';
 
 /**
  * Rejects a password that appears in a corpus of breached credentials.
@@ -37,6 +38,12 @@ import { classifyHttpError, CircuitBreaker } from '../../core/http/index.js';
  * plaintext: a redis dump is a list of SHA-1 digests of passwords people chose,
  * which is brute-forceable and therefore worth not adding to casually.
  */
+class PasswordBreachBreaker extends CircuitBreakerPolicy {
+  get currentState(): CircuitBreakerPolicy['state'] {
+    return this.state;
+  }
+}
+
 @Injectable()
 export class PasswordBreachService {
   private readonly logger = new Logger(PasswordBreachService.name);
@@ -64,10 +71,11 @@ export class PasswordBreachService {
    * Circuit breaker protecting the signup path from an outage at the range endpoint.
    * Fails open after consecutive failures, skipping the network call completely.
    */
-  readonly breaker: CircuitBreaker = new CircuitBreaker({
-    failureThreshold: 5,
-    windowMs: 60_000,
-    recoveryTimeoutMs: 30_000,
+  readonly breaker: PasswordBreachBreaker = new PasswordBreachBreaker({
+    failureRateThreshold: 100,
+    minimumCalls: 5,
+    slidingWindow: { type: 'time', size: '60s' },
+    openDuration: '30s',
   });
 
   constructor(
@@ -154,12 +162,16 @@ export class PasswordBreachService {
         return found > 0;
       });
 
-      return result.value;
+      return result;
     } catch (error) {
       const httpError = classifyHttpError(error);
+      const detail =
+        error instanceof CircuitOpenError
+          ? `Circuit breaker is open. ${httpError.message}`
+          : httpError.message;
       this.logger.warn(
         `Breach check could not be reached, treating the password as not ` +
-          `breached: ${httpError.message}. Signups are not being blocked by this.`,
+          `breached: ${detail}. Signups are not being blocked by this.`,
       );
 
       return null;
