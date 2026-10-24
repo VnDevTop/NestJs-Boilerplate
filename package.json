@@ -44,7 +44,7 @@
     "@nestjs/jwt": "^12.0.2",
     "@nestjs/observe": "^0.1.8",
     "@nestjs/passport": "^12.0.0",
-    "@nestjs/platform-express": "^12.0.1",
+    "@nestjs/platform-express": "^12.2.0",
     "@nestjs/resilience": "^0.0.2",
     "@nestjs/schedule": "^12.0.2",
     "@nestjs/swagger": "^12.0.2",
@@ -69,14 +69,14 @@
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.1",
     "typeorm": "^1.1.1",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.3",
     "@nestjs/bullmq": "^12.0.0",
     "@nestjs/cli": "^12.0.0",
-    "@nestjs/mau": "^0.2.6",
+    "@nestjs/mau": "^0.2.9",
     "@nestjs/platform-fastify": "^12.1.0",
     "@nestjs/schematics": "^12.0.0",
     "@nestjs/testing": "^12.0.1",
@@ -91,7 +91,7 @@
     "@types/supertest": "^7.0.0",
     "@vitest/coverage-v8": "^4.1.2",
     "bullmq": "^6.3.11",
-    "fastify": "^5.12.5",
+    "fastify": "^5.12.7",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "oxlint": "^1.58.0",
@@ -101,7 +101,7 @@
     "testcontainers": "^12.2.1",
     "typescript": "^6.0.2",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.12"
   },
   "repository": {
     "type": "git",
