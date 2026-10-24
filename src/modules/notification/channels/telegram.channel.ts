@@ -81,7 +81,6 @@ export class TelegramNotificationChannel implements NotificationChannel {
       botToken: this.config.telegram.botToken as string,
       chatId: this.config.telegram.chatId as string,
       topicId,
-      timeoutMs: this.config.delivery.timeout,
     });
 
     try {

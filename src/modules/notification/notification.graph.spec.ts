@@ -38,9 +38,8 @@ describe('NotificationModule', () => {
     expect(imports.map(moduleOf)).not.toContain(QueueModule);
   });
 
-  it('imports axios for the three webhook channels', () => {
-    // `@nestjs/axios` is a package the boilerplate already depends on, which is what
-    // keeps Telegram, Slack and Discord package-free.
+  it('imports HttpCoreModule for the three webhook channels', () => {
+    // Shared outbound HTTP client module with global timeout and request-id.
     const names = imports.map(
       (entry) =>
         (entry as { name?: string })?.name ??

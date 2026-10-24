@@ -67,7 +67,6 @@ export class DiscordNotificationChannel implements NotificationChannel {
             },
           ],
         },
-        timeoutMs: this.config.delivery.timeout,
       });
 
       if (response.status < 200 || response.status >= 300) {

@@ -5,6 +5,8 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { createObserveModule } from '@nestjs/observe';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { IdempotencyModule } from '@nestjs/idempotency';
+import { ResilienceModule } from '@nestjs/resilience';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import {
   appConfig,
@@ -34,7 +36,6 @@ import {
   UsersModule,
 } from './modules/index.js';
 import {
-  IdempotencyGuard,
   JwtAuthGuard,
   ManagerGuard,
   PermissionsGuard,
@@ -128,6 +129,21 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
      */
     ScheduleModule.forRoot(),
 
+    IdempotencyModule.forRoot({
+      scope: (req: { user?: { id?: string }; ip?: string }) =>
+        req.user?.id ?? req.ip ?? 'anonymous',
+    }),
+    ResilienceModule.forRoot({
+      defaults: {
+        timeout: '5s',
+        retry: { attempts: 3, backoff: { delay: '200ms', maxDelay: '2s' } },
+        circuitBreaker: {
+          failureRateThreshold: 50,
+          minimumCalls: 5,
+          openDuration: '30s',
+        },
+      },
+    }),
     CacheModule,
     HealthModule,
     // Owns nothing but the optional prom-client registry, and the `/metrics`
@@ -226,15 +242,6 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       // interesting part.
       provide: APP_INTERCEPTOR,
       useClass: HttpTracingInterceptor,
-    },
-    {
-      // Last in the chain. A duplicate key is only meaningful once the caller is
-      // known and allowed: claiming a key for a request that was going to be
-      // refused would leave a key in redis that the real caller then collides with,
-      // and answering 409 to an unauthenticated request would leak that the key is
-      // in use.
-      provide: APP_GUARD,
-      useClass: IdempotencyGuard,
     },
     {
       // Registered last so a blocked request is counted before anything else

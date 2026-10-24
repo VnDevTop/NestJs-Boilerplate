@@ -1,8 +1,8 @@
-import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { HttpModule } from '@nestjs/axios';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -88,9 +88,8 @@ import { PasswordHistoryService } from './password-history.service.js';
     // enforced in exactly one place — the rotation — so there is no argument for
     // putting it anywhere else.
     ConfigModule.forFeature(sessionConfig),
-    // For the breach lookup, which is the one network call the policy can make.
-    // Only here so that an application which never sets
-    // `PASSWORD_CHECK_BREACH_LIST` has no HTTP client in its graph for it.
+    // Outbound HTTP client for the breach lookup. Config is left to the
+    // deployment; the default timeout is axios' own.
     HttpModule,
     TypeOrmModule.forFeature([
       AccountUnlockToken,

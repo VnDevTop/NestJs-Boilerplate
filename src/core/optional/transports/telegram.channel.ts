@@ -16,7 +16,6 @@ export interface TelegramChannelOptions {
   /** Optional forum topic id, so events can be routed to separate rooms. */
   topicId?: string;
   baseUrl?: string;
-  timeoutMs?: number;
 }
 
 /**
@@ -44,7 +43,6 @@ export class TelegramChannel implements WebhookChannel {
         parse_mode: 'MarkdownV2',
         disable_web_page_preview: true,
       },
-      timeoutMs: this.options.timeoutMs,
     });
 
     if (response.status < 200 || response.status >= 300) {

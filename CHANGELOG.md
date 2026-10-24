@@ -15,6 +15,35 @@ code itself. This file is the record of how it got that way.
 
 ---
 
+## feat: migrate outbound HTTP call sites
+
+`feat(http): migrate json-poster and notification channels` ·
+`feat(http): migrate password breach lookup to shared client` ·
+`fix(http): export http module from http core module` ·
+`docs(http): mark phase 44 as done in plan.md and changelog`
+
+**What changed**
+
+- `json-poster` and the three webhook channels (Slack, Telegram, Discord) now
+  use `HttpService` from `HttpCoreModule` with all hand-set timeouts removed
+- `PasswordBreachService` uses `HttpService` from `HttpCoreModule`, protected
+  by a `CircuitBreaker` failing open on persistent outages, with its hand-set
+  timeout removed
+- `AuthModule` and `NotificationModule` now import `HttpCoreModule` directly,
+  and `HttpCoreModule` exports `HttpModule` for consumer injection
+- Network errors from `json-poster` and `PasswordBreachService` are classified
+  into the `HttpError` taxonomy (`classifyHttpError`)
+
+**Why**
+
+Before this change, each outbound HTTP call site hand-set its own arbitrary
+timeout (`5_000`, `2_000`, `this.config.delivery.timeout`) and invented its own
+failure handling. Outbound calls now rely on the globally configured timeout in
+`HttpCoreModule`, incoming request IDs are propagated on all outbound requests,
+and third-party failures are classified into the shared error taxonomy.
+
+---
+
 ## feat: outbox pattern
 
 `feat(outbox): add outbox table, service, and entity for dual-write pattern` ·

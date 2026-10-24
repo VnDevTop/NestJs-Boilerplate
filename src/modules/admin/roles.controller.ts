@@ -19,7 +19,7 @@ import {
 } from '@nestjs/swagger';
 
 import { Audited, Permissions } from '../../common/decorators/index.js';
-import { Idempotent } from '../../common/guards/index.js';
+import { Idempotent } from '@nestjs/idempotency';
 import { Permission, Role } from '../../common/enums/index.js';
 import { AuditInterceptor } from '../audit/audit.interceptor.js';
 import { PermissionsService } from '../users/permissions.service.js';
@@ -77,7 +77,7 @@ export class AdminRolesController {
   // incident and a mystery.
   // Replayable, because a replace is a full-set write and a client that loses the
   // response has no way to confirm what it granted without sending it all again.
-  @Idempotent()
+  @Idempotent({ required: true })
   @Audited({
     action: 'roles.permissions.replace',
     targetType: 'role',

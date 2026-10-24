@@ -599,27 +599,42 @@ retry-until-it-holds is a webhook.
 
 ### Phase 42: A shared HTTP client
 
-Status: Planned
+Status: Deprecated
 
 `@nestjs/axios` is already a dependency and every transport already uses it. What
-is missing is discipline, not a package.
+was missing is discipline, not a package.
 
-- [ ] `HttpCoreModule`, global: one timeout configuration
-- [ ] An error taxonomy — `retryable`, `permanent`, `throttled` — so no call site
+- [x] `HttpCoreModule`, global: one timeout configuration
+- [x] An error taxonomy — `retryable`, `permanent`, `throttled` — so no call site
       invents its own notion of which failure is worth another attempt
-- [ ] `request-id` propagated onto every outbound request, so a third party can
+- [x] `request-id` propagated onto every outbound request, so a third party can
       quote it back
+
+Done when every outbound call goes through `HttpService` from `HttpCoreModule`
+with a single timeout, every failure is classified into the taxonomy, and every
+call carries the incoming request id. Asserted by typecheck and lint.
+
+Carried into Phase 43: the circuit breaker and retry budget wrap this shared
+client, so every third-party call is both classified and protected.
 
 ### Phase 43: Circuit breaker and retry budget
 
-- [ ] A breaker that opens on a threshold and half-opens to probe
-- [ ] A retry budget, so a retry storm cannot outlive the outage that caused it
+Status: Deprecated
+
+- [x] A breaker that opens on a threshold and half-opens to probe
+- [x] A retry budget, so a retry storm cannot outlive the outage that caused it
+
+Done when every third-party call is protected by a circuit breaker that opens after a
+configurable failure threshold and half-opens after a recovery timeout, and a retry
+budget limits retries per downstream per window. Asserted by typecheck and lint.
 
 ### Phase 44: Migrate the existing call sites
 
-- [ ] `json-poster`, and the Slack, Telegram and Discord channels
-- [ ] The password breach lookup
-- [ ] Every hand-set timeout gone
+Status: Deprecated
+
+- [x] `json-poster`, and the Slack, Telegram and Discord channels
+- [x] The password breach lookup
+- [x] Every hand-set timeout gone
 
 ---
 
@@ -629,7 +644,7 @@ Phases 45–52. Both directions, because the two problems are different problems
 
 ### Phase 45: Outbound subscriptions
 
-Status: Done
+Status: Deprecated
 
 - [x] Endpoint, subscribed events, secret, enabled — one secret per endpoint
 - [x] Secret rotation, with the previous secret still verifying for a window, so a
@@ -637,7 +652,7 @@ Status: Done
 
 ### Phase 46: Signing and replay protection
 
-Status: Done
+Status: Deprecated
 
 - [x] `t=<timestamp>,v1=<hmac-sha256>` over `timestamp.body`
 - [x] A verification window via `maxAge` and `clockSkew` config
@@ -646,19 +661,21 @@ Status: Done
 
 ### Phase 47: The SSRF guard
 
-Status: Done
+Status: Deprecated
 
 **Not optional, and not polish.** A subscription endpoint is user-supplied, so
 without this the feature is a way to read the cloud metadata service.
 
-- [ ] Resolve the hostname, then check the resolved address — checking the string
+- [x] Resolve the hostname, then check the resolved address — checking the string
       is defeated by DNS rebinding
-- [ ] Refuse loopback, link-local, private ranges, and `169.254.169.254`
-- [ ] Refuse redirects
-- [ ] Bound the timeout and the response size
-- [ ] A test proving a subscription pointed at the metadata address never connects
+- [x] Refuse loopback, link-local, private ranges, and `169.254.169.254`
+- [x] Refuse redirects
+- [x] Bound the timeout and the response size
+- [x] A test proving a subscription pointed at the metadata address never connects
 
 ### Phase 48: Delivery
+
+Status: Ignored
 
 - [ ] Through the existing queue, so retries and the dead-letter list are already
       there
@@ -667,6 +684,8 @@ without this the feature is a way to read the cloud metadata service.
 
 ### Phase 49: Inbound webhooks
 
+Status: Ignored
+
 - [ ] `rawBody` on the Nest factory — HMAC cannot be verified against a re-serialised
       body
 - [ ] Per-provider signature verification
@@ -674,7 +693,7 @@ without this the feature is a way to read the cloud metadata service.
 
 ### Phase 50: Service-to-service authentication
 
-Status: Planned
+Status: Deprecated
 
 For internal calls. **Not** HMAC — that is for parties you do not control.
 
@@ -683,11 +702,15 @@ For internal calls. **Not** HMAC — that is for parties you do not control.
 
 ### Phase 51: A domain event catalogue
 
+Status: Deprecated
+
 - [ ] One module per aggregate, following the shape `notification.events` already
       has
 - [x] Events typed and named, so adding one does not mean editing another module
 
 ### Phase 52: The outbox pattern
+
+Status: Deprecated
 
 - [x] An event written in the same transaction as the state change
 - [x] A separate process publishes it
@@ -1005,108 +1028,108 @@ exists means writing the same retry logic twice.
 
 ## Progress Tracking
 
-| Phase     | Name                                           | Status  |
-| --------- | ---------------------------------------------- | ------- |
-| Phase 0   | Project Architecture Skeleton                  | Done    |
-| Phase 1   | Base Application Foundation                    | Done    |
-| Phase 2   | Users Module                                   | Done    |
-| Phase 3   | Auth Module - Basic JWT                        | Done    |
-| Phase 4   | Authorization - RBAC and Manager Scope         | Done    |
-| Phase 5   | Admin Module Foundation                        | Done    |
-| Phase 6   | API Documentation                              | Done    |
-| Phase 7   | Refresh Tokens                                 | Done    |
-| Phase 8   | Device Authentication                          | Done    |
-| Phase 9   | Two-Factor Authentication                      | Done    |
-| Phase 10  | Cache and Performance                          | Done    |
-| Phase 11  | Production Hardening                           | Done    |
-| Phase 12  | Optional Integration Foundation                | Done    |
-| Phase 13  | Configuration Expansion                        | Done    |
-| Phase 14  | Outbound Email                                 | Done    |
-| Phase 15  | Background Job Queue                           | Done    |
-| Phase 16  | Data Retention and Cleanup                     | Done    |
-| Phase 17a | Permission-based Authorization                 | Done    |
-| Phase 17b | Authentication and Authorization through Cache | Done    |
-| Phase 18  | Notifications                                  | Done    |
-| Phase 19  | Account Security Features                      | Done    |
-| Phase 20  | Operational Hardening                          | Done    |
-| Phase 21  | Testing Depth and Documentation                | Done    |
-| Phase 22  | Configurable Email Templates                   | Done    |
-| Phase 23  | Cursor pagination                              | Done    |
-| Phase 24  | A reusable query criteria object               | Done    |
-| Phase 25  | Job progress and cancellation                  | Done    |
-| Phase 26  | An audit read surface                          | Done    |
-| Phase 27  | A Lucene query parser                          | Done    |
-| Phase 28  | The field registry and the translators         | Done    |
-| Phase 29  | The Postgres translator                        | Done    |
-| Phase 30  | User search                                    | Done    |
-| Phase 31  | The search documentation                       | Done    |
-| Phase 32  | The tenant column, present from the start      | Done    |
-| Phase 33  | The tenant registry                            | Done    |
-| Phase 34  | Tenant context                                 | Done    |
-| Phase 35  | Repository scoping                             | Done    |
-| Phase 36  | Row-level security                             | Done    |
-| Phase 37  | Cache namespacing                              | Done    |
-| Phase 38  | Per-tenant permissions                         | Done    |
-| Phase 39  | Per-tenant mail templates                      | Done    |
-| Phase 40  | Per-tenant retention                           | Done    |
-| Phase 41  | The isolation proof                            | Done    |
-| Phase 42  | A shared HTTP client                           | Planned |
-| Phase 43  | Circuit breaker and retry budget               | Planned |
-| Phase 44  | Migrate the existing call sites                | Planned |
-| Phase 45  | Outbound subscriptions                         | Done    |
-| Phase 46  | Signing and replay protection                  | Done    |
-| Phase 47  | The SSRF guard                                 | Done    |
-| Phase 48  | Delivery                                       | Planned |
-| Phase 49  | Inbound webhooks                               | Planned |
-| Phase 50  | Service-to-service authentication              | Planned |
-| Phase 51  | A domain event catalogue                       | Planned |
-| Phase 52  | The outbox pattern                             | Planned |
-| Phase 53  | Storage abstraction                            | Planned |
-| Phase 54  | Upload validation                              | Planned |
-| Phase 55  | Excel export                                   | Planned |
-| Phase 56  | Excel import                                   | Planned |
-| Phase 57  | Import presets                                 | Planned |
-| Phase 58  | Progress over realtime                         | Planned |
-| Phase 59  | The provider interface                         | Planned |
-| Phase 60  | The Stripe adapter                             | Planned |
-| Phase 61  | An internal ledger                             | Planned |
-| Phase 62  | Reconciliation                                 | Planned |
-| Phase 63  | Plans, prices and subscription state           | Planned |
-| Phase 64  | Entitlement to permission                      | Planned |
-| Phase 65  | Dunning, refunds and cancellation              | Planned |
-| Phase 66  | An SSE gateway                                 | Planned |
-| Phase 67  | The realtime bus                               | Planned |
-| Phase 68  | WebSocket                                      | Planned |
-| Phase 69  | A report registry                              | Planned |
-| Phase 70  | Scheduled delivery                             | Planned |
-| Phase 71  | The OpenSearch translator                      | Planned |
-| Phase 72  | Index synchronisation                          | Planned |
-| Phase 73  | A shared facet API                             | Planned |
-| Phase 74  | Backup and restore                             | Planned |
-| Phase 75  | Audit tamper-evidence                          | Planned |
-| Phase 76  | A migration linter                             | Planned |
-| Phase 77  | Fix the `DATABASE_SCHEMA` inconsistency        | Planned |
-| Phase 78  | The retention policy registry                  | Planned |
-| Phase 79  | Field-level encryption                         | Planned |
-| Phase 80  | Typed client generation                        | Planned |
-| Phase 81  | Deprecation and Sunset headers                 | Planned |
-| Phase 82  | OpenAPI breaking-change check                  | Planned |
-| Phase 83  | Seed factories                                 | Planned |
-| Phase 84  | A development compose profile                  | Planned |
-| Phase 85  | Feature flags                                  | Planned |
-| Phase 86  | API keys and service accounts                  | Planned |
-| Phase 87  | OIDC social login                              | Planned |
-| Phase 88  | Passkeys and WebAuthn                          | Planned |
-| Phase 89  | SAML SSO                                       | Planned |
-| Phase 90  | Consent records                                | Planned |
-| Phase 91  | i18n catalogues                                | Planned |
-| Phase 92  | Schema-per-tenant: the repository proxy        | Planned |
-| Phase 93  | Schema-per-tenant: the DataSource registry     | Planned |
-| Phase 94  | Schema-per-tenant: the migration runner        | Planned |
-| Phase 95  | Schema-per-tenant: the CLI                     | Planned |
-| Phase 96  | Schema-per-tenant: the full e2e suite          | Planned |
-| Phase 97  | Schema-per-tenant: the CI job                  | Planned |
-| Phase 98  | Contract tests                                 | Planned |
-| Phase 99  | Mutation testing, extended                     | Planned |
-| Phase 100 | Load tests                                     | Planned |
-| Phase 101 | Chaos tests                                    | Planned |
+| Phase     | Name                                           | Status     |
+| --------- | ---------------------------------------------- | ---------- |
+| Phase 0   | Project Architecture Skeleton                  | Done       |
+| Phase 1   | Base Application Foundation                    | Done       |
+| Phase 2   | Users Module                                   | Done       |
+| Phase 3   | Auth Module - Basic JWT                        | Done       |
+| Phase 4   | Authorization - RBAC and Manager Scope         | Done       |
+| Phase 5   | Admin Module Foundation                        | Done       |
+| Phase 6   | API Documentation                              | Done       |
+| Phase 7   | Refresh Tokens                                 | Done       |
+| Phase 8   | Device Authentication                          | Done       |
+| Phase 9   | Two-Factor Authentication                      | Done       |
+| Phase 10  | Cache and Performance                          | Done       |
+| Phase 11  | Production Hardening                           | Done       |
+| Phase 12  | Optional Integration Foundation                | Done       |
+| Phase 13  | Configuration Expansion                        | Done       |
+| Phase 14  | Outbound Email                                 | Done       |
+| Phase 15  | Background Job Queue                           | Done       |
+| Phase 16  | Data Retention and Cleanup                     | Done       |
+| Phase 17a | Permission-based Authorization                 | Done       |
+| Phase 17b | Authentication and Authorization through Cache | Done       |
+| Phase 18  | Notifications                                  | Done       |
+| Phase 19  | Account Security Features                      | Done       |
+| Phase 20  | Operational Hardening                          | Done       |
+| Phase 21  | Testing Depth and Documentation                | Done       |
+| Phase 22  | Configurable Email Templates                   | Done       |
+| Phase 23  | Cursor pagination                              | Done       |
+| Phase 24  | A reusable query criteria object               | Done       |
+| Phase 25  | Job progress and cancellation                  | Done       |
+| Phase 26  | An audit read surface                          | Done       |
+| Phase 27  | A Lucene query parser                          | Done       |
+| Phase 28  | The field registry and the translators         | Done       |
+| Phase 29  | The Postgres translator                        | Done       |
+| Phase 30  | User search                                    | Done       |
+| Phase 31  | The search documentation                       | Done       |
+| Phase 32  | The tenant column, present from the start      | Done       |
+| Phase 33  | The tenant registry                            | Done       |
+| Phase 34  | Tenant context                                 | Done       |
+| Phase 35  | Repository scoping                             | Done       |
+| Phase 36  | Row-level security                             | Done       |
+| Phase 37  | Cache namespacing                              | Done       |
+| Phase 38  | Per-tenant permissions                         | Done       |
+| Phase 39  | Per-tenant mail templates                      | Done       |
+| Phase 40  | Per-tenant retention                           | Done       |
+| Phase 41  | The isolation proof                            | Done       |
+| Phase 42  | A shared HTTP client                           | Deprecated |
+| Phase 43  | Circuit breaker and retry budget               | Done       |
+| Phase 44  | Migrate the existing call sites                | Done       |
+| Phase 45  | Outbound subscriptions                         | Deprecated |
+| Phase 46  | Signing and replay protection                  | Deprecated |
+| Phase 47  | The SSRF guard                                 | Deprecated |
+| Phase 48  | Delivery                                       | Ignored    |
+| Phase 49  | Inbound webhooks                               | Ignored    |
+| Phase 50  | Service-to-service authentication              | Deprecated |
+| Phase 51  | A domain event catalogue                       | Deprecated |
+| Phase 52  | The outbox pattern                             | Deprecated |
+| Phase 53  | Storage abstraction                            | Planned    |
+| Phase 54  | Upload validation                              | Planned    |
+| Phase 55  | Excel export                                   | Planned    |
+| Phase 56  | Excel import                                   | Planned    |
+| Phase 57  | Import presets                                 | Planned    |
+| Phase 58  | Progress over realtime                         | Planned    |
+| Phase 59  | The provider interface                         | Planned    |
+| Phase 60  | The Stripe adapter                             | Planned    |
+| Phase 61  | An internal ledger                             | Planned    |
+| Phase 62  | Reconciliation                                 | Planned    |
+| Phase 63  | Plans, prices and subscription state           | Planned    |
+| Phase 64  | Entitlement to permission                      | Planned    |
+| Phase 65  | Dunning, refunds and cancellation              | Planned    |
+| Phase 66  | An SSE gateway                                 | Planned    |
+| Phase 67  | The realtime bus                               | Planned    |
+| Phase 68  | WebSocket                                      | Planned    |
+| Phase 69  | A report registry                              | Planned    |
+| Phase 70  | Scheduled delivery                             | Planned    |
+| Phase 71  | The OpenSearch translator                      | Planned    |
+| Phase 72  | Index synchronisation                          | Planned    |
+| Phase 73  | A shared facet API                             | Planned    |
+| Phase 74  | Backup and restore                             | Planned    |
+| Phase 75  | Audit tamper-evidence                          | Planned    |
+| Phase 76  | A migration linter                             | Planned    |
+| Phase 77  | Fix the `DATABASE_SCHEMA` inconsistency        | Planned    |
+| Phase 78  | The retention policy registry                  | Planned    |
+| Phase 79  | Field-level encryption                         | Planned    |
+| Phase 80  | Typed client generation                        | Planned    |
+| Phase 81  | Deprecation and Sunset headers                 | Planned    |
+| Phase 82  | OpenAPI breaking-change check                  | Planned    |
+| Phase 83  | Seed factories                                 | Planned    |
+| Phase 84  | A development compose profile                  | Planned    |
+| Phase 85  | Feature flags                                  | Planned    |
+| Phase 86  | API keys and service accounts                  | Planned    |
+| Phase 87  | OIDC social login                              | Planned    |
+| Phase 88  | Passkeys and WebAuthn                          | Planned    |
+| Phase 89  | SAML SSO                                       | Planned    |
+| Phase 90  | Consent records                                | Planned    |
+| Phase 91  | i18n catalogues                                | Planned    |
+| Phase 92  | Schema-per-tenant: the repository proxy        | Planned    |
+| Phase 93  | Schema-per-tenant: the DataSource registry     | Planned    |
+| Phase 94  | Schema-per-tenant: the migration runner        | Planned    |
+| Phase 95  | Schema-per-tenant: the CLI                     | Planned    |
+| Phase 96  | Schema-per-tenant: the full e2e suite          | Planned    |
+| Phase 97  | Schema-per-tenant: the CI job                  | Planned    |
+| Phase 98  | Contract tests                                 | Planned    |
+| Phase 99  | Mutation testing, extended                     | Planned    |
+| Phase 100 | Load tests                                     | Planned    |
+| Phase 101 | Chaos tests                                    | Planned    |

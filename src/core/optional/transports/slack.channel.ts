@@ -13,7 +13,6 @@ const logger = new Logger('SlackChannel');
 export interface SlackChannelOptions {
   /** Incoming webhook url, which already carries the credential. */
   webhookUrl: string;
-  timeoutMs?: number;
   /** Channel label used in the log line. */
   channel?: string;
 }
@@ -36,7 +35,6 @@ export class SlackChannel implements WebhookChannel {
     const response = await postJson(this.http, {
       url: this.options.webhookUrl,
       body: this.blockKit(payload),
-      timeoutMs: this.options.timeoutMs,
     });
 
     if (response.status < 200 || response.status >= 300) {

@@ -90,9 +90,7 @@ type NotificationConfig = ConfigType<typeof notificationConfig>;
   imports: [
     ConfigModule.forFeature(notificationConfig),
     TypeOrmModule.forFeature([NotificationPreference, NotificationLog]),
-    // For the three webhook channels. `@nestjs/axios` is a package this boilerplate
-    // already depends on, which is what keeps Telegram, Slack and Discord
-    // package-free.
+    // Outbound HTTP client for the three webhook channels.
     HttpModule,
     // For the email channel, which delegates rather than speaking SMTP itself.
     MailModule,

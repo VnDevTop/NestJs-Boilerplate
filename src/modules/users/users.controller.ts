@@ -30,7 +30,7 @@ import {
   RequireVerifiedEmail,
   Roles,
 } from '../../common/decorators/index.js';
-import { Idempotent } from '../../common/guards/index.js';
+import { Idempotent } from '@nestjs/idempotency';
 import { AuditInterceptor } from '../audit/audit.interceptor.js';
 import type { RequestUser } from '../../common/interfaces/index.js';
 import { Permission, Role } from '../../common/enums/index.js';
@@ -63,7 +63,7 @@ export class UsersController {
   // Idempotent because a retry here creates a second person. The client's retry is
   // the honest reason: it timed out, it does not know whether the first one landed,
   // and without this it has no way to find out without issuing a second POST.
-  @Idempotent()
+  @Idempotent({ required: true })
   @Audited({
     action: 'users.create',
     targetType: 'user',
@@ -233,7 +233,7 @@ export class UsersController {
   // A retry after a lost 204 answers 404, which a client reads as "the delete
   // failed" when in fact it is the second delete. This is the exact confusion the
   // header exists to remove.
-  @Idempotent()
+  @Idempotent({ required: true })
   @Audited({
     action: 'users.delete',
     targetType: 'user',

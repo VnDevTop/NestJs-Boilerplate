@@ -81,20 +81,22 @@ describe('postJson', () => {
     expect(lastConfig(http)?.validateStatus?.(500)).toBe(true);
   });
 
-  it('defaults the timeout to five seconds', async () => {
+  it('does not hand-set a timeout, relying on the shared client configuration', async () => {
     const http = httpReturning(200, '');
 
     await postJson(http, { url: 'https://x.test/h', body: {} });
 
-    expect(lastConfig(http)?.timeout).toBe(5_000);
+    expect(lastConfig(http)?.timeout).toBeUndefined();
   });
 
-  it('passes an explicit timeout through', async () => {
-    const http = httpReturning(200, '');
+  it('rethrows network failures unchanged', async () => {
+    const http = {
+      post: vi.fn().mockReturnValue(throwError(() => new Error('ECONNRESET'))),
+    } as unknown as HttpService;
 
-    await postJson(http, { url: 'https://x.test/h', body: {}, timeoutMs: 50 });
-
-    expect(lastConfig(http)?.timeout).toBe(50);
+    await expect(
+      postJson(http, { url: 'https://x.test/h', body: {} }),
+    ).rejects.toThrow('ECONNRESET');
   });
 
   it('asks axios for a text body and leaves the payload unparsed', async () => {

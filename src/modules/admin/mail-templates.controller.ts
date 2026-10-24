@@ -23,7 +23,7 @@ import {
 } from '@nestjs/swagger';
 
 import { Audited, Permissions } from '../../common/decorators/index.js';
-import { Idempotent } from '../../common/guards/index.js';
+import { Idempotent } from '@nestjs/idempotency';
 import { Permission } from '../../common/enums/index.js';
 import { AuditInterceptor } from '../audit/audit.interceptor.js';
 import { MailTemplateStore } from '../mail/mail-template.store.js';
@@ -173,7 +173,7 @@ export class AdminMailTemplatesController {
    * saved without sending it all again, and `version` is what makes a second attempt
    * safe to recognise rather than apply twice.
    */
-  @Idempotent()
+  @Idempotent({ required: true })
   @Audited({
     action: 'templates.mail.update',
     targetType: 'mail-template',
@@ -265,7 +265,7 @@ export class AdminMailTemplatesController {
    * change to the file takes effect. That is the whole reason the file is a fallback
    * and not only a seed.
    */
-  @Idempotent()
+  @Idempotent({ required: true })
   @Audited({
     action: 'templates.mail.reset',
     targetType: 'mail-template',

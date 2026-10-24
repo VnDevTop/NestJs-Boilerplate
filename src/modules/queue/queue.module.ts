@@ -29,7 +29,7 @@ import {
 import { MailProcessor } from './processors/mail.processor.js';
 import { ProcessorRouter } from './processor-router.service.js';
 import type { JobQueue } from './queue.interface.js';
-import { IdempotencyService } from './idempotency.service.js';
+import { RedisIdempotencyStore } from './redis-idempotency.store.js';
 import { RedisClientService } from './redis-client.service.js';
 import { JOB_QUEUE, PROCESSOR_REGISTRY } from './queue.tokens.js';
 
@@ -98,11 +98,8 @@ const configOf = (configService: ConfigService): QueueConfig =>
         new RedisThrottlerStorage(redis),
     },
     RedisClientService,
-    // For `IdempotencyGuard`, which the application registers globally. It lives
-    // here rather than in the common guards because that is where
-    // `RedisClientService` is provided; the guard itself imports nothing from the
-    // queue beyond this one class.
-    IdempotencyService,
+    // Redis-backed store for @nestjs/idempotency.
+    RedisIdempotencyStore,
     // Where a job's progress is kept, and where a cancellation is registered.
     // Provided here rather than in the module that owns the jobs because the
     // queue is what mints the id the progress is filed under.
@@ -197,7 +194,6 @@ const configOf = (configService: ConfigService): QueueConfig =>
   ],
   exports: [
     JOB_QUEUE,
-    IdempotencyService,
     JobProgressService,
     PROCESSOR_REGISTRY,
     RedisClientService,
