@@ -5,6 +5,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 
 import { CacheService } from '../../core/cache/index.js';
+import { classifyHttpError, CircuitBreaker } from '../../core/http/index.js';
 
 /**
  * Rejects a password that appears in a corpus of breached credentials.
@@ -25,6 +26,10 @@ import { CacheService } from '../../core/cache/index.js';
  * deployment by being slow, which makes this an availability dependency dressed up
  * as a security control. The failure is logged loudly, because a check that quietly
  * stops running is worse than one that is off.
+ *
+ * **Protected by a circuit breaker.** Outages or slow third-party calls will not
+ * exhaust connections or prolong signups indefinitely: once the breaker opens,
+ * requests fail open immediately without touching the network until recovery.
  *
  * **Cached, because the answer does not change.** A breached password stays
  * breached forever, so one lookup per distinct password is enough for the lifetime
@@ -47,16 +52,6 @@ export class PasswordBreachService {
   private static readonly VERDICT_TTL_SECONDS = 60 * 60 * 24 * 30;
 
   /**
-   * Separate from the cache TTL because it has a different failure mode.
-   *
-   * A breach lookup that hangs must not hold a request open, and this is the one
-   * network call in a signup path. Five seconds is generous for a CDN-fronted range
-   * endpoint and short enough that a hung connection is a slow signup rather than a
-   * pile of them.
-   */
-  private static readonly TIMEOUT_MS = 2_000;
-
-  /**
    * How long a "could not check" answer is kept.
    *
    * Short on purpose. The failure is usually a blip, so retrying in a few seconds
@@ -64,6 +59,16 @@ export class PasswordBreachService {
    * become an hour of unchecked passwords.
    */
   private static readonly UNKNOWN_TTL_SECONDS = 60;
+
+  /**
+   * Circuit breaker protecting the signup path from an outage at the range endpoint.
+   * Fails open after consecutive failures, skipping the network call completely.
+   */
+  readonly breaker: CircuitBreaker = new CircuitBreaker({
+    failureThreshold: 5,
+    windowMs: 60_000,
+    recoveryTimeoutMs: 30_000,
+  });
 
   constructor(
     private readonly http: HttpService,
@@ -108,51 +113,53 @@ export class PasswordBreachService {
    */
   private async ask(prefix: string, suffix: string): Promise<boolean | null> {
     try {
-      const response = await firstValueFrom(
-        this.http.get(`${PasswordBreachService.API_URL}/${prefix}`, {
-          timeout: PasswordBreachService.TIMEOUT_MS,
-          responseType: 'text',
-          // The response is `SUFFIX:COUNT` per line. Without this the transform
-          // tries to parse it as JSON, because the content type is text/plain and
-          // axios believes it.
-          transformResponse: [(data: unknown) => data],
-          // Every status is returned rather than thrown, so a 429 from the service
-          // is a fact to log rather than an exception to unwind a signup with.
-          validateStatus: () => true,
-        }),
-      );
-
-      const status = response.status as number;
-
-      if (status < 200 || status >= 300) {
-        // Fails open, and says which status, because "the check stopped running"
-        // and "no passwords were breached" look identical from the outside.
-        this.logger.warn(
-          `Breach check answered ${status} for one prefix, treating the password ` +
-            'as not breached. Signups are not being blocked by this.',
+      const result = await this.breaker.execute(async () => {
+        const response = await firstValueFrom(
+          this.http.get(`${PasswordBreachService.API_URL}/${prefix}`, {
+            responseType: 'text',
+            // The response is `SUFFIX:COUNT` per line. Without this the transform
+            // tries to parse it as JSON, because the content type is text/plain and
+            // axios believes it.
+            transformResponse: [(data: unknown) => data],
+            // Every status is returned rather than thrown, so a 429 from the service
+            // is a fact to log rather than an exception to unwind a signup with.
+            validateStatus: () => true,
+          }),
         );
 
-        return null;
-      }
+        const status = response.status as number;
 
-      const body = typeof response.data === 'string' ? response.data : '';
-      const found = countMatches(body, suffix);
+        if (status < 200 || status >= 300) {
+          // Fails open, and says which status, because "the check stopped running"
+          // and "no passwords were breached" look identical from the outside.
+          this.logger.warn(
+            `Breach check answered ${status} for one prefix, treating the password ` +
+              'as not breached. Signups are not being blocked by this.',
+          );
 
-      if (found > 0) {
-        this.logger.warn(
-          `A password was refused because it appears ${found} time(s) in the ` +
-            'breach corpus. The password itself is not logged and never left the ' +
-            'process in anything but a hash prefix.',
-        );
-      }
+          return null;
+        }
 
-      return found > 0;
+        const body = typeof response.data === 'string' ? response.data : '';
+        const found = countMatches(body, suffix);
+
+        if (found > 0) {
+          this.logger.warn(
+            `A password was refused because it appears ${found} time(s) in the ` +
+              'breach corpus. The password itself is not logged and never left the ' +
+              'process in anything but a hash prefix.',
+          );
+        }
+
+        return found > 0;
+      });
+
+      return result.value;
     } catch (error) {
+      const httpError = classifyHttpError(error);
       this.logger.warn(
         `Breach check could not be reached, treating the password as not ` +
-          `breached: ${
-            error instanceof Error ? error.message : String(error)
-          }. Signups are not being blocked by this.`,
+          `breached: ${httpError.message}. Signups are not being blocked by this.`,
       );
 
       return null;

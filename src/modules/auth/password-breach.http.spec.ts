@@ -208,6 +208,22 @@ describe('a lookup', () => {
     expect(logged).not.toContain('Tr0ub4dor-and-3');
     expect(logged).toContain('42');
   });
+
+  it('does not pass a hand-set timeout, relying on shared client configuration', async () => {
+    let capturedOptions: Record<string, unknown> | undefined;
+    const get = vi.fn((_url: string, options?: Record<string, unknown>) => {
+      capturedOptions = options;
+      return of({ status: 200, data: '' });
+    });
+    const service = new PasswordBreachService(
+      { get } as never,
+      { wrap: async (_k: string, fn: () => Promise<unknown>) => fn() } as never,
+    );
+
+    await service.isBreached('password');
+
+    expect(capturedOptions?.timeout).toBeUndefined();
+  });
 });
 
 describe('caching', () => {
@@ -368,5 +384,28 @@ describe('when the service cannot be reached', () => {
     const h = harness(() => ({ status: 200, data: undefined as never }));
 
     await expect(h.service.isBreached('password')).resolves.toBe(false);
+  });
+
+  it('opens the circuit breaker after repeated failures and fails open without reaching the network', async () => {
+    let calls = 0;
+    const h = harness(() => {
+      calls++;
+      return new Error('ECONNREFUSED');
+    });
+
+    // Cause 5 consecutive failures to open the circuit breaker
+    for (let i = 0; i < 5; i++) {
+      h.expire();
+      await h.service.isBreached(`password-${i}`);
+    }
+
+    expect(calls).toBe(5);
+    expect(h.service.breaker.currentState).toBe('open');
+
+    // 6th call should be rejected by the circuit breaker immediately without a network call
+    h.expire();
+    await expect(h.service.isBreached('password-6')).resolves.toBe(false);
+    expect(calls).toBe(5);
+    expect(h.logs()).toContain('Circuit breaker is open');
   });
 });

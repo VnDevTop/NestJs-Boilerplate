@@ -1,4 +1,3 @@
-import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -33,6 +32,7 @@ import {
   type PasswordPolicyConfig,
 } from '../../configs/password-policy.config.js';
 import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
+import { HttpCoreModule } from '../../core/http/http-core.module.js';
 import { MetricsModule } from '../../core/metrics/index.js';
 import { MailModule } from '../mail/mail.module.js';
 import { AuditModule } from '../audit/audit.module.js';
@@ -89,9 +89,9 @@ import { PasswordHistoryService } from './password-history.service.js';
     // putting it anywhere else.
     ConfigModule.forFeature(sessionConfig),
     // For the breach lookup, which is the one network call the policy can make.
-    // Only here so that an application which never sets
-    // `PASSWORD_CHECK_BREACH_LIST` has no HTTP client in its graph for it.
-    HttpModule,
+    // Goes through HttpCoreModule so global timeout, request-id propagation and
+    // error taxonomy are shared.
+    HttpCoreModule,
     TypeOrmModule.forFeature([
       AccountUnlockToken,
       RefreshToken,
