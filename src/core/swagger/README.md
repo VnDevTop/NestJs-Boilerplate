@@ -4,6 +4,7 @@ OpenAPI documentation, served from `setupSwagger(app)`.
 
 ```text
 GET /docs
+GET /docs/admin
 ```
 
 Configuration comes from `src/configs/swagger.config.ts`, so `SWAGGER_ENABLED=false`
