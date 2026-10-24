@@ -630,9 +630,11 @@ budget limits retries per downstream per window. Asserted by typecheck and lint.
 
 ### Phase 44: Migrate the existing call sites
 
-- [ ] `json-poster`, and the Slack, Telegram and Discord channels
-- [ ] The password breach lookup
-- [ ] Every hand-set timeout gone
+Status: Done
+
+- [x] `json-poster`, and the Slack, Telegram and Discord channels
+- [x] The password breach lookup
+- [x] Every hand-set timeout gone
 
 ---
 
@@ -1069,7 +1071,7 @@ exists means writing the same retry logic twice.
 | Phase 41  | The isolation proof                            | Done    |
 | Phase 42  | A shared HTTP client                           | Done    |
 | Phase 43  | Circuit breaker and retry budget               | Done    |
-| Phase 44  | Migrate the existing call sites                | Planned |
+| Phase 44  | Migrate the existing call sites                | Done    |
 | Phase 45  | Outbound subscriptions                         | Done    |
 | Phase 46  | Signing and replay protection                  | Done    |
 | Phase 47  | The SSRF guard                                 | Done    |
