@@ -19,7 +19,7 @@ const KEY_LENGTH = 32;
  * that it names the version, so the derivation can be changed later and the
  * change be recognisable.
  */
-const KEY_SALT = 'nestjs-boiler-plate:two-factor-key:v1';
+const KEY_SALT = 'nestjs-boilerplate:two-factor-key:v1';
 
 export interface EncryptedValue {
   ciphertext: string;

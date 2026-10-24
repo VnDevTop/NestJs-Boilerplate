@@ -5,29 +5,13 @@
   <a href="https://github.com/VnDevTop/NestJs-Boilerplate/actions/workflows/ci.yml"><img src="https://github.com/VnDevTop/NestJs-Boilerplate/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/VnDevTop/NestJs-Boilerplate"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
   <a href="https://github.com/VnDevTop/NestJs-Boilerplate"><img src="https://img.shields.io/badge/node-%3E%3D22-5FA04E" alt="Node 22+" /></a>
-  <a href="https://github.com/VnDevTop/NestJs-Boilerplate"><img src="https://img.shields.io/badge/typescript-5.7-3178C6" alt="TypeScript" /></a>
+  <a href="https://github.com/VnDevTop/NestJs-Boilerplate"><img src="https://img.shields.io/badge/typescript-6.0-3178C6" alt="TypeScript" /></a>
   <a href="https://github.com/VnDevTop/NestJs-Boilerplate"><img src="https://img.shields.io/badge/tests-1962%20unit%20%2B%2037%20e2e-5FA04E" alt="Tests" /></a>
 </p>
 
-<!--
-  One live badge, not three per-job ones, and the reason is worth recording
-  because the obvious version is wrong twice over:
-
-  - GitHub's `badge.svg?job=<name>` ignores the parameter — every job returns
-    the same SVG for the workflow, so three badges would be three copies of one
-    answer. Verified by fetching two and diffing them.
-  - A shields.io label pinned per job would be a static image that never
-    changes colour, which is the original sin: it reads "passing" on a red
-    build, and a status badge is read precisely when somebody is deciding
-    whether to trust the repository.
-
-  GitHub renders one status per workflow, so a workflow-wide badge is the most
-  truthful thing available without generating per-job images in a job.
--->
-
 # NestJS Boilerplate
 
-A production-ready NestJS template for APIs that need authentication done
+Production-ready NestJS 12 boilerplate for APIs that need authentication done
 properly. The session handling, the authorisation and the deployment defaults are
 already built and explained, so a new project starts from working code instead of
 a scaffold.
@@ -37,117 +21,135 @@ opinion on your domain, and no folder you have to fight. What is here is the
 part that every real API needs and that is tedious to get right, and nothing
 else.
 
-## What is inside
+## Table of Contents
 
-**Sessions that behave correctly under attack**
+- [Important](#important)
+- [TODO / Next Features](#todo--next-features)
+- [Prerequisites](#prerequisites)
+- [Build with](#build-with)
+- [Objective](#objective)
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Database](#database)
+- [Installation](#installation)
+- [Scripts](#scripts)
+- [Tests](#tests)
+- [Project structure](#project-structure)
+- [Documentation](#documentation)
+- [Known limitations](#known-limitations)
+- [Contributing](#contributing)
+- [License](#license)
+- [Credits](#credits)
 
-- JWT access token with a rotating refresh token pair.
-- Rotation inside a transaction with a row lock, so concurrent refreshes produce
-  exactly one winner rather than two sessions.
-- Replaying a token that was rotated out is treated as theft and revokes every
-  session of that user. Logging out is not a compromise signal and does not.
-- Devices fingerprinted by user agent, so logging in twice from one browser does
-  not create two device rows, and revoking a device revokes its tokens.
-- Optional TOTP two-factor, secret encrypted at rest, single use steps, and
-  recovery codes shown once.
-- `GET /auth/sessions` and `DELETE /auth/sessions/:id`, where a session is one
-  live refresh token rather than one device, because one device can hold several.
-  Revoking one also stops the access token already minted from it.
-- **Four levels of revocation**, each scoped to something smaller than the last:
-  the account, the device, the session, and the user row. Signing out of one
-  browser leaves the phone signed in, and each is a counter compared on every
-  request rather than a lookup.
+## Important
 
-**Authorisation you can reason about**
+- Copy `.env.example` to `.env` and fill in the secrets. Configuration is
+  validated before anything connects, so a missing value is one clear error at
+  boot.
+- Docker Compose brings up Postgres and Valkey, runs the migrations, then starts
+  the app. The admin user is seeded and its password is printed once, at first
+  start.
+- `synchronize` is off. Schema changes go through reviewed migrations.
+- The app runs on both Express and Fastify.
 
-- `@Roles()`, `@ManagerOnly()` and a real `@Permissions()`, backed by a
-  `permissions` table and a `role_permissions` join.
-- Deny by default: an ordinary user holds no permissions, so a route that names
-  one refuses rather than admits anybody who has not been granted it.
-- Guards read the request context instead of loading services, so an
-  authorisation failure reads the same as any other failure.
-- The admin scope is guarded at the controller, which makes a new route there
-  protected by default.
+## TODO / Next Features
 
-**Platform decisions already made**
+See [ROADMAP.md](ROADMAP.md) and [PLAN.md](PLAN.md) for open decisions and
+planned enhancements.
 
-- Configuration is namespaced and typed, and the whole environment is validated
-  before anything connects. A missing secret is one clear error at boot, not a
-  failure twenty minutes later.
-- Redis or Valkey cache with request coalescing and stale while revalidate, so a
-  hot key expiring under load does not stampede the database.
-- Rate limiting counted in Redis rather than per process, so the configured limit
-  is the real limit behind any number of replicas.
-- Two limits on the credential routes, one per client address and one per
-  submitted address, because neither alone stops both an attacker rotating hosts
-  and an attacker guessing one account.
-- Two account lockouts. A temporary Redis block after five failed sign-ins — a
-  minute, then a minute more per failure, capped at fifteen — and a permanent one
-  after twenty that only an operator or the owner of a confirmed address can clear.
-  Only confirmed addresses can be locked permanently, because an unverified account
-  could never receive the link that unlocks it.
-- A password policy configured entirely by environment, an optional `zxcvbn` score,
-  a breach check that sends only five characters of a SHA-1 to a k-anonymity API,
-  and the last N hashes rejecting reuse.
-- An append-only audit trail of every privileged action: actor, target, before/after
-  diff, ip, user agent and request id, with a redactor that no credential passes.
-- An `Idempotency-Key` header on mutating routes, so a client retrying after a
-  timeout gets the original answer rather than a second account.
-- Optimistic concurrency on the rows a request reads before it writes, so two
-  administrators editing one profile produce a 409 instead of a silent lost update.
-- Erasure with a thirty day grace window, and a streamed export of everything held
-  about an account that selects no credential at all.
-- Nightly data retention, batching deletes so cleanup costs latency rather than a
-  long lock, with a dry run to rehearse against production data first.
-- Request id on every response, and JSON logs in production that carry it.
-- Liveness and readiness probes kept separate, so a database problem does not make
-  an orchestrator restart every healthy instance.
-- Migrations with `synchronize` off, an idempotent seed, graceful shutdown, a
-  two stage Docker image and a local docker-compose stack.
-- Prometheus metrics, OpenTelemetry spans and Sentry error reporting, each
-  optional and each off by default. See [the optional integrations
-  guide](docs/optional-integrations.md).
-- Alert rules in [`ops/prometheus/alerts.yml`](ops/prometheus/alerts.yml), checked
-  against the constants they are generated from so the two cannot drift, and a
-  [runbook](docs/runbook.md) for each one.
+## Prerequisites
 
-**Transactional mail, off the request path**
+- Node.js >= 22
+- npm (packageManager `npm@11.19.0`)
+- Docker (recommended, optional)
+- PostgreSQL 17 and Valkey 8 (via Docker Compose)
 
-- A welcome email, an address verification, a password reset, a password change,
-  a new-device sign-in and both kinds of lockout, as nine templates that take
-  exactly the fields they render. No template receives a user entity.
-- A pluggable transport — memory, SMTP, SES, SendGrid — and every provider package
-  is optional. A deployment with none installed still boots and still logs which
-  transport actually ran, rather than reporting success for mail it dropped.
-- Mail is queued, deduplicated on delivery, and retried on timeouts and 5xx but
-  not on a provider 4xx. Exhausted jobs go to a dead-letter list in Redis.
-- Every attempt is recorded in `mail_logs` with its request id, so "I got nothing"
-  is answerable with a query.
+## Build with
 
-**Alerts that reach you**
+| Name              | Version |
+| ----------------- | ------- |
+| NestJS            | 12.x    |
+| Node.js           | >= 22   |
+| TypeScript        | 6.0.x   |
+| TypeORM           | latest  |
+| PostgreSQL        | 17      |
+| Valkey/Redis      | 8       |
+| Express / Fastify | 5 / 5   |
+| Vitest            | 4.x     |
 
-- Telegram, Slack and Discord channels over raw HTTPS — no package for any of them —
-  plus operator mail and a console channel for development.
-- Per-user opt-out per event and per channel, and a `notification_logs` row for every
-  channel including the ones that refused, so a skipped alert is visible.
-- A failing webhook never fails the request that triggered it.
+## Objective
 
-## Stack
+- Modular, component-based folder structure
+- Stateful authentication with rotating refresh tokens, device tracking, TOTP 2FA
+- RBAC backed by a `permissions` table and a `role_permissions` join
+- Twelve-Factor configuration, Redis/Valkey cache, distributed rate limiting
+- Transactional mail, operator alerts, observability
+- Reviewed migrations, graceful shutdown, two-stage Docker image
 
-|            |                                                                   |
-| ---------- | ----------------------------------------------------------------- |
-| Framework  | NestJS 12, Express 5, Node 22+                                    |
-| Language   | TypeScript, ESM, NodeNext                                         |
-| Data       | PostgreSQL, TypeORM, reviewed migrations                          |
-| Cache      | Redis or Valkey via `@nestjs/cache-manager`, Keyv                 |
-| Auth       | JWT access and refresh tokens, TOTP 2FA                           |
-| Validation | `zod` for the environment, `class-validator` for requests         |
-| Docs       | Swagger at `/docs`                                                |
-| Ops        | helmet, throttler, terminus health checks, Docker, GitHub Actions |
+## Features
 
-Runs on Express and on Fastify. The middleware declares the parts of the request
-and reply it uses, and picks its catch-all route per adapter, because the two
-routers spell a wildcard differently.
+### Authentication & Security
+
+- JWT access token with a rotating refresh token pair
+- Rotation inside a transaction with a row lock
+- Replaying a rotated-out token is treated as theft and revokes every session
+- Devices fingerprinted by user agent
+- Optional TOTP two-factor, secret encrypted at rest, single-use steps, recovery codes shown once
+- `GET /auth/sessions` and `DELETE /auth/sessions/:id`
+- Four levels of revocation: account, device, session, user row
+- Two rate limits on credential routes: per client address and per submitted address
+- Two account lockouts: temporary Redis block and permanent lockout
+- Password policy configured by environment, optional `zxcvbn`, breach check, reuse prevention
+- Append-only audit trail
+- `Idempotency-Key` header on mutating routes
+- Optimistic concurrency on rows read before write
+- Erasure with a thirty day grace window and streamed export
+- Nightly data retention with dry run
+- Request id on every response, JSON logs in production
+- Liveness and readiness probes kept separate
+
+### Authorisation
+
+- `@Roles()`, `@ManagerOnly()` and a real `@Permissions()`
+- Deny by default
+- Guards read the request context
+- Admin scope guarded at the controller
+
+### Platform
+
+- Namespaced, typed configuration with environment validation at boot
+- Redis or Valkey cache with request coalescing and stale-while-revalidate
+- Rate limiting counted in Redis
+- Prometheus metrics, OpenTelemetry spans, Sentry error reporting, each optional and off by default
+
+### Mail
+
+- Nine templates that take exactly the fields they render
+- Pluggable transport: memory, SMTP, SES, SendGrid
+- Queued, deduplicated, retried on timeouts and 5xx
+- Every attempt recorded in `mail_logs`
+
+### Alerts
+
+- Telegram, Slack, Discord, operator mail and console channels
+- Per-user opt-out per event and per channel
+- `notification_logs` row for every channel
+
+### Observability
+
+- Liveness and readiness probes
+- Prometheus metrics
+- OpenTelemetry spans
+- Sentry error reporting
+
+### Development
+
+- NestJS 12, Express 5, Node 22+
+- TypeScript, ESM, NodeNext
+- Swagger at `/docs`
+- `zod` for the environment, `class-validator` for requests
+- Vitest, oxlint, husky, commitlint
+- Docker and GitHub Actions
 
 ## Quick start
 
@@ -178,6 +180,16 @@ npm run migration:run
 npm run seed                   # prints a generated admin password
 npm run start:dev
 ```
+
+## Database
+
+Migrations run with `synchronize` off. The seed is idempotent. The database name
+defaults to `nestjs_boilerplate`.
+
+## Installation
+
+See [docs/installation.md](docs/installation.md) for installing it, the two
+gotchas, and how to verify it.
 
 ## Scripts
 
@@ -211,8 +223,8 @@ Four layers, each answering a question the one above it cannot.
 | `npm run test:mutate` | mutated sources    | does the test suite notice when the logic changes   |
 | `npm run test:smoke`  | a running instance | does a deployed one answer the calls a client makes |
 
-The end-to-end suite starts its own Postgres and Redis with `testcontainers`, runs
-every migration against them, and hands the urls to each spec.
+The end-to-end suite starts its own Postgres and Redis with `testcontainers`,
+runs every migration against them, and hands the urls to each spec.
 
 It needs a container runtime. Without one it does not fail — it prints the three
 things that work and skips:
@@ -221,7 +233,7 @@ things that work and skips:
 colima start                 # 1. start one; `docker info` is the check
 
 docker compose up -d postgres valkey   # 2. or reuse the local stack
-E2E_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nestjs_boiler_plate \
+E2E_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nestjs_boilerplate \
 E2E_REDIS_URL=redis://localhost:6379/1 npm run test:e2e
 
 E2E_NO_CONTAINERS=1 npm run test:e2e   # 3. or skip, which runs nothing
@@ -230,23 +242,6 @@ E2E_NO_CONTAINERS=1 npm run test:e2e   # 3. or skip, which runs nothing
 CI deliberately omits both the opt-out flag and option 2, so a job that cannot
 reach a container runtime fails rather than reporting success on a suite that
 never ran.
-
-```bash
-npm run test:e2e                              # starts its own containers
-E2E_NO_CONTAINERS=1 npm run test:e2e          # skips, on a machine with no docker
-E2E_DATABASE_URL=postgres://... npm run test:e2e
-```
-
-Three of these suites exist because of a specific quiet failure:
-
-- `optional-dependencies.e2e-spec.ts` boots the app with `MAIL_TRANSPORT=ses` and
-  no `@aws-sdk/client-sesv2` installed. Every unit test resolves a transport that
-  is present, so nothing else would catch a missing fallback.
-- `cache-invalidation.e2e-spec.ts` changes a grant and re-reads on the next
-  request. No assertion in it waits out a TTL, because a test that waits for an
-  entry to lapse passes just as well when the invalidation is deleted.
-- `retention-dry-run.e2e-spec.ts` runs the rehearsal against a real database with
-  a row planted past the cutoff, and asserts the row is still there.
 
 ## Project structure
 
@@ -304,35 +299,23 @@ Recorded rather than left to be discovered. See
 
 - `GET /users/:id` has no role guard: any authenticated user can read another
   user's profile, email included. The password hash is withheld.
-- A dead cache costs latency rather than correctness. Each request waits out
-  `CACHE_CONNECT_TIMEOUT` for the failed read and again for the failed write.
-- A role's permissions changed directly in the database are invisible to the
-  application until `CACHE_AUTH_ROLE_TTL` expires, because invalidation runs where
-  the write runs. Use `PUT /admin/roles/:role/permissions`, which goes through it.
+- A dead cache costs latency rather than correctness.
+- A role's permissions changed directly in the database are invisible until
+  `CACHE_AUTH_ROLE_TTL` expires.
 - A dead Redis costs rate limiting and the login lockout, because both fail open.
-  An outage that overlaps an attack removes that protection. Put a limit in front
-  of the application as well; these are the inner layer, not the only one.
-- The login lockout is keyed by address rather than by account row, so it counts
-  attempts against addresses nobody registered. That is what keeps a 429 from
-  revealing which addresses exist. The cost is that anybody can lock an address
-  out by guessing it wrong five times.
-- Auth state comes from Redis with a short TTL, and every write that moves an
-  authentication answer drops the entry explicitly. A change made outside the
-  application is therefore invisible until the TTL expires; there is no subscriber
-  watching for it, because a TypeORM subscriber gets no dependency injection and
-  cannot identify the row a query-builder write touched.
-- The audit trail can have holes. `AuditService.record` never throws, so an outage in
-  the log costs a logged gap rather than a failed request. That is a deliberate
-  trade: an outage in the log must not become an outage in the product.
+- The login lockout is keyed by address rather than by account row.
+- Auth state comes from Redis with a short TTL.
+- The audit trail can have holes.
 - A permanent lockout is a denial-of-service surface before it is a defence.
-  Somebody with a list of addresses can lock twenty accounts for twenty requests
-  each. What bounds it is the recovery path — only a confirmed address can be
-  locked, and that account's owner receives a link that clears it without help.
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Commit messages follow Conventional
 Commits and are checked before the commit is created.
+
+## License
+
+[MIT](LICENSE) © VnDevTop
 
 ## Credits
 
@@ -345,7 +328,3 @@ style: recent phases were written by an agent, and the reasoning in each commit
 body is the agent's rather than a human's retrospective. Treat it as a first
 draft to review, not a finished decision — particularly the security notes in
 `PLAN.md`, which are arguments, not proofs.
-
-## License
-
-[MIT](LICENSE) © VnDevTop

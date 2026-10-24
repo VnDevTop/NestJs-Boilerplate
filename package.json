@@ -1,7 +1,7 @@
 {
-  "name": "nestjs-boiler-plate",
-  "version": "0.0.1",
-  "description": "Production-ready NestJS boilerplate: auth, RBAC, 2FA, cache and the hardening a real deployment needs.",
+  "name": "nestjs-boilerplate",
+  "version": "12.1.0",
+  "description": "Production-ready NestJS 12 boilerplate: auth, RBAC, 2FA, cache, resilience, observability, and 1900+ tests.",
   "author": "VnDevTop <hi@vndev.top>",
   "private": true,
   "license": "MIT",

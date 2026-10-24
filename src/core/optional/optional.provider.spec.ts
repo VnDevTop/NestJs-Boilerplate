@@ -9,7 +9,7 @@ import {
 
 type MailModule = { createTransport: () => string };
 
-const MISSING = '@nestjs-boiler-plate/not-installed';
+const MISSING = '@nestjs-boilerplate/not-installed';
 const PRESENT = 'node:path';
 
 function resolve<T>(

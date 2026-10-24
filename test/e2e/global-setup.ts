@@ -84,7 +84,7 @@ export const NO_RUNTIME_GUIDANCE = [
   '     `docker info` is the check.',
   '  2. Or point the suite at a stack you already have:',
   '       docker compose up -d postgres valkey',
-  '       E2E_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nestjs_boiler_plate \\',
+  '       E2E_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nestjs_boilerplate \\',
   '       E2E_REDIS_URL=redis://localhost:6379/1 npm run test:e2e',
   '  3. Or skip it, which runs nothing and reports nothing as passing:',
   '       E2E_NO_CONTAINERS=1 npm run test:e2e',
