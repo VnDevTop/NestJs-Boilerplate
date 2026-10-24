@@ -45,7 +45,7 @@ import { REQUEST_ID_HEADER } from './http.error.js';
     }),
   ],
   providers: [],
-  exports: [HttpService],
+  exports: [HttpModule],
 })
 export class HttpCoreModule implements OnModuleInit {
   constructor(private readonly http: HttpService) {}
