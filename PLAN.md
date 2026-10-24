@@ -644,7 +644,7 @@ Phases 45–52. Both directions, because the two problems are different problems
 
 ### Phase 45: Outbound subscriptions
 
-Status: Done
+Status: Deprecated
 
 - [x] Endpoint, subscribed events, secret, enabled — one secret per endpoint
 - [x] Secret rotation, with the previous secret still verifying for a window, so a
@@ -652,7 +652,7 @@ Status: Done
 
 ### Phase 46: Signing and replay protection
 
-Status: Done
+Status: Deprecated
 
 - [x] `t=<timestamp>,v1=<hmac-sha256>` over `timestamp.body`
 - [x] A verification window via `maxAge` and `clockSkew` config
@@ -661,7 +661,7 @@ Status: Done
 
 ### Phase 47: The SSRF guard
 
-Status: Done
+Status: Deprecated
 
 **Not optional, and not polish.** A subscription endpoint is user-supplied, so
 without this the feature is a way to read the cloud metadata service.
@@ -693,7 +693,7 @@ Status: Ignored
 
 ### Phase 50: Service-to-service authentication
 
-Status: Done
+Status: Deprecated
 
 For internal calls. **Not** HMAC — that is for parties you do not control.
 
@@ -702,7 +702,7 @@ For internal calls. **Not** HMAC — that is for parties you do not control.
 
 ### Phase 51: A domain event catalogue
 
-Status: Done
+Status: Deprecated
 
 - [ ] One module per aggregate, following the shape `notification.events` already
       has
@@ -1076,13 +1076,13 @@ exists means writing the same retry logic twice.
 | Phase 42  | A shared HTTP client                           | Deprecated |
 | Phase 43  | Circuit breaker and retry budget               | Done       |
 | Phase 44  | Migrate the existing call sites                | Done       |
-| Phase 45  | Outbound subscriptions                         | Done       |
-| Phase 46  | Signing and replay protection                  | Done       |
-| Phase 47  | The SSRF guard                                 | Done       |
+| Phase 45  | Outbound subscriptions                         | Deprecated |
+| Phase 46  | Signing and replay protection                  | Deprecated |
+| Phase 47  | The SSRF guard                                 | Deprecated |
 | Phase 48  | Delivery                                       | Ignored    |
 | Phase 49  | Inbound webhooks                               | Ignored    |
-| Phase 50  | Service-to-service authentication              | Done       |
-| Phase 51  | A domain event catalogue                       | Done       |
+| Phase 50  | Service-to-service authentication              | Deprecated |
+| Phase 51  | A domain event catalogue                       | Deprecated |
 | Phase 52  | The outbox pattern                             | Deprecated |
 | Phase 53  | Storage abstraction                            | Planned    |
 | Phase 54  | Upload validation                              | Planned    |
