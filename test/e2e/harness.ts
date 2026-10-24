@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { INestApplication } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 import { Test } from '@nestjs/testing';
+import { FastifyAdapter } from '@nestjs/platform-fastify';
 import request from 'supertest';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -109,7 +110,7 @@ export async function boot(): Promise<BootedApp> {
     imports: [AppModule],
   }).compile();
 
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication(new FastifyAdapter());
 
   // The same wiring `main.ts` applies. Without it the global prefix and the URI
   // versioning never happen, `/health` is not the route a client calls, and no
@@ -118,6 +119,9 @@ export async function boot(): Promise<BootedApp> {
   configureApp(app);
 
   await app.init();
+  await (
+    app.getHttpAdapter().getInstance() as { ready: () => Promise<unknown> }
+  ).ready();
 
   // A live binding, so every spec that reads `API_ROOT` inside a test body gets
   // the prefix this run actually mounted rather than the one someone typed.

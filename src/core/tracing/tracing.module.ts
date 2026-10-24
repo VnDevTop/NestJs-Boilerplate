@@ -36,14 +36,15 @@ export class HttpTracingInterceptor implements NestInterceptor {
     const http = context.switchToHttp();
     const request = http.getRequest<{
       method: string;
-      route?: { path?: string };
       url: string;
+      routeOptions?: { url?: string };
     }>();
     const response = http.getResponse<{ statusCode: number }>();
 
     const span = this.tracing.startSpan('http.request', {
       'http.request.method': request.method,
-      'http.route': request.route?.path ?? request.url.split('?')[0] ?? '',
+      'http.route':
+        request.routeOptions?.url ?? request.url.split('?')[0] ?? '',
     });
 
     return next.handle().pipe(

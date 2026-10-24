@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { NextFunction, Request, Response } from 'express';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { TenantContextService } from '../../common/tenancy/tenant-context.service.js';
 import type { TenancyConfig } from '../../configs/tenancy.config.js';
@@ -15,7 +15,7 @@ import {
 } from './tenant-registry.service.js';
 
 /** A request that carries the tenant it was resolved to. */
-export interface RequestWithTenant extends Request {
+export interface RequestWithTenant extends FastifyRequest {
   tenant?: TenantContextValue;
 }
 
@@ -43,8 +43,8 @@ export class TenantMiddleware implements NestMiddleware {
 
   async use(
     request: RequestWithTenant,
-    _response: Response,
-    next: NextFunction,
+    _response: FastifyReply,
+    next: () => void,
   ): Promise<void> {
     const config = this.configService.getOrThrow<TenancyConfig>('tenancy');
 
@@ -100,7 +100,8 @@ export class TenantMiddleware implements NestMiddleware {
     request: RequestWithTenant,
     config: TenancyConfig,
   ): string | null {
-    const header = request.header(config.header);
+    const rawHeader = request.headers[config.header.toLowerCase()];
+    const header = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
 
     if (header !== undefined && header.trim() !== '') {
       return header.trim();

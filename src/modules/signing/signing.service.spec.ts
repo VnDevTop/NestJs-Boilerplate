@@ -2,7 +2,7 @@ import { Test } from '@nestjs/testing';
 import { vi } from 'vitest';
 import { ConfigService } from '@nestjs/config';
 import { SigningService } from './signing.service.js';
-import { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 
 describe('SigningService', () => {
   let service: SigningService;
@@ -26,11 +26,10 @@ describe('SigningService', () => {
     service = module.get<SigningService>(SigningService);
   });
 
-  function createMockReq(headers: Record<string, string> = {}): Request {
+  function createMockReq(headers: Record<string, string> = {}): FastifyRequest {
     return {
-      get: (name: string) => headers[name.toLowerCase()],
       headers,
-    } as unknown as Request;
+    } as unknown as FastifyRequest;
   }
 
   describe('verifySignature', () => {

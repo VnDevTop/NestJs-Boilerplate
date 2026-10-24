@@ -15,8 +15,8 @@ import { HttpExceptionFilter } from './http-exception.filter.js';
 function host() {
   const response = {
     status: vi.fn().mockReturnThis(),
-    json: vi.fn().mockReturnThis(),
-    setHeader: vi.fn(),
+    send: vi.fn().mockReturnThis(),
+    header: vi.fn(),
   };
 
   const request = { originalUrl: '/auth/login' };
@@ -44,7 +44,7 @@ describe('Retry-After on a 429', () => {
   it('is set from the exception, in whole seconds', () => {
     filter.catch(new LoginLockedException(90), h.host);
 
-    expect(h.response.setHeader).toHaveBeenCalledWith('Retry-After', '90');
+    expect(h.response.header).toHaveBeenCalledWith('Retry-After', '90');
   });
 
   it('rounds a fractional remainder up', () => {
@@ -52,7 +52,7 @@ describe('Retry-After on a 429', () => {
     // come back immediately and be refused again.
     filter.catch(new LoginLockedException(0.4), h.host);
 
-    expect(h.response.setHeader).toHaveBeenCalledWith('Retry-After', '1');
+    expect(h.response.header).toHaveBeenCalledWith('Retry-After', '1');
   });
 
   it('is not set for a 429 that carries no wait', () => {
@@ -63,7 +63,7 @@ describe('Retry-After on a 429', () => {
 
     // The throttler throws plain 429s and sets its own header; inventing one here
     // would overwrite it.
-    expect(h.response.setHeader).not.toHaveBeenCalled();
+    expect(h.response.header).not.toHaveBeenCalled();
   });
 
   it('is not set for a status that is not 429', () => {
@@ -79,14 +79,14 @@ describe('Retry-After on a 429', () => {
 
     filter.catch(new WithWait(), h.host);
 
-    expect(h.response.setHeader).not.toHaveBeenCalled();
+    expect(h.response.header).not.toHaveBeenCalled();
   });
 
   it('still answers with the status and the body', () => {
     filter.catch(new LoginLockedException(60), h.host);
 
     expect(h.response.status).toHaveBeenCalledWith(429);
-    expect(h.response.json).toHaveBeenCalledWith(
+    expect(h.response.send).toHaveBeenCalledWith(
       expect.objectContaining({ success: false, statusCode: 429 }),
     );
   });
@@ -99,7 +99,7 @@ describe('Retry-After on a 429', () => {
     // could see. The assertion reads the message field, not the whole body.
     filter.catch(new LoginLockedException(137), h.host);
 
-    const body = h.response.json.mock.calls[0][0] as { message: unknown };
+    const body = h.response.send.mock.calls[0][0] as { message: unknown };
 
     expect(JSON.stringify(body.message)).not.toContain('137');
   });

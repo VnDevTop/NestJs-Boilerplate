@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { NextFunction, Request, Response } from 'express';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Writable } from 'node:stream';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -41,11 +41,11 @@ function inRequest(
   middleware.use(
     {
       headers: id === undefined ? {} : { [REQUEST_ID_HEADER]: id },
-    } as unknown as Request,
+    } as unknown as FastifyRequest,
     {
       setHeader: (name: string, value: string) => (headers[name] = value),
-    } as unknown as Response,
-    (() => work()) as NextFunction,
+    } as unknown as FastifyReply,
+    (() => work()) as () => void,
   );
 
   return headers[REQUEST_ID_HEADER];

@@ -1,11 +1,11 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 
 import { MANAGER_ONLY_KEY } from '../constants/index.js';
 import { RequestUser } from '../interfaces/index.js';
 
-interface RequestWithUser extends Request {
+interface RequestWithUser extends FastifyRequest {
   user?: RequestUser;
 }
 
@@ -20,7 +20,9 @@ export class ManagerGuard implements CanActivate {
     );
 
     const request = context.switchToHttp().getRequest<RequestWithUser>();
-    const isAdminPath = this.isAdminPath(request.path);
+    const isAdminPath = this.isAdminPath(
+      (request.url ?? '').split('?')[0] ?? '',
+    );
     const requiresManager = managerOnly || isAdminPath;
 
     if (!requiresManager) {

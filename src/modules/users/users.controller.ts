@@ -21,7 +21,7 @@ import {
   ApiProduces,
   ApiTags,
 } from '@nestjs/swagger';
-import type { Response } from 'express';
+import type { FastifyReply } from 'fastify';
 
 import {
   Audited,
@@ -185,18 +185,18 @@ export class UsersController {
   export(
     @CurrentUser() currentUser: RequestUser,
     @Query('format') format: string | undefined,
-    @Res({ passthrough: true }) response: Response,
+    @Res({ passthrough: true }) response: FastifyReply,
   ): StreamableFile {
     const chosen: ExportFormat = format === 'json' ? 'json' : 'csv';
 
-    response.setHeader(
+    response.header(
       'Content-Type',
       chosen === 'json' ? 'application/x-ndjson' : 'text/csv',
     );
     // A filename, so the file a browser saves is recognisable rather than called
     // `export`. `attachment` because the content is a subject's whole record and
     // rendering it in a tab is never what anybody wants.
-    response.setHeader(
+    response.header(
       'Content-Disposition',
       `attachment; filename="account-export-${currentUser.id}.${chosen}"`,
     );

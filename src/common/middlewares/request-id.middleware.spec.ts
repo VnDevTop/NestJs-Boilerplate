@@ -66,16 +66,8 @@ afterEach(async () => {
   }
 });
 
-async function boot(
-  useFastify: boolean,
-  logger: LoggerService | false = false,
-) {
-  // Built per branch rather than with a conditional property, because the two
-  // forms of NestFactory.create have different overloads and a union of the
-  // options matches neither.
-  const app = useFastify
-    ? await NestFactory.create(ProbeModule, new FastifyAdapter())
-    : await NestFactory.create(ProbeModule);
+async function boot(logger: LoggerService | false = false) {
+  const app = await NestFactory.create(ProbeModule, new FastifyAdapter());
 
   app.useLogger(logger);
   await app.listen(0, '127.0.0.1');
@@ -129,12 +121,9 @@ const statusOf = (raw: string) => raw.split('\r\n')[0] ?? '';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-describe.each([
-  ['express', false],
-  ['fastify', true],
-] as const)('request id middleware on %s', (platform, useFastify) => {
+describe('request id middleware on fastify', () => {
   it('sets a generated id on a nested route and inside the handler', async () => {
-    const { port } = await boot(useFastify);
+    const { port } = await boot();
     const response = await get(port, '/items/7');
     const sent = response.headers.get(REQUEST_ID_HEADER);
 
@@ -145,26 +134,24 @@ describe.each([
   });
 
   it('covers the root route, not only the nested one', async () => {
-    const { port } = await boot(useFastify);
+    const { port } = await boot();
 
     expect((await get(port, '/')).headers.get(REQUEST_ID_HEADER)).toMatch(UUID);
     expect(observed).toHaveLength(1);
   });
 
   it('reuses a caller supplied id', async () => {
-    const { port } = await boot(useFastify);
-    const response = await get(port, '/', `${platform}-trace-1234`);
+    const { port } = await boot();
+    const response = await get(port, '/', `fastify-trace-1234`);
 
-    expect(response.headers.get(REQUEST_ID_HEADER)).toBe(
-      `${platform}-trace-1234`,
-    );
-    expect(observed).toEqual([`${platform}-trace-1234`]);
+    expect(response.headers.get(REQUEST_ID_HEADER)).toBe(`fastify-trace-1234`);
+    expect(observed).toEqual([`fastify-trace-1234`]);
   });
 
   it('replaces a caller id outside the safe charset', async () => {
     // The server accepts these, so they reach the middleware, and the middleware
     // is what has to keep them out of every log line.
-    const { port } = await boot(useFastify);
+    const { port } = await boot();
     const sent = (await get(port, '/', 'trace abc 1234567890')).headers.get(
       REQUEST_ID_HEADER,
     );
@@ -176,7 +163,7 @@ describe.each([
   it('cannot be tricked into echoing a forged log line', async () => {
     // A newline in a header is rejected by the HTTP parser before any handler
     // runs, so the response never carries the attacker's text back.
-    const { port } = await boot(useFastify);
+    const { port } = await boot();
     const raw = await rawGet(port, 'forged\nINFO admin logged in');
 
     expect(statusOf(raw)).toContain('400');
@@ -184,7 +171,7 @@ describe.each([
   });
 
   it('leaves no request id behind for the next request', async () => {
-    const { port } = await boot(useFastify);
+    const { port } = await boot();
 
     await get(port, '/', 'first-trace-1');
     await get(port, '/');
@@ -196,23 +183,10 @@ describe.each([
 });
 
 describe('route pattern', () => {
-  it('logs no path-to-regexp warning on express', async () => {
-    const warnings: string[] = [];
-    const logger: LoggerService = {
-      log: () => undefined,
-      error: () => undefined,
-      debug: () => undefined,
-      verbose: () => undefined,
-      warn: (message: unknown) => {
-        warnings.push(String(message));
-      },
-    };
-
-    await boot(false, logger);
+  it('boots on fastify', async () => {
+    await boot();
     await get(started[0].port, '/');
 
-    expect(
-      warnings.filter((line) => line.includes('LegacyRouteConverter')),
-    ).toEqual([]);
+    expect(started[0].port).toBeGreaterThan(0);
   });
 });

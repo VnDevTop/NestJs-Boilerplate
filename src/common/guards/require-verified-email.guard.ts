@@ -5,12 +5,12 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 
 import { EMAIL_VERIFIED_KEY } from '../constants/index.js';
 import type { RequestUser } from '../interfaces/index.js';
 
-interface RequestWithUser extends Request {
+interface RequestWithUser extends FastifyRequest {
   user?: RequestUser;
 }
 

@@ -5,7 +5,7 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { ApiErrorResponse } from '../interfaces/index.js';
 
@@ -19,8 +19,8 @@ interface HttpExceptionResponseBody {
 export class HttpExceptionFilter implements ExceptionFilter<HttpException> {
   catch(exception: HttpException, host: ArgumentsHost): void {
     const context = host.switchToHttp();
-    const response = context.getResponse<Response>();
-    const request = context.getRequest<Request>();
+    const response = context.getResponse<FastifyReply>();
+    const request = context.getRequest<FastifyRequest>();
 
     const statusCode = exception.getStatus();
     const exceptionResponse = exception.getResponse();
@@ -44,11 +44,11 @@ export class HttpExceptionFilter implements ExceptionFilter<HttpException> {
         .retryAfterSeconds;
 
       if (typeof retryAfter === 'number' && retryAfter > 0) {
-        response.setHeader('Retry-After', String(Math.ceil(retryAfter)));
+        response.header('Retry-After', String(Math.ceil(retryAfter)));
       }
     }
 
-    response.status(statusCode).json(errorResponse);
+    response.status(statusCode).send(errorResponse);
   }
 
   private normalizeExceptionResponse(

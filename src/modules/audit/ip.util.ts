@@ -1,4 +1,4 @@
-import type { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 
 /**
  * The client's address for an audit row.
@@ -13,7 +13,7 @@ import type { Request } from 'express';
  * unbounded, and reading it without the proxy trust setting behind it would put an
  * attacker's chosen string into every audit row for their address.
  */
-export function ipFromRequest(request: Request): string | null {
+export function ipFromRequest(request: FastifyRequest): string | null {
   const ip = request.ip ?? request.socket?.remoteAddress ?? null;
 
   if (typeof ip !== 'string') {

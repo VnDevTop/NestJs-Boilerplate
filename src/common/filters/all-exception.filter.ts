@@ -5,7 +5,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { ApiErrorResponse } from '../interfaces/index.js';
 import { SentryService } from '../../core/sentry/index.js';
@@ -26,8 +26,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const context = host.switchToHttp();
-    const response = context.getResponse<Response>();
-    const request = context.getRequest<Request>();
+    const response = context.getResponse<FastifyReply>();
+    const request = context.getRequest<FastifyRequest>();
 
     const statusCode = HttpStatus.INTERNAL_SERVER_ERROR;
 
@@ -45,9 +45,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       requestId: getRequestId(),
       traceId: this.tracing.currentTraceId(),
       // The route pattern, not `originalUrl` — see below.
-      route: (request.route as { path?: string } | undefined)?.path ?? '',
+      route: request.routeOptions?.url ?? '',
       method: request.method,
-      userId: (request as Request & { user?: { id?: string } }).user?.id,
+      userId: (request as FastifyRequest & { user?: { id?: string } }).user?.id,
     });
 
     const errorResponse: ApiErrorResponse = {
@@ -63,6 +63,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
     };
 
-    response.status(statusCode).json(errorResponse);
+    response.status(statusCode).send(errorResponse);
   }
 }

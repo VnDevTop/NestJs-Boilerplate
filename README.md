@@ -30,7 +30,7 @@ scaffold.
 - Docker Compose brings up Postgres and Valkey, runs migrations, then starts the
   app. The admin password is printed once, at first start.
 - `synchronize` is off; schema changes go through reviewed migrations.
-- Runs on Express and Fastify.
+- Runs on Fastify.
 
 ## TODO / Next Features
 

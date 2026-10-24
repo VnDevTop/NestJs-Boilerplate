@@ -5,7 +5,7 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 import { Observable, catchError, tap, throwError } from 'rxjs';
 
 import { AUDIT_KEY, type AuditPolicy } from '../../common/constants/index.js';
@@ -18,7 +18,7 @@ import {
 import { ipFromRequest } from './ip.util.js';
 
 /** The request, with the two properties the guards attach and the routes read. */
-type AuditedRequest = Request & {
+type AuditedRequest = FastifyRequest & {
   user?: { id?: string; email?: string };
 };
 
@@ -171,7 +171,9 @@ export class AuditInterceptor implements NestInterceptor {
   }
 
   private fromParam(name: string, request: AuditedRequest): string | null {
-    const value = request.params?.[name];
+    const value = (request.params as Record<string, unknown> | undefined)?.[
+      name
+    ];
 
     return typeof value === 'string' && value !== '' ? value : null;
   }

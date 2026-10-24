@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { signingConfig } from '../../configs/signing.config.js';
-import { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 
 @Injectable()
 export class SigningService {
@@ -23,8 +23,9 @@ export class SigningService {
    * @returns true if the signature is valid and the timestamp is within the
    *   allowed window, false otherwise.
    */
-  verifySignature(req: Request, _secret: string): boolean {
-    const signatureHeader = req.get('X-Signature');
+  verifySignature(req: FastifyRequest, _secret: string): boolean {
+    const raw = req.headers['x-signature'];
+    const signatureHeader = Array.isArray(raw) ? raw[0] : raw;
 
     if (!signatureHeader) {
       this.logger.warn('Missing X-Signature header');

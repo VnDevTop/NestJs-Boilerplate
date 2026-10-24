@@ -1,5 +1,5 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 
 import {
   DEVICE_NAME_HEADER,
@@ -7,7 +7,7 @@ import {
 } from '../constants/index.js';
 import { parseDeviceName } from '../utils/index.js';
 
-function readHeader(request: Request, name: string): string | null {
+function readHeader(request: FastifyRequest, name: string): string | null {
   const header = request.headers[name];
   const value = Array.isArray(header) ? header[0] : header;
 
@@ -26,7 +26,7 @@ function readHeader(request: Request, name: string): string | null {
  */
 export const DeviceName = createParamDecorator(
   (_data: unknown, context: ExecutionContext): string | null => {
-    const request = context.switchToHttp().getRequest<Request>();
+    const request = context.switchToHttp().getRequest<FastifyRequest>();
     const explicit = readHeader(request, DEVICE_NAME_HEADER);
     const value =
       explicit ?? parseDeviceName(readHeader(request, 'user-agent') ?? '');

@@ -1,4 +1,5 @@
 import { Test } from '@nestjs/testing';
+import { FastifyAdapter } from '@nestjs/platform-fastify';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 
@@ -161,9 +162,12 @@ async function bootedApp() {
     .useValue(stubDataSource())
     .compile();
 
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication(new FastifyAdapter());
   configureApp(app);
   await app.init();
+  await (
+    app.getHttpAdapter().getInstance() as { ready: () => Promise<unknown> }
+  ).ready();
 
   return app;
 }

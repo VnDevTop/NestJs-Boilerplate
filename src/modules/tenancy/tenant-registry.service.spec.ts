@@ -90,7 +90,7 @@ describe('resolving the tenant of a request', () => {
 
   function request(overrides: Record<string, unknown> = {}) {
     return {
-      header: (name: string) => overrides[name] as string | undefined,
+      headers: overrides,
       hostname: (overrides.hostname as string | undefined) ?? '',
       ...overrides,
     } as never;

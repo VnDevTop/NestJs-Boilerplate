@@ -1,9 +1,9 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 
 import { RequestUser } from '../interfaces/index.js';
 
-interface RequestWithUser extends Request {
+interface RequestWithUser extends FastifyRequest {
   user?: RequestUser;
 }
 

@@ -1,12 +1,12 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 
 import { ROLES_KEY } from '../constants/index.js';
 import { Role } from '../enums/index.js';
 import { RequestUser } from '../interfaces/index.js';
 
-interface RequestWithUser extends Request {
+interface RequestWithUser extends FastifyRequest {
   user?: RequestUser;
 }
 
