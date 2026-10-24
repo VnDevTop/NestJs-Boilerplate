@@ -46,7 +46,7 @@ describe('NotificationModule', () => {
         (moduleOf(entry) as { name?: string })?.name,
     );
 
-    expect(names).toContain('HttpCoreModule');
+    expect(names).toContain('HttpModule');
   });
 
   it('imports the mail module for the channel that delegates to it', () => {

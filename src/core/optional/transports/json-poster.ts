@@ -1,8 +1,6 @@
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 
-import { classifyHttpError } from '../../http/http.error.js';
-
 export interface JsonPostOptions {
   url: string;
   body: unknown;
@@ -70,6 +68,6 @@ export async function postJson(
       body: typeof response.data === 'string' ? response.data : '',
     };
   } catch (error) {
-    throw classifyHttpError(error);
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }

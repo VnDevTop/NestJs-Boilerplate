@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { HttpModule } from '@nestjs/axios';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -32,7 +33,6 @@ import {
   type PasswordPolicyConfig,
 } from '../../configs/password-policy.config.js';
 import { jwtAccessTokenConfig, throttlerConfig } from '../../configs/index.js';
-import { HttpCoreModule } from '../../core/http/http-core.module.js';
 import { MetricsModule } from '../../core/metrics/index.js';
 import { MailModule } from '../mail/mail.module.js';
 import { AuditModule } from '../audit/audit.module.js';
@@ -88,10 +88,9 @@ import { PasswordHistoryService } from './password-history.service.js';
     // enforced in exactly one place — the rotation — so there is no argument for
     // putting it anywhere else.
     ConfigModule.forFeature(sessionConfig),
-    // For the breach lookup, which is the one network call the policy can make.
-    // Goes through HttpCoreModule so global timeout, request-id propagation and
-    // error taxonomy are shared.
-    HttpCoreModule,
+    // Outbound HTTP client for the breach lookup. Config is left to the
+    // deployment; the default timeout is axios' own.
+    HttpModule,
     TypeOrmModule.forFeature([
       AccountUnlockToken,
       RefreshToken,

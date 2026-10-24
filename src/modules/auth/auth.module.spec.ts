@@ -39,6 +39,6 @@ describe('AuthModule imports', () => {
     expect(names).toContain('TypeOrmModule');
     expect(names).toContain('PassportModule');
     expect(names).toContain('MailModule');
-    expect(names).toContain('HttpCoreModule');
+    expect(names).toContain('HttpModule');
   });
 });

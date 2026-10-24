@@ -5,7 +5,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 
 import { CacheService } from '../../core/cache/index.js';
-import { classifyHttpError } from '../../core/http/index.js';
 import { CircuitBreakerPolicy, CircuitOpenError } from '@nestjs/resilience';
 
 /**
@@ -164,11 +163,14 @@ export class PasswordBreachService {
 
       return result;
     } catch (error) {
-      const httpError = classifyHttpError(error);
       const detail =
         error instanceof CircuitOpenError
-          ? `Circuit breaker is open. ${httpError.message}`
-          : httpError.message;
+          ? `Circuit breaker is open. ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          : error instanceof Error
+            ? error.message
+            : String(error);
       this.logger.warn(
         `Breach check could not be reached, treating the password as not ` +
           `breached: ${detail}. Signups are not being blocked by this.`,

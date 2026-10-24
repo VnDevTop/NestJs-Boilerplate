@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 
 import { postJson } from './json-poster.js';
-import { HttpRetryableError } from '../../http/http.error.js';
 
 function httpReturning(status: number, data: unknown): HttpService {
   const post = vi.fn().mockReturnValue(of({ status, data }));
@@ -90,14 +89,14 @@ describe('postJson', () => {
     expect(lastConfig(http)?.timeout).toBeUndefined();
   });
 
-  it('classifies network failures as retryable HttpError', async () => {
+  it('rethrows network failures unchanged', async () => {
     const http = {
       post: vi.fn().mockReturnValue(throwError(() => new Error('ECONNRESET'))),
     } as unknown as HttpService;
 
     await expect(
       postJson(http, { url: 'https://x.test/h', body: {} }),
-    ).rejects.toBeInstanceOf(HttpRetryableError);
+    ).rejects.toThrow('ECONNRESET');
   });
 
   it('asks axios for a text body and leaves the payload unparsed', async () => {
