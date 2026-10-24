@@ -5,7 +5,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 
 import { CacheService } from '../../core/cache/index.js';
-import { CircuitBreakerPolicy, CircuitOpenError } from '@nestjs/resilience';
+import {
+  CircuitBreakerPolicy,
+  CircuitOpenError,
+  ResiliencePolicy,
+  RetryPolicy,
+  TimeoutPolicy,
+} from '@nestjs/resilience';
 
 /**
  * Rejects a password that appears in a corpus of breached credentials.
@@ -77,6 +83,15 @@ export class PasswordBreachService {
     openDuration: '30s',
   });
 
+  readonly policy: ResiliencePolicy = ResiliencePolicy.wrap(
+    new RetryPolicy({
+      attempts: 3,
+      backoff: { delay: '200ms', maxDelay: '2s' },
+    }),
+    this.breaker,
+    new TimeoutPolicy({ timeout: '5s' }),
+  );
+
   constructor(
     private readonly http: HttpService,
     private readonly cache: CacheService,
@@ -120,7 +135,7 @@ export class PasswordBreachService {
    */
   private async ask(prefix: string, suffix: string): Promise<boolean | null> {
     try {
-      const result = await this.breaker.execute(async () => {
+      const result = await this.policy.execute(async () => {
         const response = await firstValueFrom(
           this.http.get(`${PasswordBreachService.API_URL}/${prefix}`, {
             responseType: 'text',

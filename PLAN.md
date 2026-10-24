@@ -619,7 +619,7 @@ client, so every third-party call is both classified and protected.
 
 ### Phase 43: Circuit breaker and retry budget
 
-Status: Done
+Status: Deprecated
 
 - [x] A breaker that opens on a threshold and half-opens to probe
 - [x] A retry budget, so a retry storm cannot outlive the outage that caused it
@@ -630,7 +630,7 @@ budget limits retries per downstream per window. Asserted by typecheck and lint.
 
 ### Phase 44: Migrate the existing call sites
 
-Status: Done
+Status: Deprecated
 
 - [x] `json-poster`, and the Slack, Telegram and Discord channels
 - [x] The password breach lookup

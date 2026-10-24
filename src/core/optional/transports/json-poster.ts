@@ -1,5 +1,15 @@
 import { HttpService } from '@nestjs/axios';
+import {
+  ResiliencePolicy,
+  RetryPolicy,
+  TimeoutPolicy,
+} from '@nestjs/resilience';
 import { firstValueFrom } from 'rxjs';
+
+const POST_POLICY = ResiliencePolicy.wrap(
+  new RetryPolicy({ attempts: 3, backoff: { delay: '200ms', maxDelay: '2s' } }),
+  new TimeoutPolicy({ timeout: '5s' }),
+);
 
 export interface JsonPostOptions {
   url: string;
@@ -53,21 +63,24 @@ export async function postJson(
     throw new Error(`Refusing to post to ${url.protocol}//, expected https:`);
   }
 
-  try {
-    const response = await firstValueFrom(
-      http.post(options.url, options.body, {
-        headers: options.headers,
-        responseType: 'text',
-        transformResponse: [(data: unknown) => data],
-        validateStatus: () => true,
-      }),
-    );
+  return await POST_POLICY.execute(async (context) => {
+    try {
+      const response = await firstValueFrom(
+        http.post(options.url, options.body, {
+          headers: options.headers,
+          responseType: 'text',
+          transformResponse: [(data: unknown) => data],
+          validateStatus: () => true,
+          signal: context.signal,
+        }),
+      );
 
-    return {
-      status: response.status,
-      body: typeof response.data === 'string' ? response.data : '',
-    };
-  } catch (error) {
-    throw error instanceof Error ? error : new Error(String(error));
-  }
+      return {
+        status: response.status,
+        body: typeof response.data === 'string' ? response.data : '',
+      };
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  });
 }

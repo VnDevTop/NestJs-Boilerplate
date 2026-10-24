@@ -366,7 +366,7 @@ describe('when the service cannot be reached', () => {
     h.expire();
 
     await expect(h.service.isBreached('password')).resolves.toBe(false);
-    expect(h.requests).toHaveLength(2);
+    expect(h.requests).toHaveLength(4);
   });
 
   it('fails open on every status the service can answer with', async () => {

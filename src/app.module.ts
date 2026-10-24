@@ -133,7 +133,17 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       scope: (req: { user?: { id?: string }; ip?: string }) =>
         req.user?.id ?? req.ip ?? 'anonymous',
     }),
-    ResilienceModule.forRoot({}),
+    ResilienceModule.forRoot({
+      defaults: {
+        timeout: '5s',
+        retry: { attempts: 3, backoff: { delay: '200ms', maxDelay: '2s' } },
+        circuitBreaker: {
+          failureRateThreshold: 50,
+          minimumCalls: 5,
+          openDuration: '30s',
+        },
+      },
+    }),
     CacheModule,
     HealthModule,
     // Owns nothing but the optional prom-client registry, and the `/metrics`

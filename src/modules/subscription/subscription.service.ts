@@ -1,4 +1,10 @@
 import { HttpService } from '@nestjs/axios';
+import {
+  CircuitBreakerPolicy,
+  ResiliencePolicy,
+  RetryPolicy,
+  TimeoutPolicy,
+} from '@nestjs/resilience';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { SubscriptionConfig } from '../../configs/subscription.config.js';
@@ -9,6 +15,20 @@ import crypto from 'crypto';
 @Injectable()
 export class SubscriptionService {
   private readonly logger = new Logger(SubscriptionService.name);
+
+  private readonly policy = ResiliencePolicy.wrap(
+    new RetryPolicy({
+      attempts: 3,
+      backoff: { delay: '200ms', maxDelay: '2s' },
+    }),
+    new CircuitBreakerPolicy({
+      failureRateThreshold: 50,
+      minimumCalls: 5,
+      slidingWindow: { type: 'time', size: '60s' },
+      openDuration: '30s',
+    }),
+    new TimeoutPolicy({ timeout: '5s' }),
+  );
 
   constructor(
     private readonly httpService: HttpService,
@@ -54,9 +74,15 @@ export class SubscriptionService {
       };
 
       try {
-        const response = await lastValueFrom(
-          this.httpService.post(ep.url, payload, { headers }),
-        );
+        const response = await this.policy.execute(async (context) => {
+          const res = await lastValueFrom(
+            this.httpService.post(ep.url, payload, {
+              headers,
+              signal: context.signal,
+            }),
+          );
+          return res;
+        });
         this.logger.debug(
           `Sent event ${eventKey} to ${name}, status ${response.status}`,
         );
