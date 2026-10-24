@@ -675,12 +675,16 @@ without this the feature is a way to read the cloud metadata service.
 
 ### Phase 48: Delivery
 
+Status: Ignored
+
 - [ ] Through the existing queue, so retries and the dead-letter list are already
       there
 - [ ] Manual replay from the admin, **and the replay is itself audited**
 - [ ] 4xx is permanent; 5xx and timeouts are not
 
 ### Phase 49: Inbound webhooks
+
+Status: Ignored
 
 - [ ] `rawBody` on the Nest factory — HMAC cannot be verified against a re-serialised
       body
@@ -706,7 +710,7 @@ Status: Done
 
 ### Phase 52: The outbox pattern
 
-Status: Done
+Status: Deprecated
 
 - [x] An event written in the same transaction as the state change
 - [x] A separate process publishes it
@@ -1075,11 +1079,11 @@ exists means writing the same retry logic twice.
 | Phase 45  | Outbound subscriptions                         | Done       |
 | Phase 46  | Signing and replay protection                  | Done       |
 | Phase 47  | The SSRF guard                                 | Done       |
-| Phase 48  | Delivery                                       | Planned    |
-| Phase 49  | Inbound webhooks                               | Planned    |
+| Phase 48  | Delivery                                       | Ignored    |
+| Phase 49  | Inbound webhooks                               | Ignored    |
 | Phase 50  | Service-to-service authentication              | Done       |
 | Phase 51  | A domain event catalogue                       | Done       |
-| Phase 52  | The outbox pattern                             | Done       |
+| Phase 52  | The outbox pattern                             | Deprecated |
 | Phase 53  | Storage abstraction                            | Planned    |
 | Phase 54  | Upload validation                              | Planned    |
 | Phase 55  | Excel export                                   | Planned    |
