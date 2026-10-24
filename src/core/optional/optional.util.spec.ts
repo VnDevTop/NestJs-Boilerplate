@@ -11,7 +11,7 @@ describe('loadOptional', () => {
   });
 
   it('returns null for a package that is not installed', () => {
-    expect(loadOptional('@nestjs-boiler-plate/does-not-exist')).toBeNull();
+    expect(loadOptional('@nestjs-boilerplate/does-not-exist')).toBeNull();
   });
 
   it('returns null for a relative specifier that cannot be resolved', () => {
@@ -36,6 +36,6 @@ describe('isOptionalAvailable', () => {
   });
 
   it('is false for a missing package', () => {
-    expect(isOptionalAvailable('@nestjs-boiler-plate/missing')).toBe(false);
+    expect(isOptionalAvailable('@nestjs-boilerplate/missing')).toBe(false);
   });
 });

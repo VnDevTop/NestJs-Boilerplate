@@ -19,7 +19,7 @@ export interface AppConfig {
 
 export const appConfig = registerAs('app', (): AppConfig => ({
   env: process.env.NODE_ENV ?? 'development',
-  name: process.env.APP_NAME ?? 'nestjs-boiler-plate',
+  name: process.env.APP_NAME ?? 'nestjs-boilerplate',
   port: Number(process.env.PORT ?? 3000),
   globalPrefix: process.env.API_PREFIX ?? 'api',
   version: process.env.API_VERSION ?? '1',

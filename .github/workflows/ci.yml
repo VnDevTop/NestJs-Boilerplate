@@ -113,6 +113,6 @@ jobs:
         with:
           context: .
           push: false
-          tags: nestjs-boiler-plate:ci
+          tags: nestjs-boilerplate:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max

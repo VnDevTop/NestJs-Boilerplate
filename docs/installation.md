@@ -125,7 +125,7 @@ connection — there is no tenant-creation API, because provisioning is an
 operator decision:
 
 ```bash
-docker compose exec postgres psql -U postgres -d nestjs_boiler_plate -c \
+docker compose exec postgres psql -U postgres -d nestjs_boilerplate -c \
   "INSERT INTO tenants (id, slug, name, status, plan) \
    VALUES (gen_random_uuid(), 'acme', 'Acme', 'active', 'free')"
 ```
@@ -159,12 +159,12 @@ it, run the migrations and seed as the owner, then point the application at the
 `app_user` role the RLS migration creates:
 
 ```bash
-docker compose exec postgres psql -U postgres -d nestjs_boiler_plate -c \
+docker compose exec postgres psql -U postgres -d nestjs_boilerplate -c \
   "ALTER ROLE app_user WITH PASSWORD 'local-app-user'"
 ```
 
 ```dotenv
-DATABASE_URL=postgresql://app_user:local-app-user@localhost:5432/nestjs_boiler_plate
+DATABASE_URL=postgresql://app_user:local-app-user@localhost:5432/nestjs_boilerplate
 DATABASE_RLS=true
 MULTI_TENANT=true
 ```

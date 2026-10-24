@@ -268,7 +268,7 @@ is invisible to the application until the cached grant set expires. The window i
 entry, or wait:
 
 ```sh
-redis-cli DEL nestjs_boiler_plate:role:admin
+redis-cli DEL nestjs_boilerplate:role:admin
 ```
 
 The direction of that failure is the safe one: a role with a stale grant set is
@@ -974,7 +974,7 @@ colima start          # or open Docker Desktop
 
 # 2. or use the stack docker-compose.yml already defines
 docker compose up -d postgres valkey
-E2E_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nestjs_boiler_plate \
+E2E_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nestjs_boilerplate \
 E2E_REDIS_URL=redis://localhost:6379/1 npm run test:e2e
 
 # 3. or skip, which runs nothing

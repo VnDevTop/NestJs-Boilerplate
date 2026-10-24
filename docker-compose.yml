@@ -6,7 +6,7 @@
 # The app is exposed on 3000 and Swagger on http://localhost:3000/docs.
 # Migrations run before the server starts, so a fresh volume gets a schema.
 
-name: nestjs-boiler-plate
+name: nestjs-boilerplate
 
 services:
   postgres:
@@ -14,14 +14,14 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: nestjs_boiler_plate
+      POSTGRES_DB: nestjs_boilerplate
     ports:
       - '5432:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
       # The app must not start against a database that is still initialising.
-      test: ['CMD-SHELL', 'pg_isready -U postgres -d nestjs_boiler_plate']
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d nestjs_boilerplate']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -42,10 +42,17 @@ services:
   migrate:
     build:
       context: .
-    command: ['node', 'node_modules/typeorm/cli.js', 'migration:run', '-d', 'dist/database/data-source.js']
+    command:
+      [
+        'node',
+        'node_modules/typeorm/cli.js',
+        'migration:run',
+        '-d',
+        'dist/database/data-source.js',
+      ]
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/nestjs_boiler_plate
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/nestjs_boilerplate
       DATABASE_SSL: 'false'
     depends_on:
       postgres:
@@ -60,11 +67,11 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/nestjs_boiler_plate
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/nestjs_boilerplate
       DATABASE_SSL: 'false'
       CACHE_BACKEND: valkey
       CACHE_URL: redis://valkey:6379/0
-      CACHE_KEY_PREFIX: nestjs_boiler_plate
+      CACHE_KEY_PREFIX: nestjs_boilerplate
       # Real secrets, not the example values. The validator rejects a production
       # boot with a placeholder, and these are not production either way.
       JWT_SECRET: local-development-jwt-secret-change-me-32

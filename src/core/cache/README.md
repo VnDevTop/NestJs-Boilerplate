@@ -11,7 +11,7 @@ anyway, so there is no host/port/password/database to keep in sync.
 ```dotenv
 CACHE_BACKEND=redis            # redis | valkey | memory
 CACHE_URL=redis://localhost:6379/0
-CACHE_KEY_PREFIX=nestjs_boiler_plate
+CACHE_KEY_PREFIX=nestjs_boilerplate
 CACHE_DEFAULT_TTL=300          # seconds
 CACHE_EMPTY_TTL=10             # seconds, for "not found" answers
 CACHE_CONNECT_TIMEOUT=2000     # milliseconds
