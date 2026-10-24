@@ -1,9 +1,10 @@
-import { HttpModule, HttpService } from '@nestjs/axios';
+import { HttpService } from '@nestjs/axios';
 import { Logger, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import type { ConfigType } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { HttpCoreModule } from '../../core/http/http-core.module.js';
 import { MetricsModule } from '../../core/metrics/index.js';
 import { notificationConfig } from '../../configs/notification.config.js';
 import { MailModule, MailService } from '../mail/index.js';
@@ -90,10 +91,10 @@ type NotificationConfig = ConfigType<typeof notificationConfig>;
   imports: [
     ConfigModule.forFeature(notificationConfig),
     TypeOrmModule.forFeature([NotificationPreference, NotificationLog]),
-    // For the three webhook channels. `@nestjs/axios` is a package this boilerplate
-    // already depends on, which is what keeps Telegram, Slack and Discord
-    // package-free.
-    HttpModule,
+    // For the three webhook channels. Outbound HTTP calls go through
+    // HttpCoreModule so global timeout, request-id propagation and error
+    // taxonomy are shared.
+    HttpCoreModule,
     // For the email channel, which delegates rather than speaking SMTP itself.
     MailModule,
     // For the delivery counters. One direction only, so no cycle.

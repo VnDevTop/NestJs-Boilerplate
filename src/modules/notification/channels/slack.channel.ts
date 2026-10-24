@@ -48,7 +48,6 @@ export class SlackNotificationChannel implements NotificationChannel {
     const channel = new SlackChannel(this.http, {
       webhookUrl: this.config.slack.webhookUrl as string,
       channel: this.config.slack.channel,
-      timeoutMs: this.config.delivery.timeout,
     });
 
     try {

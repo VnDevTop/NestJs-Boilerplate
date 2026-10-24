@@ -1,11 +1,12 @@
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 
+import { classifyHttpError } from '../../http/http.error.js';
+
 export interface JsonPostOptions {
   url: string;
   body: unknown;
   headers?: Record<string, string>;
-  timeoutMs?: number;
 }
 
 export interface JsonPostResult {
@@ -18,13 +19,14 @@ export interface JsonPostResult {
  *
  * Telegram and Slack both take one JSON payload at an https endpoint, so a
  * webhook channel is a few lines of payload building. The transport itself is
- * `HttpService` from `@nestjs/axios`, which is already a Nest dependency of this
- * boilerplate, so neither channel needs a package of its own.
+ * `HttpService` from `HttpCoreModule`, which is already configured with a global
+ * timeout and request-id propagation, so neither channel needs a package of its
+ * own or a hand-set timeout.
  *
  * `validateStatus` accepts every status, so a 4xx from a provider is returned to
  * the caller as a result instead of thrown: a rejected Telegram message is a
  * fact to log, not an exception to unwind a request with. Network failures still
- * reject, because those are retryable.
+ * reject with a classified `HttpError`, because those are retryable.
  *
  * Only https is allowed, so a misconfigured `http://` webhook fails loudly
  * instead of sending a bot token in clear text.
@@ -53,18 +55,21 @@ export async function postJson(
     throw new Error(`Refusing to post to ${url.protocol}//, expected https:`);
   }
 
-  const response = await firstValueFrom(
-    http.post(options.url, options.body, {
-      headers: options.headers,
-      timeout: options.timeoutMs ?? 5_000,
-      responseType: 'text',
-      transformResponse: [(data: unknown) => data],
-      validateStatus: () => true,
-    }),
-  );
+  try {
+    const response = await firstValueFrom(
+      http.post(options.url, options.body, {
+        headers: options.headers,
+        responseType: 'text',
+        transformResponse: [(data: unknown) => data],
+        validateStatus: () => true,
+      }),
+    );
 
-  return {
-    status: response.status,
-    body: typeof response.data === 'string' ? response.data : '',
-  };
+    return {
+      status: response.status,
+      body: typeof response.data === 'string' ? response.data : '',
+    };
+  } catch (error) {
+    throw classifyHttpError(error);
+  }
 }
