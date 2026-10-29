@@ -1,18 +1,22 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { createObserveModule } from '@nestjs/observe';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { validateEnv } from './config/env.validation.js';
+import { appConfig } from './config/app.config.js';
+import { databaseConfig } from './config/database.config.js';
+import { observeConfig } from './config/observe.config.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
 @Module({
   imports: [
-    // Distributed tracing, auto-correlated logs, request/job metrics, error
-    // telemetry, alarms, and more — out of the box. Sign up at https://observe.nestjs.com
-    ObserveModule.forRoot({
-      appKey: 'YOUR_APP_KEY',
-      appSecret: 'YOUR_APP_SECRET',
-      serviceId: 'nestjs-boilerplate',
+    ConfigModule.forRoot({
+      isGlobal: true,
+      load: [appConfig, databaseConfig, observeConfig],
+      validate: validateEnv,
+      envFilePath: ['.env', '.env.local'],
     }),
   ],
   controllers: [AppController],
