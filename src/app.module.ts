@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConditionalModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { createObserveModule } from '@nestjs/observe';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -18,6 +19,10 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       validate: validateEnv,
       envFilePath: ['.env', '.env.local'],
     }),
+    ConditionalModule.registerWhen(
+      TypeOrmModule.forRootAsync(databaseConfig.asProvider()),
+      (env) => !!env.DATABASE_URL,
+    ),
   ],
   controllers: [AppController],
   providers: [AppService],
