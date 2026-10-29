@@ -1,10 +1,10 @@
 {
   "name": "nestjs-boilerplate",
   "version": "0.0.1",
-  "description": "",
-  "author": "",
+  "description": "A production-ready NestJS boilerplate with TypeScript, Vitest, Oxlint, and GitHub Actions.",
+  "author": "VnDev.Top <hi@vndev.top>",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "nest build",
@@ -49,5 +49,29 @@
     "typescript": "^6.0.2",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^4.1.2"
+  },
+  "contributors": [
+    "VnDev.Top <hi@vndev.top>",
+    "opencode"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VnDevTop/nestjs-boilerplate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/VnDevTop/nestjs-boilerplate/issues"
+  },
+  "homepage": "https://github.com/VnDevTop/nestjs-boilerplate#readme",
+  "keywords": [
+    "nestjs",
+    "boilerplate",
+    "typescript",
+    "vitest",
+    "oxlint",
+    "docker"
+  ],
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=11.0.0"
   }
 }
