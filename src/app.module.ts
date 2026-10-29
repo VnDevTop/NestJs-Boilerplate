@@ -23,6 +23,13 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       TypeOrmModule.forRootAsync(databaseConfig.asProvider()),
       (env) => !!env.DATABASE_URL,
     ),
+    ConditionalModule.registerWhen(
+      ObserveModule.forRootAsync(observeConfig.asProvider()),
+      (env) =>
+        !!env.OBSERVE_APP_KEY &&
+        !!env.OBSERVE_APP_SECRET &&
+        !!env.OBSERVE_SERVICE_ID,
+    ),
   ],
   controllers: [AppController],
   providers: [AppService],
