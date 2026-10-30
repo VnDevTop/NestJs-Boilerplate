@@ -19,6 +19,8 @@ import { i18nConfig } from './i18n.config.js';
 import { mailConfig } from './mail.config.js';
 import { observeConfig } from './observe.config.js';
 import { queueConfig } from './queue.config.js';
+import { idempotencyConfig } from './idempotency.config.js';
+import { resilienceConfig } from './resilience.config.js';
 import { swaggerConfig } from './swagger.config.js';
 import { throttleConfig } from './throttle.config.js';
 
@@ -216,5 +218,21 @@ describe('throttleConfig', () => {
     process.env.REDIS_URL = 'redis://localhost:6379';
     const config = (await throttleConfig()) as any;
     expect(config.storage).toBeDefined();
+  });
+});
+
+describe('idempotencyConfig', () => {
+  it('uses defaults', () => {
+    const config = idempotencyConfig() as any;
+    expect(config.header).toBe('Idempotency-Key');
+    expect(config.allowInMemoryStorage).toBe(true);
+  });
+});
+
+describe('resilienceConfig', () => {
+  it('builds defaults and presets', () => {
+    const config = resilienceConfig() as any;
+    expect(config.presets.http).toBeDefined();
+    expect(config.mapErrors).toBe(true);
   });
 });

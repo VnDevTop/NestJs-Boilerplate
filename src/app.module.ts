@@ -9,6 +9,8 @@ import { BullModule } from '@nestjs/bullmq';
 import { MailerModule } from '@nestjs-modules/mailer';
 import { I18nModule as NestI18nModule } from 'nestjs-i18n';
 import { HttpModule as NestHttpModule } from '@nestjs/axios';
+import { ResilienceModule } from '@nestjs/resilience';
+import { IdempotencyModule } from '@nestjs/idempotency';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller.js';
@@ -16,16 +18,19 @@ import { AppService } from './app.service.js';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { HealthController } from './health.controller.js';
+import { ResilientHttpService } from './common/utils/resilient-http.service.js';
 import {
   appConfig,
   cacheConfig,
   corsConfig,
   databaseConfig,
   httpConfig,
+  idempotencyConfig,
   i18nConfig,
   mailConfig,
   observeConfig,
   queueConfig,
+  resilienceConfig,
   swaggerConfig,
   throttleConfig,
   validateEnv,
@@ -59,6 +64,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     NestI18nModule.forRootAsync(i18nConfig.asProvider()),
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
+    ResilienceModule.forRootAsync(resilienceConfig.asProvider()),
+    IdempotencyModule.forRootAsync(idempotencyConfig.asProvider()),
     ConditionalModule.registerWhen(
       TypeOrmModule.forRootAsync(databaseConfig.asProvider()),
       (env) => !!env.DATABASE_URL,
@@ -90,6 +97,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
   controllers: [AppController, HealthController],
   providers: [
     AppService,
+    ResilientHttpService,
     {
       provide: APP_GUARD,
       useFactory: async (reflector: Reflector) => {
