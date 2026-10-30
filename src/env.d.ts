@@ -26,6 +26,15 @@ declare global {
       MAIL_SECURE?: string;
       HTTP_TIMEOUT?: string;
       HTTP_MAX_REDIRECTS?: string;
+      RESILIENCE_RETRY_ATTEMPTS?: string;
+      RESILIENCE_TIMEOUT_MS?: string;
+      RESILIENCE_CB_FAILURE_RATE?: string;
+      RESILIENCE_CB_OPEN_DURATION?: string;
+      RESILIENCE_BULKHEAD_CONCURRENCY?: string;
+      RESILIENCE_BULKHEAD_QUEUE?: string;
+      IDEMPOTENCY_HEADER?: string;
+      IDEMPOTENCY_TTL?: string;
+      IDEMPOTENCY_LOCK_TTL?: string;
       SWAGGER_TITLE?: string;
       SWAGGER_DESCRIPTION?: string;
       SWAGGER_VERSION?: string;
