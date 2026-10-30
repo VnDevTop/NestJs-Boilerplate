@@ -18,6 +18,7 @@ import { AppService } from './app.service.js';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { HealthController } from './health.controller.js';
+import { UsersModule } from './modules/users/index.js';
 import { ResilientHttpService } from './common/utils/resilient-http.service.js';
 import {
   appConfig,
@@ -60,6 +61,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     }),
     CacheModule.registerAsync(cacheConfig.asProvider()),
     TerminusModule,
+    ConditionalModule.registerWhen(UsersModule, (env) => !!env.DATABASE_URL),
     NestHttpModule.registerAsync(httpConfig.asProvider()),
     NestI18nModule.forRootAsync(i18nConfig.asProvider()),
     EventEmitterModule.forRoot(),
