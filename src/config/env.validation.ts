@@ -41,6 +41,10 @@ const envSchema = z.object({
   SWAGGER_PATH: z.string().optional(),
   I18N_FALLBACK_LANGUAGE: z.string().optional(),
   I18N_SUPPORTED_LANGUAGES: z.string().optional(),
+  JWT_PRIVATE_KEY: z.string().optional(),
+  JWT_PUBLIC_KEY: z.string().optional(),
+  JWT_ACCESS_TTL: z.string().optional(),
+  JWT_REFRESH_TTL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
