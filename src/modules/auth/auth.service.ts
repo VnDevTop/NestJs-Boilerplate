@@ -54,14 +54,30 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    const maxAttempts = Number(process.env.AUTH_MAX_FAILED_ATTEMPTS ?? 5);
+    const lockMinutes = Number(process.env.AUTH_LOCK_DURATION_MINUTES ?? 15);
+
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      throw new UnauthorizedException('Account is temporarily locked');
+    }
+
     const valid = await argon2.verify(user.passwordHash, dto.password);
     if (!valid) {
+      user.failedLoginAttempts += 1;
+      if (user.failedLoginAttempts >= maxAttempts) {
+        user.lockedUntil = new Date(Date.now() + lockMinutes * 60 * 1000);
+      }
+      await this.usersService.save(user);
       throw new UnauthorizedException('Invalid credentials');
     }
 
     if (user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException('User is not active');
     }
+
+    user.failedLoginAttempts = 0;
+    user.lockedUntil = null;
+    await this.usersService.save(user);
 
     const tokens = await this.issueTokens(user);
     return { user: this.sanitize(user), ...tokens };
