@@ -12,6 +12,26 @@ const envSchema = z.object({
   OBSERVE_APP_KEY: z.string().min(1).optional(),
   OBSERVE_APP_SECRET: z.string().min(1).optional(),
   OBSERVE_SERVICE_ID: z.string().min(1).optional(),
+  REDIS_URL: z.string().min(1).optional(),
+  CORS_ORIGIN: z.string().optional(),
+  CORS_CREDENTIALS: z.string().optional(),
+  CACHE_TTL: z.string().optional(),
+  THROTTLE_TTL: z.string().optional(),
+  THROTTLE_LIMIT: z.string().optional(),
+  MAIL_HOST: z.string().optional(),
+  MAIL_PORT: z.string().optional(),
+  MAIL_USER: z.string().optional(),
+  MAIL_PASSWORD: z.string().optional(),
+  MAIL_FROM: z.string().optional(),
+  MAIL_SECURE: z.string().optional(),
+  HTTP_TIMEOUT: z.string().optional(),
+  HTTP_MAX_REDIRECTS: z.string().optional(),
+  SWAGGER_TITLE: z.string().optional(),
+  SWAGGER_DESCRIPTION: z.string().optional(),
+  SWAGGER_VERSION: z.string().optional(),
+  SWAGGER_PATH: z.string().optional(),
+  I18N_FALLBACK_LANGUAGE: z.string().optional(),
+  I18N_SUPPORTED_LANGUAGES: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -41,6 +61,26 @@ declare global {
       OBSERVE_APP_KEY?: string;
       OBSERVE_APP_SECRET?: string;
       OBSERVE_SERVICE_ID?: string;
+      REDIS_URL?: string;
+      CORS_ORIGIN?: string;
+      CORS_CREDENTIALS?: string;
+      CACHE_TTL?: string;
+      THROTTLE_TTL?: string;
+      THROTTLE_LIMIT?: string;
+      MAIL_HOST?: string;
+      MAIL_PORT?: string;
+      MAIL_USER?: string;
+      MAIL_PASSWORD?: string;
+      MAIL_FROM?: string;
+      MAIL_SECURE?: string;
+      HTTP_TIMEOUT?: string;
+      HTTP_MAX_REDIRECTS?: string;
+      SWAGGER_TITLE?: string;
+      SWAGGER_DESCRIPTION?: string;
+      SWAGGER_VERSION?: string;
+      SWAGGER_PATH?: string;
+      I18N_FALLBACK_LANGUAGE?: string;
+      I18N_SUPPORTED_LANGUAGES?: string;
     }
   }
 }
