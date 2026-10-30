@@ -1,4 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('redis', () => ({
+  createClient: () => ({ connect: async () => undefined }),
+}));
+
+vi.mock('@nestjs-redis/throttler-storage', () => ({
+  RedisThrottlerStorage: class {
+    constructor() {}
+  },
+}));
 import { validateEnv } from './env.validation.js';
 import { appConfig } from './app.config.js';
 import { cacheConfig } from './cache.config.js';
@@ -182,5 +192,11 @@ describe('throttleConfig', () => {
   it('has no storage without REDIS_URL', async () => {
     const config = (await throttleConfig()) as any;
     expect(config.storage).toBeUndefined();
+  });
+
+  it('creates storage with REDIS_URL', async () => {
+    process.env.REDIS_URL = 'redis://localhost:6379';
+    const config = (await throttleConfig()) as any;
+    expect(config.storage).toBeDefined();
   });
 });
