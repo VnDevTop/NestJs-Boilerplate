@@ -7,6 +7,7 @@ export * from './idempotency.config.js';
 export * from './i18n.config.js';
 export * from './jwt.config.js';
 export * from './mail.config.js';
+export * from './oidc.config.js';
 export * from './observe.config.js';
 export * from './queue.config.js';
 export * from './resilience.config.js';
