@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 import { UsersService } from '../users/users.service.js';
+import { ClientService } from './client.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { User, UserStatus } from '../users/entities/user.entity.js';
@@ -22,6 +23,7 @@ export interface AuthTokens {
 export class AuthService {
   constructor(
     private readonly usersService: UsersService,
+    private readonly clientService: ClientService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
@@ -121,6 +123,21 @@ export class AuthService {
     await this.usersService.setRefreshTokenHash(user.id, hash);
 
     return { accessToken, refreshToken };
+  }
+
+  async clientCredentials(clientId: string, clientSecret: string, scope?: string): Promise<{ accessToken: string }> {
+    const client = await this.clientService.validate(clientId, clientSecret);
+    const scopes = scope ? scope.split(' ').filter(Boolean) : client.scopes;
+    const jwt = this.configService.get<JwtConfig>('jwt')!;
+    const accessToken = await this.jwtService.signAsync(
+      {
+        sub: client.clientId,
+        scopes,
+        type: 'access',
+      },
+      { expiresIn: jwt.signOptions?.expiresIn ?? '15m' },
+    );
+    return { accessToken };
   }
 
   private sanitize(user: User): Omit<User, 'passwordHash'> {
