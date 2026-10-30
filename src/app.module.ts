@@ -16,18 +16,20 @@ import { AppService } from './app.service.js';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { HealthController } from './health.controller.js';
-import { validateEnv } from './config/env.validation.js';
-import { appConfig } from './config/app.config.js';
-import { cacheConfig } from './config/cache.config.js';
-import { corsConfig } from './config/cors.config.js';
-import { databaseConfig } from './config/database.config.js';
-import { httpConfig } from './config/http.config.js';
-import { i18nConfig } from './config/i18n.config.js';
-import { mailConfig } from './config/mail.config.js';
-import { observeConfig } from './config/observe.config.js';
-import { queueConfig } from './config/queue.config.js';
-import { swaggerConfig } from './config/swagger.config.js';
-import { throttleConfig } from './config/throttle.config.js';
+import {
+  appConfig,
+  cacheConfig,
+  corsConfig,
+  databaseConfig,
+  httpConfig,
+  i18nConfig,
+  mailConfig,
+  observeConfig,
+  queueConfig,
+  swaggerConfig,
+  throttleConfig,
+  validateEnv,
+} from './config/index.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
