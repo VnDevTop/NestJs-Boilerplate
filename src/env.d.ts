@@ -40,6 +40,10 @@ declare global {
       SWAGGER_VERSION?: string;
       SWAGGER_PATH?: string;
       I18N_FALLBACK_LANGUAGE?: string;
+      JWT_PRIVATE_KEY?: string;
+      JWT_PUBLIC_KEY?: string;
+      JWT_ACCESS_TTL?: string;
+      JWT_REFRESH_TTL?: string;
       I18N_SUPPORTED_LANGUAGES?: string;
     }
   }

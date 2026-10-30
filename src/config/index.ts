@@ -5,6 +5,7 @@ export * from './database.config.js';
 export * from './http.config.js';
 export * from './idempotency.config.js';
 export * from './i18n.config.js';
+export * from './jwt.config.js';
 export * from './mail.config.js';
 export * from './observe.config.js';
 export * from './queue.config.js';

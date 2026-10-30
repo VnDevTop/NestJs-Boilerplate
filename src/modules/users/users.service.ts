@@ -33,6 +33,19 @@ export class UsersService {
     return this.userRepository.findOne({ where: { id } });
   }
 
+  findByIdWithRefreshToken(id: string): Promise<User | null> {
+    return this.userRepository.findOne({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        roles: true,
+        status: true,
+        refreshTokenHash: true,
+      },
+    });
+  }
+
   create(data: Partial<User>): Promise<User> {
     const user = this.userRepository.create(data);
     return this.userRepository.save(user);
@@ -40,6 +53,12 @@ export class UsersService {
 
   save(user: User): Promise<User> {
     return this.userRepository.save(user);
+  }
+
+  setRefreshTokenHash(id: string, hash: string | null): Promise<void> {
+    return this.userRepository
+      .update(id, { refreshTokenHash: hash })
+      .then(() => undefined);
   }
 
   softDelete(id: string): Promise<void> {
