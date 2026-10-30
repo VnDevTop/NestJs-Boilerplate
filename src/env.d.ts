@@ -44,6 +44,8 @@ declare global {
       JWT_PUBLIC_KEY?: string;
       JWT_ACCESS_TTL?: string;
       JWT_REFRESH_TTL?: string;
+      AUTH_MAX_FAILED_ATTEMPTS?: string;
+      AUTH_LOCK_DURATION_MINUTES?: string;
       I18N_SUPPORTED_LANGUAGES?: string;
     }
   }

@@ -45,6 +45,8 @@ const envSchema = z.object({
   JWT_PUBLIC_KEY: z.string().optional(),
   JWT_ACCESS_TTL: z.string().optional(),
   JWT_REFRESH_TTL: z.string().optional(),
+  AUTH_MAX_FAILED_ATTEMPTS: z.string().optional(),
+  AUTH_LOCK_DURATION_MINUTES: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
