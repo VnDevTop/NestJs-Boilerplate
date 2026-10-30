@@ -1,1 +1,1 @@
-export {};
+export * from './roles.decorator.js';
