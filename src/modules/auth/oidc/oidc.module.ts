@@ -3,6 +3,7 @@ import { OidcProviderRegistry } from './oidc-provider.registry.js';
 import { OidcProviderFactory } from './oidc-provider.factory.js';
 import { GoogleOidcProvider } from './providers/google.oidc-provider.js';
 import { MicrosoftOidcProvider } from './providers/microsoft.oidc-provider.js';
+import { GitHubOidcProvider } from './providers/github.oidc-provider.js';
 
 @Module({
   providers: [OidcProviderRegistry, OidcProviderFactory],
@@ -17,6 +18,7 @@ export class OidcModule implements OnModuleInit {
   onModuleInit(): void {
     this.registry.registerFactory('google', (config) => new GoogleOidcProvider(config));
     this.registry.registerFactory('microsoft', (config) => new MicrosoftOidcProvider(config));
+    this.registry.registerFactory('github', (config) => new GitHubOidcProvider(config));
     this.factory.registerEnabledProviders();
   }
 }
