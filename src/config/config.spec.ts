@@ -103,6 +103,13 @@ describe('databaseConfig', () => {
     expect(config.type).toBe('postgres');
     expect(config.synchronize).toBe(true);
   });
+
+  it('enables ssl when DB_SSL is true', () => {
+    process.env.DATABASE_URL = 'postgresql://u:p@localhost/db';
+    process.env.DB_SSL = 'true';
+    const config = databaseConfig() as any;
+    expect(config.ssl).toEqual({ rejectUnauthorized: false });
+  });
 });
 
 describe('observeConfig', () => {
@@ -113,6 +120,11 @@ describe('observeConfig', () => {
     const config = observeConfig() as any;
     expect(config.appKey).toBe('key');
     expect(config.serviceId).toBe('svc');
+  });
+
+  it('defaults serviceId when missing', () => {
+    const config = observeConfig() as any;
+    expect(config.serviceId).toBe('');
   });
 });
 
@@ -169,6 +181,12 @@ describe('mailConfig', () => {
     process.env.MAIL_PASSWORD = 'pass';
     const config = mailConfig() as any;
     expect((config.transport as any).host).toBe('smtp.example.com');
+  });
+
+  it('builds transport without auth when MAIL_USER is missing', () => {
+    process.env.MAIL_HOST = 'smtp.example.com';
+    const config = mailConfig() as any;
+    expect((config.transport as any).auth).toBeUndefined();
   });
 });
 
