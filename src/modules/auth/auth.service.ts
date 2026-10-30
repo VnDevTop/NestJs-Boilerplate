@@ -9,6 +9,7 @@ import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 import { UsersService } from '../users/users.service.js';
 import { ClientService } from './client.service.js';
+import { JwtKeyService } from './jwt-key.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { User, UserStatus } from '../users/entities/user.entity.js';
@@ -24,6 +25,7 @@ export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly clientService: ClientService,
+    private readonly jwtKeyService: JwtKeyService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
@@ -98,8 +100,15 @@ export class AuthService {
     await this.usersService.setRefreshTokenHash(userId, null);
   }
 
+  async rotateSigningKey(): Promise<{ kid: string }> {
+    const key = await this.jwtKeyService.rotate();
+    return { kid: key.kid };
+  }
+
   private async issueTokens(user: User): Promise<AuthTokens> {
     const jwt = this.configService.get<JwtConfig>('jwt')!;
+    const key = await this.jwtKeyService.getActiveKey();
+
     const accessToken = await this.jwtService.signAsync(
       {
         sub: user.id,
@@ -107,7 +116,12 @@ export class AuthService {
         roles: user.roles,
         type: 'access',
       },
-      { expiresIn: jwt.signOptions?.expiresIn ?? '15m' },
+      {
+        privateKey: key.privateKey,
+        keyid: key.kid,
+        algorithm: 'RS256',
+        expiresIn: jwt.signOptions?.expiresIn ?? '15m',
+      } as any,
     );
 
     const refreshToken = await this.jwtService.signAsync(
@@ -116,7 +130,12 @@ export class AuthService {
         type: 'refresh',
         jti: randomUUID(),
       },
-      { expiresIn: jwt.refreshTtl as any },
+      {
+        privateKey: key.privateKey,
+        keyid: key.kid,
+        algorithm: 'RS256',
+        expiresIn: jwt.refreshTtl as any,
+      } as any,
     );
 
     const hash = await argon2.hash(refreshToken);
@@ -129,13 +148,19 @@ export class AuthService {
     const client = await this.clientService.validate(clientId, clientSecret);
     const scopes = scope ? scope.split(' ').filter(Boolean) : client.scopes;
     const jwt = this.configService.get<JwtConfig>('jwt')!;
+    const key = await this.jwtKeyService.getActiveKey();
     const accessToken = await this.jwtService.signAsync(
       {
         sub: client.clientId,
         scopes,
         type: 'access',
       },
-      { expiresIn: jwt.signOptions?.expiresIn ?? '15m' },
+      {
+        privateKey: key.privateKey,
+        keyid: key.kid,
+        algorithm: 'RS256',
+        expiresIn: jwt.signOptions?.expiresIn ?? '15m',
+      } as any,
     );
     return { accessToken };
   }

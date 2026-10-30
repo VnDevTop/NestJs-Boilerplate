@@ -1,18 +1,38 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import type { JwtConfig } from '../../../config/jwt.config.js';
+import { JwtKeyService } from '../jwt-key.service.js';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(configService: ConfigService) {
-    const jwt = configService.get<JwtConfig>('jwt')!;
+  constructor(jwtKeyService: JwtKeyService) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       algorithms: ['RS256'],
-      secretOrKey: jwt.publicKey as string,
+      secretOrKeyProvider: (_request, rawJwtToken, done) => {
+        void (async () => {
+          try {
+            const [headerSegment] = rawJwtToken.split('.');
+            const header = JSON.parse(Buffer.from(headerSegment, 'base64url').toString('utf8')) as {
+              kid?: string;
+            };
+            if (!header.kid) {
+              done(new Error('Missing kid'));
+              return;
+            }
+            const key = await jwtKeyService.findByKid(header.kid);
+            if (!key) {
+              done(new Error('Unknown signing key'));
+              return;
+            }
+            done(null, key.publicKey);
+          } catch (error) {
+            done(error as Error);
+          }
+        })();
+      },
     });
   }
 

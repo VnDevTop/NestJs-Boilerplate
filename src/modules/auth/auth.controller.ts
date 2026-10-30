@@ -1,5 +1,7 @@
 import { Body, Controller, Post, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Roles } from '../../common/decorators/roles.decorator.js';
+import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { AuthService } from './auth.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
@@ -36,5 +38,12 @@ export class AuthController {
       throw new UnauthorizedException('Unsupported grant type');
     }
     return this.authService.clientCredentials(dto.client_id, dto.client_secret, dto.scope);
+  }
+
+  @Post('keys/rotate')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin')
+  rotateKeys() {
+    return this.authService.rotateSigningKey();
   }
 }
