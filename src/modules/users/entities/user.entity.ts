@@ -24,7 +24,7 @@ export class User extends BaseEntity {
   @Column({ type: 'simple-array', default: 'user' })
   roles: UserRole[];
 
-  @Column({ type: 'varchar', length: 32, default: UserStatus.ACTIVE })
+  @Column({ type: 'varchar', length: 32, default: 'active' })
   status: UserStatus;
 
   @Column({ name: 'failed_login_attempts', type: 'int', default: 0 })
