@@ -2,14 +2,9 @@ import { registerAs } from '@nestjs/config';
 import { CacheModuleOptions } from '@nestjs/cache-manager';
 import { createKeyv } from '@keyv/redis';
 
-export interface CacheConfig extends CacheModuleOptions {
-  redisUrl?: string;
-  keyPrefix: string;
-}
-
-export const cacheConfig = registerAs<CacheConfig>(
+export const cacheConfig = registerAs<CacheModuleOptions>(
   'cache',
-  (): CacheConfig => {
+  (): CacheModuleOptions => {
     const redisUrl = process.env.REDIS_URL;
     const keyPrefix = 'cache:';
     return {
@@ -20,6 +15,6 @@ export const cacheConfig = registerAs<CacheConfig>(
       stores: redisUrl
         ? createKeyv(redisUrl, { namespace: keyPrefix.replace(':', '') })
         : undefined,
-    };
+    } as CacheModuleOptions;
   },
 );

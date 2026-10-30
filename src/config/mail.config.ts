@@ -3,11 +3,9 @@ import type { MailerOptions } from '@nestjs-modules/mailer';
 import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter.js';
 import { join } from 'path';
 
-export interface MailConfig extends MailerOptions {}
-
-export const mailConfig = registerAs<MailConfig>(
+export const mailConfig = registerAs<MailerOptions>(
   'mail',
-  (): MailConfig => {
+  (): MailerOptions => {
     const host = process.env.MAIL_HOST;
     const port = Number(process.env.MAIL_PORT ?? 587);
     const user = process.env.MAIL_USER;

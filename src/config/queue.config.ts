@@ -1,11 +1,9 @@
 import { registerAs } from '@nestjs/config';
 import type { BullRootModuleOptions } from '@nestjs/bullmq';
 
-export type QueueConfig = BullRootModuleOptions;
-
-export const queueConfig = registerAs<QueueConfig>(
+export const queueConfig = registerAs<BullRootModuleOptions>(
   'queue',
-  (): QueueConfig => ({
+  (): BullRootModuleOptions => ({
     prefix: 'queue:',
     connection: { url: process.env.REDIS_URL! },
   }),

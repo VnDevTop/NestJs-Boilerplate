@@ -95,7 +95,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
           return { canActivate: () => true };
         }
         const config = await throttleConfig();
-        return new ThrottlerGuard(config, config.storage!, reflector);
+        return new ThrottlerGuard(config, (config as any).storage, reflector);
       },
       inject: [Reflector],
     },

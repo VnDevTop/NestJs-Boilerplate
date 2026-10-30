@@ -3,7 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule, ObserveInstrument } from './app.module.js';
-import type { CorsConfig } from './config/cors.config.js';
+import type { CorsOptions } from 'cors';
 import type { SwaggerConfig } from './config/swagger.config.js';
 
 async function bootstrap() {
@@ -22,7 +22,7 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
 
   app.useSecurityHeaders();
-  const cors = configService.getOrThrow<CorsConfig>('cors');
+  const cors = configService.getOrThrow<CorsOptions>('cors');
   app.enableCors({
     origin: cors.origin,
     credentials: cors.credentials,

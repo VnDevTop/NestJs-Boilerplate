@@ -1,11 +1,9 @@
 import { registerAs } from '@nestjs/config';
 import type { TypeOrmModuleOptions } from '@nestjs/typeorm';
 
-export type DatabaseConfig = TypeOrmModuleOptions;
-
-export const databaseConfig = registerAs<DatabaseConfig>(
+export const databaseConfig = registerAs<TypeOrmModuleOptions>(
   'database',
-  (): DatabaseConfig => ({
+  (): TypeOrmModuleOptions => ({
     type: 'postgres',
     url: process.env.DATABASE_URL,
     autoLoadEntities: true,
