@@ -71,7 +71,7 @@ describe('env validation', () => {
 
 describe('appConfig', () => {
   it('uses defaults', () => {
-    const config = appConfig();
+    const config = appConfig() as any;
     expect(config.name).toBe('nestjs-boilerplate');
     expect(config.port).toBe(3000);
   });
@@ -79,7 +79,7 @@ describe('appConfig', () => {
   it('reads env overrides', () => {
     process.env.APP_NAME = 'my-app';
     process.env.PORT = '4000';
-    const config = appConfig();
+    const config = appConfig() as any;
     expect(config.name).toBe('my-app');
     expect(config.port).toBe(4000);
   });
@@ -89,7 +89,7 @@ describe('databaseConfig', () => {
   it('builds postgres config', () => {
     process.env.DATABASE_URL = 'postgresql://u:p@localhost/db';
     process.env.DB_SYNCHRONIZE = 'true';
-    const config = databaseConfig();
+    const config = databaseConfig() as any;
     expect(config.type).toBe('postgres');
     expect(config.synchronize).toBe(true);
   });
@@ -100,7 +100,7 @@ describe('observeConfig', () => {
     process.env.OBSERVE_APP_KEY = 'key';
     process.env.OBSERVE_APP_SECRET = 'secret';
     process.env.OBSERVE_SERVICE_ID = 'svc';
-    const config = observeConfig();
+    const config = observeConfig() as any;
     expect(config.appKey).toBe('key');
     expect(config.serviceId).toBe('svc');
   });
@@ -108,33 +108,33 @@ describe('observeConfig', () => {
 
 describe('cacheConfig', () => {
   it('uses memory store when no REDIS_URL', () => {
-    const config = cacheConfig();
+    const config = cacheConfig() as any;
     expect(config.stores).toBeUndefined();
   });
 
   it('uses redis store when REDIS_URL is set', () => {
     process.env.REDIS_URL = 'redis://localhost:6379';
-    const config = cacheConfig();
+    const config = cacheConfig() as any;
     expect(config.stores).toBeDefined();
   });
 });
 
 describe('corsConfig', () => {
   it('defaults origin to true', () => {
-    const config = corsConfig();
+    const config = corsConfig() as any;
     expect(config.origin).toBe(true);
   });
 
   it('splits CORS_ORIGIN', () => {
     process.env.CORS_ORIGIN = 'http://a.com,http://b.com';
-    const config = corsConfig();
+    const config = corsConfig() as any;
     expect(config.origin).toEqual(['http://a.com', 'http://b.com']);
   });
 });
 
 describe('httpConfig', () => {
   it('uses defaults', () => {
-    const config = httpConfig();
+    const config = httpConfig() as any;
     expect(config.timeout).toBe(5000);
     expect(config.maxRedirects).toBe(5);
   });
@@ -142,14 +142,14 @@ describe('httpConfig', () => {
 
 describe('i18nConfig', () => {
   it('uses defaults', () => {
-    const config = i18nConfig();
+    const config = i18nConfig() as any;
     expect(config.fallbackLanguage).toBe('en');
   });
 });
 
 describe('mailConfig', () => {
   it('returns undefined transport without MAIL_HOST', () => {
-    const config = mailConfig();
+    const config = mailConfig() as any;
     expect(config.transport).toBeUndefined();
   });
 
@@ -157,7 +157,7 @@ describe('mailConfig', () => {
     process.env.MAIL_HOST = 'smtp.example.com';
     process.env.MAIL_USER = 'user';
     process.env.MAIL_PASSWORD = 'pass';
-    const config = mailConfig();
+    const config = mailConfig() as any;
     expect((config.transport as any).host).toBe('smtp.example.com');
   });
 });
@@ -165,14 +165,14 @@ describe('mailConfig', () => {
 describe('queueConfig', () => {
   it('builds connection from REDIS_URL', () => {
     process.env.REDIS_URL = 'redis://localhost:6379';
-    const config = queueConfig();
+    const config = queueConfig() as any;
     expect((config.connection as any).url).toBe('redis://localhost:6379');
   });
 });
 
 describe('swaggerConfig', () => {
   it('uses defaults', () => {
-    const config = swaggerConfig();
+    const config = swaggerConfig() as any;
     expect(config.path).toBe('api/docs');
     expect(config.adminPath).toBe('api/docs/admin');
   });
@@ -180,7 +180,7 @@ describe('swaggerConfig', () => {
 
 describe('throttleConfig', () => {
   it('has no storage without REDIS_URL', async () => {
-    const config = await throttleConfig();
+    const config = (await throttleConfig()) as any;
     expect(config.storage).toBeUndefined();
   });
 });
