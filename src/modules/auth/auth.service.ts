@@ -9,6 +9,7 @@ import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 import { UsersService } from '../users/users.service.js';
 import { ClientService } from './client.service.js';
+import { AuditService } from './audit.service.js';
 import { JwtKeyService } from './jwt-key.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
@@ -28,6 +29,7 @@ export class AuthService {
     private readonly jwtKeyService: JwtKeyService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly auditService: AuditService,
   ) {}
 
   async register(dto: RegisterDto): Promise<{ user: Omit<User, 'passwordHash'> } & AuthTokens> {
@@ -44,6 +46,8 @@ export class AuthService {
       status: UserStatus.ACTIVE,
     });
 
+    await this.auditService.log({ action: 'auth.register', userId: user.id, metadata: { email: user.email } });
+
     const tokens = await this.issueTokens(user);
     return { user: this.sanitize(user), ...tokens };
   }
@@ -51,6 +55,7 @@ export class AuthService {
   async login(dto: LoginDto): Promise<{ user: Omit<User, 'passwordHash'> } & AuthTokens> {
     const user = await this.usersService.findByEmailWithPassword(dto.email);
     if (!user || !user.passwordHash) {
+      await this.auditService.log({ action: 'auth.login.failed', metadata: { email: dto.email } });
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -58,6 +63,7 @@ export class AuthService {
     const lockMinutes = Number(process.env.AUTH_LOCK_DURATION_MINUTES ?? 15);
 
     if (user.lockedUntil && user.lockedUntil > new Date()) {
+      await this.auditService.log({ action: 'auth.account.locked', userId: user.id, metadata: { email: user.email } });
       throw new UnauthorizedException('Account is temporarily locked');
     }
 
@@ -68,6 +74,11 @@ export class AuthService {
         user.lockedUntil = new Date(Date.now() + lockMinutes * 60 * 1000);
       }
       await this.usersService.save(user);
+      await this.auditService.log({
+        action: user.lockedUntil ? 'auth.account.locked' : 'auth.login.failed',
+        userId: user.id,
+        metadata: { email: user.email },
+      });
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -78,6 +89,8 @@ export class AuthService {
     user.failedLoginAttempts = 0;
     user.lockedUntil = null;
     await this.usersService.save(user);
+
+    await this.auditService.log({ action: 'auth.login.success', userId: user.id, metadata: { email: user.email } });
 
     const tokens = await this.issueTokens(user);
     return { user: this.sanitize(user), ...tokens };
@@ -109,11 +122,14 @@ export class AuthService {
       throw new UnauthorizedException('User is not active');
     }
 
+    await this.auditService.log({ action: 'auth.refresh', userId: user.id });
+
     return this.issueTokens(user as User);
   }
 
   async logout(userId: string): Promise<void> {
     await this.usersService.setRefreshTokenHash(userId, null);
+    await this.auditService.log({ action: 'auth.logout', userId });
   }
 
   async rotateSigningKey(): Promise<{ kid: string }> {
@@ -162,6 +178,7 @@ export class AuthService {
 
   async clientCredentials(clientId: string, clientSecret: string, scope?: string): Promise<{ accessToken: string }> {
     const client = await this.clientService.validate(clientId, clientSecret);
+    await this.auditService.log({ action: 'auth.client_credentials', metadata: { clientId } });
     const scopes = scope ? scope.split(' ').filter(Boolean) : client.scopes;
     const jwt = this.configService.get<JwtConfig>('jwt')!;
     const key = await this.jwtKeyService.getActiveKey();
