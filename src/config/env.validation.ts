@@ -12,6 +12,26 @@ const envSchema = z.object({
   OBSERVE_APP_KEY: z.string().min(1).optional(),
   OBSERVE_APP_SECRET: z.string().min(1).optional(),
   OBSERVE_SERVICE_ID: z.string().min(1).optional(),
+  REDIS_URL: z.string().min(1).optional(),
+  CORS_ORIGIN: z.string().optional(),
+  CORS_CREDENTIALS: z.string().optional(),
+  CACHE_TTL: z.string().optional(),
+  THROTTLE_TTL: z.string().optional(),
+  THROTTLE_LIMIT: z.string().optional(),
+  MAIL_HOST: z.string().optional(),
+  MAIL_PORT: z.string().optional(),
+  MAIL_USER: z.string().optional(),
+  MAIL_PASSWORD: z.string().optional(),
+  MAIL_FROM: z.string().optional(),
+  MAIL_SECURE: z.string().optional(),
+  HTTP_TIMEOUT: z.string().optional(),
+  HTTP_MAX_REDIRECTS: z.string().optional(),
+  SWAGGER_TITLE: z.string().optional(),
+  SWAGGER_DESCRIPTION: z.string().optional(),
+  SWAGGER_VERSION: z.string().optional(),
+  SWAGGER_PATH: z.string().optional(),
+  I18N_FALLBACK_LANGUAGE: z.string().optional(),
+  I18N_SUPPORTED_LANGUAGES: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -27,20 +47,3 @@ export function validateEnv(config: Record<string, any>): Env {
   return result.data;
 }
 
-declare global {
-  namespace NodeJS {
-    interface ProcessEnv {
-      NODE_ENV?: 'development' | 'production' | 'test';
-      PORT?: string;
-      APP_NAME?: string;
-      API_PREFIX?: string;
-      DATABASE_URL?: string;
-      DB_SYNCHRONIZE?: string;
-      DB_LOGGING?: string;
-      DB_SSL?: string;
-      OBSERVE_APP_KEY?: string;
-      OBSERVE_APP_SECRET?: string;
-      OBSERVE_SERVICE_ID?: string;
-    }
-  }
-}
