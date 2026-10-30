@@ -47,6 +47,7 @@
     "@nestjs/throttler": "^6.7.1",
     "@nestjs/typeorm": "^12.0.2",
     "@types/cors": "^2.8.19",
+    "argon2": "^0.45.1",
     "axios": "^1.21.0",
     "bullmq": "^6.5.1",
     "cache-manager": "^7.2.9",
